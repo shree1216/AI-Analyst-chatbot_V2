@@ -1,0 +1,940 @@
+emp_id,name,city,salary,city_running_total_salary
+1000,Abhishek Jain,ahmedabad,144756.0,144756.0
+1000,ABHISHEK JAIN,Ahmedabad,185063.0,329819.0
+1000,Deepika Das,ahmedabad,169701.0,499520.0
+1000,Neha Verma,Ahmedabad,87999.0,587519.0
+1000,Pallavi Rao,Ahmedabad,59344.0,646863.0
+1000,rohit singh,Ahmedabad,48670.0,695533.0
+1051,Ritu Chauhan,Ahmedabad,148851.0,844384.0
+1056,Amit Kumar,ahmedabad,173699.0,1018083.0
+1057,Bhavna Hegde,ahmedabad,44412.0,1062495.0
+1060,Meera Kulkarni,Ahmedabad,40705.0,1103200.0
+1084,Suresh Yadav,Ahmedabad,45164.0,1148364.0
+1091,Rahul Chopra,Ahmedabad,69094.0,1217458.0
+1112,Abhishek Jain,Ahmedabad,124277.0,1341735.0
+1118,Meera Kulkarni,ahmedabad,84757.0,1426492.0
+1159,Vivek Kapoor,Ahmedabad,190321.0,1616813.0
+1168,Abhishek Jain,ahmedabad,60319.0,1677132.0
+1177,Swati Mishra,ahmedabad,,1677132.0
+1193,Meera Kulkarni,ahmedabad,100121.0,1777253.0
+1195,Ananya Bose,Ahmedabad,32933.0,1810186.0
+1226,Tanvi Deshmukh,ahmedabad,,1810186.0
+1231,Manish Tiwari,Ahmedabad,50869.0,1861055.0
+1232,rohit singh,ahmedabad,144785.0,2005840.0
+1233,Amit Kumar,ahmedabad,130981.0,2136821.0
+1246,anjali nair,ahmedabad,55762.0,2192583.0
+1247,Priya Patel,ahmedabad,90095.0,2282678.0
+1251,Ishita Roy,ahmedabad,46250.0,2328928.0
+1255,Kunal Srivastava,ahmedabad,26532.0,2355460.0
+1260,MEGHA PILLAI,ahmedabad,78840.0,2434300.0
+1265,Tanvi Deshmukh,ahmedabad,191844.0,2626144.0
+1267,Ritu Chauhan,ahmedabad,157320.0,2783464.0
+1273,Aarav Sharma,Ahmedabad,133308.0,2916772.0
+1277,Sneha Gupta,Ahmedabad,187415.0,3104187.0
+1290,Shruti Menon,Ahmedabad,106346.0,3210533.0
+1293,Manish Tiwari,Ahmedabad,60777.0,3271310.0
+1304,Simran Gill,Ahmedabad,123212.0,3394522.0
+1355,Divya Saxena,ahmedabad,169571.0,3564093.0
+1374,Karan Bhat,ahmedabad,127547.0,3691640.0
+1387,Arjun Malhotra,Ahmedabad,,3691640.0
+1393,Pooja Reddy,ahmedabad,36858.0,3728498.0
+1422,Harsh Bansal,ahmedabad,49791.0,3778289.0
+1429,Nikhil Agarwal  ,Ahmedabad,145895.0,3924184.0
+1450,Vivek Kapoor,ahmedabad,176309.0,4100493.0
+1455,Pallavi Rao,ahmedabad,183155.0,4283648.0
+1457,Deepika Das,ahmedabad,133041.0,4416689.0
+1464,Rajesh Mehta,ahmedabad,71507.0,4488196.0
+1466,Meera Kulkarni,Ahmedabad,179692.0,4667888.0
+1476,Ishita Roy  ,ahmedabad,135399.0,4803287.0
+1485,Sanjay Pandey,Ahmedabad,67274.0,4870561.0
+1487,Shruti Menon,ahmedabad,73210.0,4943771.0
+1507,VARUN KHANNA,Ahmedabad,177979.0,5121750.0
+1534,Rohit Singh,Ahmedabad,122785.0,5244535.0
+1535,Rohit Singh,Ahmedabad,41462.0,5285997.0
+1539,Varun Khanna,Ahmedabad,130502.0,5416499.0
+1576,Rajesh Mehta,ahmedabad,115321.0,5531820.0
+1579,Swati Mishra,Ahmedabad,165032.0,5696852.0
+1584,Pallavi Rao,Ahmedabad,188483.0,5885335.0
+1589,Bhavna Hegde,Ahmedabad,47842.0,5933177.0
+1605,Rohit Singh,ahmedabad,131309.0,6064486.0
+1623,Nikhil Agarwal,ahmedabad,114107.0,6178593.0
+1626,shruti menon,ahmedabad,-3165.0,6175428.0
+1634,Nikhil Agarwal,ahmedabad,,6175428.0
+1647,Ritu Chauhan,ahmedabad,196619.0,6372047.0
+1663,amit kumar,ahmedabad,123005.0,6495052.0
+1667,Priya Patel,ahmedabad,63689.0,6558741.0
+1670,Rahul Chopra,Ahmedabad,136888.0,6695629.0
+1688,Pallavi Rao  ,Ahmedabad,59553.0,6755182.0
+1693,Ananya Bose,Ahmedabad,0.0,6755182.0
+1700,Megha Pillai,ahmedabad,172994.0,6928176.0
+1719,Meera Kulkarni,Ahmedabad,94697.0,7022873.0
+1732,priya patel,ahmedabad,172609.0,7195482.0
+1733,POOJA REDDY,Ahmedabad,98224.0,7293706.0
+1745,Ritu Chauhan,ahmedabad,189081.0,7482787.0
+1746,Sanjay Pandey,ahmedabad,97367.0,7580154.0
+1751,Anjali Nair,ahmedabad,92730.0,7672884.0
+1764,Kavita Iyer,Ahmedabad,94767.0,7767651.0
+1771,Neha Verma,Ahmedabad,50634.0,7818285.0
+1785,Suresh Yadav,ahmedabad,105757.0,7924042.0
+1809,Rahul Chopra,Ahmedabad,96470.0,8020512.0
+1825,Vikram Joshi,Ahmedabad,29268.0,8049780.0
+1834,Priya Patel,Ahmedabad,98387.0,8148167.0
+1844,ananya bose,ahmedabad,177850.0,8326017.0
+1849,Varun Khanna,ahmedabad,66405.0,8392422.0
+1859,Swati Mishra  ,ahmedabad,180291.0,8572713.0
+1869,Kavita Iyer,Ahmedabad,25528.0,8598241.0
+1882,shruti menon,ahmedabad,123716.0,8721957.0
+1895,Aarav Sharma  ,Ahmedabad,142277.0,8864234.0
+1900,Vivek Kapoor,Ahmedabad,,8864234.0
+1954,Neha Verma,ahmedabad,193480.0,9057714.0
+1955,Rahul Chopra  ,Ahmedabad,122198.0,9179912.0
+1982,Tushar Dubey,Ahmedabad,184779.0,9364691.0
+1000,Anjali Nair,BANGALORE,151484.0,151484.0
+1000,Divya Saxena,BANGALORE,130989.0,282473.0
+1050,Sneha Gupta,BANGALORE,160242.0,442715.0
+1052,Tushar Dubey,Bangalore,186168.0,628883.0
+1059,Neha Verma,BANGALORE,186068.0,814951.0
+1096,Rajesh Mehta,bangalore,51850.0,866801.0
+1103,Varun Khanna,Bangalore,87434.0,954235.0
+1149,Abhishek Jain,BANGALORE,132680.0,1086915.0
+1152,Aditya Choudhury,BANGALORE,197827.0,1284742.0
+1171,simran gill,BANGALORE,75625.0,1360367.0
+1212,Anjali Nair,BANGALORE,70756.0,1431123.0
+1216,DIVYA SAXENA,Bangalore,138835.0,1569958.0
+1227,Ananya Bose,Bangalore,40338.0,1610296.0
+1229,Vivek Kapoor,Bangalore,181670.0,1791966.0
+1264,Tanvi Deshmukh,BANGALORE,199829.0,1991795.0
+1287,Nikhil Agarwal,bangalore,142957.0,2134752.0
+1291,Ishita Roy,Bangalore,186935.0,2321687.0
+1325,Manish Tiwari,BANGALORE,130193.0,2451880.0
+1328,vikram joshi,BANGALORE,77952.0,2529832.0
+1332,Neha Verma,Bangalore,71166.0,2600998.0
+1356,Vikram Joshi,BANGALORE,123031.0,2724029.0
+1370,Kunal Srivastava,bangalore,61484.0,2785513.0
+1375,Tushar Dubey,BANGALORE,162640.0,2948153.0
+1405,Simran Gill,BANGALORE,54796.0,3002949.0
+1417,Sneha Gupta,bangalore,145248.0,3148197.0
+1442,Aditya Choudhury,Bangalore,137970.0,3286167.0
+1448,Arjun Malhotra  ,bangalore,174747.0,3460914.0
+1465,SIMRAN GILL,BANGALORE,173918.0,3634832.0
+1484,Pallavi Rao,Bangalore,180139.0,3814971.0
+1490,Simran Gill,Bangalore,75641.0,3890612.0
+1526,Neha Verma,BANGALORE,36537.0,3927149.0
+1528,Arjun Malhotra  ,BANGALORE,82397.0,4009546.0
+1552,Divya Saxena,Bangalore,72026.0,4081572.0
+1553,vikram joshi,BANGALORE,0.0,4081572.0
+1555,Swati Mishra,Bangalore,49520.0,4131092.0
+1563,Sanjay Pandey,Bangalore,57028.0,4188120.0
+1624,Ritu Chauhan,Bangalore,27400.0,4215520.0
+1641,amit kumar,Bangalore,175565.0,4391085.0
+1643,Vivek Kapoor,BANGALORE,43539.0,4434624.0
+1652,Rohit Singh,Bangalore,133528.0,4568152.0
+1656,Vikram Joshi,BANGALORE,149982.0,4718134.0
+1668,ROHIT SINGH,bangalore,71709.0,4789843.0
+1691,Rahul Chopra,Bangalore,187378.0,4977221.0
+1704,Ritu Chauhan,BANGALORE,27367.0,5004588.0
+1709,Deepika Das,Bangalore,102496.0,5107084.0
+1718,Pallavi Rao,BANGALORE,54140.0,5161224.0
+1730,Gaurav Sinha,Bangalore,0.0,5161224.0
+1734,Neha Verma,Bangalore,81275.0,5242499.0
+1741,Abhishek Jain,Bangalore,96653.0,5339152.0
+1762,Swati Mishra,bangalore,150005.0,5489157.0
+1766,Kunal Srivastava,Bangalore,154304.0,5643461.0
+1774,PALLAVI RAO,BANGALORE,76976.0,5720437.0
+1778,neha verma,Bangalore,37262.0,5757699.0
+1791,Simran Gill,BANGALORE,91216.0,5848915.0
+1847,Aarav Sharma  ,bangalore,97845.0,5946760.0
+1850,Ritu Chauhan,BANGALORE,92061.0,6038821.0
+1870,Shruti Menon,Bangalore,157347.0,6196168.0
+1874,Meera Kulkarni  ,BANGALORE,45237.0,6241405.0
+1889,Pooja Reddy  ,bangalore,142259.0,6383664.0
+1890,Karan Bhat,BANGALORE,115410.0,6499074.0
+1913,Simran Gill,Bangalore,38052.0,6537126.0
+1914,Suresh Yadav,Bangalore,56212.0,6593338.0
+1924,Karan Bhat,bangalore,88515.0,6681853.0
+1946,Kavita Iyer,bangalore,199054.0,6880907.0
+1000,Divya Saxena,Bengaluru,197446.0,197446.0
+1000,Suresh Yadav,bengaluru,39711.0,237157.0
+1000,Tanvi Deshmukh,bengaluru,132046.0,369203.0
+1000,Vivek Kapoor  ,Bengaluru,176262.0,545465.0
+1082,NIKHIL AGARWAL,bengaluru,118273.0,663738.0
+1153,Varun Khanna,bengaluru,181623.0,845361.0
+1163,Neha Verma,bengaluru,104579.0,949940.0
+1206,Divya Saxena,bengaluru,40744.0,990684.0
+1222,Harsh Bansal,Bengaluru,55649.0,1046333.0
+1223,ANJALI NAIR,bengaluru,100976.0,1147309.0
+1288,Ishita Roy,Bengaluru,173787.0,1321096.0
+1368,Pallavi Rao,Bengaluru,162150.0,1483246.0
+1386,Nisha Thakur,Bengaluru,147508.0,1630754.0
+1392,Neha Verma,Bengaluru,76931.0,1707685.0
+1406,Bhavna Hegde,bengaluru,80212.0,1787897.0
+1413,Neha Verma,bengaluru,193379.0,1981276.0
+1419,Pallavi Rao,bengaluru,114020.0,2095296.0
+1473,Kavita Iyer,Bengaluru,65133.0,2160429.0
+1479,Karan Bhat,bengaluru,56048.0,2216477.0
+1520,Rahul Chopra,bengaluru,49188.0,2265665.0
+1557,Arjun Malhotra  ,Bengaluru,161897.0,2427562.0
+1566,Ritu Chauhan,bengaluru,66334.0,2493896.0
+1594,SANJAY PANDEY,bengaluru,47830.0,2541726.0
+1616,Abhishek Jain,Bengaluru,65094.0,2606820.0
+1676,deepika das,bengaluru,85640.0,2692460.0
+1728,Sanjay Pandey,Bengaluru,58480.0,2750940.0
+1786,DEEPIKA DAS,bengaluru,56520.0,2807460.0
+1794,Pallavi Rao,Bengaluru,,2807460.0
+1812,suresh yadav,bengaluru,60456.0,2867916.0
+1817,Arjun Malhotra,bengaluru,26812.0,2894728.0
+1848,Nikhil Agarwal  ,Bengaluru,56535.0,2951263.0
+1868,Pallavi Rao,Bengaluru,176413.0,3127676.0
+1879,Aarav Sharma  ,Bengaluru,87694.0,3215370.0
+1887,RAJESH MEHTA,bengaluru,32951.0,3248321.0
+1922,Arjun Malhotra,Bengaluru,149682.0,3398003.0
+1978,Pooja Reddy,Bengaluru,110794.0,3508797.0
+1986,Harsh Bansal,Bengaluru,199375.0,3708172.0
+1077,Nikhil Agarwal,Bombay,172462.0,172462.0
+1099,Anjali Nair,Bombay,139684.0,312146.0
+1185,Abhishek Jain,Bombay,78176.0,390322.0
+1198,karan bhat,Bombay,119173.0,509495.0
+1351,Ritu Chauhan  ,Bombay,127593.0,637088.0
+1430,Kunal Srivastava,Bombay,40672.0,677760.0
+1445,Gaurav Sinha,Bombay,158361.0,836121.0
+1551,Kunal Srivastava,Bombay,97635.0,933756.0
+1574,Tushar Dubey,Bombay,68055.0,1001811.0
+1583,Bhavna Hegde,Bombay,143453.0,1145264.0
+1602,Meera Kulkarni,Bombay,98936.0,1244200.0
+1621,Ananya Bose,Bombay,43450.0,1287650.0
+1625,Neha Verma,Bombay,26604.0,1314254.0
+1675,kavita iyer,Bombay,,1314254.0
+1821,Abhishek Jain,Bombay,133571.0,1447825.0
+1864,Harsh Bansal,Bombay,167998.0,1615823.0
+1865,Karan Bhat,Bombay,-2276.0,1613547.0
+1936,Pooja Reddy,Bombay,142007.0,1755554.0
+1000,Harsh Bansal,Calcutta,68287.0,68287.0
+1000,Nikhil Agarwal,Calcutta,132682.0,200969.0
+1000,Rajesh Mehta,Calcutta,164082.0,365051.0
+1085,Ishita Roy,Calcutta,88550.0,453601.0
+1113,Priya Patel,Calcutta,51544.0,505145.0
+1199,Priya Patel  ,Calcutta,60592.0,565737.0
+1218,Aarav Sharma,Calcutta,112269.0,678006.0
+1252,Swati Mishra,Calcutta,,678006.0
+1286,Divya Saxena,Calcutta,,678006.0
+1303,Simran Gill,Calcutta,91288.0,769294.0
+1318,Vikram Joshi,Calcutta,37573.0,806867.0
+1366,Meera Kulkarni,Calcutta,161133.0,968000.0
+1390,Tushar Dubey,Calcutta,177747.0,1145747.0
+1418,Nisha Thakur,Calcutta,60003.0,1205750.0
+1447,Priya Patel,Calcutta,62838.0,1268588.0
+1463,Aarav Sharma,Calcutta,43615.0,1312203.0
+1561,Ananya Bose,Calcutta,91020.0,1403223.0
+1582,Nikhil Agarwal,Calcutta,165052.0,1568275.0
+1587,Vikram Joshi,Calcutta,31726.0,1600001.0
+1837,Nikhil Agarwal,Calcutta,121886.0,1721887.0
+1853,Ritu Chauhan,Calcutta,195838.0,1917725.0
+1881,Pooja Reddy,Calcutta,118924.0,2036649.0
+1898,MANISH TIWARI,Calcutta,146117.0,2182766.0
+1903,rohit singh,Calcutta,,2182766.0
+1917,Vivek Kapoor,Calcutta,184632.0,2367398.0
+1920,Suresh Yadav,Calcutta,64056.0,2431454.0
+1967,Nikhil Agarwal,Calcutta,73172.0,2504626.0
+1975,Harsh Bansal,Calcutta,192546.0,2697172.0
+1977,Amit Kumar,Calcutta,185268.0,2882440.0
+1000,Aditya Choudhury,chennai,76990.0,76990.0
+1000,Sneha Gupta,Chennai,78793.0,155783.0
+1054,Manish Tiwari,Chennai,167352.0,323135.0
+1093,Rajesh Mehta,chennai,196939.0,520074.0
+1094,Neha Verma,chennai,165096.0,685170.0
+1119,Kavita Iyer,chennai,144655.0,829825.0
+1131,Aarav Sharma,chennai,68359.0,898184.0
+1166,Varun Khanna,Chennai,141119.0,1039303.0
+1170,Rohit Singh,Chennai,179743.0,1219046.0
+1180,Shruti Menon,chennai,79200.0,1298246.0
+1213,Pooja Reddy,chennai,36302.0,1334548.0
+1274,Priya Patel,chennai,185810.0,1520358.0
+1284,Vivek Kapoor,chennai,78215.0,1598573.0
+1299,Amit Kumar,Chennai,57915.0,1656488.0
+1365,Arjun Malhotra,Chennai,149211.0,1805699.0
+1378,Harsh Bansal,chennai,193357.0,1999056.0
+1414,Abhishek Jain,chennai,178412.0,2177468.0
+1443,Nikhil Agarwal,Chennai,176219.0,2353687.0
+1444,SANJAY PANDEY,chennai,123333.0,2477020.0
+1469,Tushar Dubey,Chennai,36723.0,2513743.0
+1477,Ishita Roy  ,Chennai,188471.0,2702214.0
+1500,Karan Bhat,Chennai,,2702214.0
+1518,Suresh Yadav,chennai,131195.0,2833409.0
+1537,Vikram Joshi  ,chennai,92395.0,2925804.0
+1538,Tushar Dubey  ,chennai,49125.0,2974929.0
+1562,Varun Khanna,chennai,164029.0,3138958.0
+1568,Shruti Menon,chennai,172160.0,3311118.0
+1571,Aditya Choudhury,Chennai,53404.0,3364522.0
+1581,Aarav Sharma,chennai,47112.0,3411634.0
+1608,Shruti Menon,Chennai,,3411634.0
+1611,Vikram Joshi  ,chennai,152145.0,3563779.0
+1635,Aarav Sharma,Chennai,47686.0,3611465.0
+1646,Abhishek Jain,chennai,31237.0,3642702.0
+1648,Nisha Thakur,Chennai,179635.0,3822337.0
+1649,Bhavna Hegde,chennai,0.0,3822337.0
+1673,Ishita Roy,chennai,86948.0,3909285.0
+1680,Neha Verma,chennai,116404.0,4025689.0
+1684,Nikhil Agarwal,Chennai,0.0,4025689.0
+1711,Nikhil Agarwal,chennai,69753.0,4095442.0
+1714,Karan Bhat,Chennai,153012.0,4248454.0
+1722,Tushar Dubey,chennai,60554.0,4309008.0
+1769,Tanvi Deshmukh,Chennai,89383.0,4398391.0
+1776,Vikram Joshi,chennai,103610.0,4502001.0
+1789,Tanvi Deshmukh,Chennai,180021.0,4682022.0
+1841,Sneha Gupta,chennai,194915.0,4876937.0
+1894,Deepika Das,chennai,42861.0,4919798.0
+1899,Simran Gill,Chennai,87535.0,5007333.0
+1907,Amit Kumar,chennai,85323.0,5092656.0
+1950,Shruti Menon,chennai,46505.0,5139161.0
+1957,Priya Patel,Chennai,46107.0,5185268.0
+1958,Swati Mishra,Chennai,112433.0,5297701.0
+1988,Deepika Das,chennai,130492.0,5428193.0
+1990,Harsh Bansal,Chennai,85419.0,5513612.0
+1995,VIVEK KAPOOR,chennai,151659.0,5665271.0
+1000,Divya Saxena,delhi,79921.0,79921.0
+1000,POOJA REDDY,Delhi,51868.0,131789.0
+1000,Vikram Joshi,Delhi,135593.0,267382.0
+1078,SIMRAN GILL,Delhi,133106.0,400488.0
+1083,Vikram Joshi  ,Delhi,170421.0,570909.0
+1087,Abhishek Jain,delhi,31438.0,602347.0
+1128,Aarav Sharma,delhi,48614.0,650961.0
+1146,Abhishek Jain  ,delhi,35595.0,686556.0
+1191,Pallavi Rao,Delhi,104332.0,790888.0
+1202,tushar dubey,delhi,98655.0,889543.0
+1230,Tushar Dubey,delhi,36345.0,925888.0
+1243,Sneha Gupta,delhi,106072.0,1031960.0
+1256,Swati Mishra,delhi,146484.0,1178444.0
+1272,Tanvi Deshmukh,Delhi,165008.0,1343452.0
+1282,Kavita Iyer,delhi,30503.0,1373955.0
+1285,Gaurav Sinha,Delhi,31479.0,1405434.0
+1317,VARUN KHANNA,Delhi,164321.0,1569755.0
+1362,manish tiwari,delhi,176320.0,1746075.0
+1396,Priya Patel,Delhi,161549.0,1907624.0
+1415,Vivek Kapoor  ,Delhi,197570.0,2105194.0
+1454,Tanvi Deshmukh,Delhi,97212.0,2202406.0
+1456,Divya Saxena  ,Delhi,199996.0,2402402.0
+1478,Rajesh Mehta,Delhi,185517.0,2587919.0
+1493,Karan Bhat,Delhi,-3937.0,2583982.0
+1505,Pallavi Rao,Delhi,47761.0,2631743.0
+1511,Suresh Yadav,delhi,138440.0,2770183.0
+1543,Vivek Kapoor,delhi,179888.0,2950071.0
+1556,PRIYA PATEL,Delhi,31345.0,2981416.0
+1593,Deepika Das,delhi,70317.0,3051733.0
+1609,Sneha Gupta,Delhi,106422.0,3158155.0
+1677,Priya Patel,Delhi,62940.0,3221095.0
+1690,Karan Bhat,Delhi,189416.0,3410511.0
+1715,Vivek Kapoor,Delhi,170451.0,3580962.0
+1716,pallavi rao,delhi,67620.0,3648582.0
+1721,Aarav Sharma,Delhi,128432.0,3777014.0
+1727,Vikram Joshi,delhi,79595.0,3856609.0
+1743,Amit Kumar,Delhi,100199.0,3956808.0
+1779,Kavita Iyer,delhi,136571.0,4093379.0
+1804,Gaurav Sinha,delhi,171109.0,4264488.0
+1815,priya patel,Delhi,0.0,4264488.0
+1819,ANJALI NAIR,delhi,,4264488.0
+1854,Ritu Chauhan,delhi,61203.0,4325691.0
+1860,Harsh Bansal  ,delhi,168229.0,4493920.0
+1866,Anjali Nair,Delhi,136533.0,4630453.0
+1878,Swati Mishra,delhi,159292.0,4789745.0
+1885,Amit Kumar,delhi,121373.0,4911118.0
+1902,Ananya Bose,delhi,72788.0,4983906.0
+1925,Neha Verma,delhi,186228.0,5170134.0
+1942,Vikram Joshi,delhi,49365.0,5219499.0
+1952,Pallavi Rao,delhi,94282.0,5313781.0
+1972,Amit Kumar,delhi,61189.0,5374970.0
+1973,Tanvi Deshmukh,Delhi,174300.0,5549270.0
+1992,Shruti Menon,delhi,58665.0,5607935.0
+1000,Gaurav Sinha,Hyd,103892.0,103892.0
+1000,Simran Gill,Hyd,196646.0,300538.0
+1069,Neha Verma,Hyd,150161.0,450699.0
+1114,Suresh Yadav,Hyd,105832.0,556531.0
+1137,Sneha Gupta,Hyd,106960.0,663491.0
+1145,Amit Kumar,Hyd,179674.0,843165.0
+1283,Swati Mishra,Hyd,63945.0,907110.0
+1321,Ananya Bose,Hyd,55897.0,963007.0
+1402,PRIYA PATEL,Hyd,127530.0,1090537.0
+1409,Meera Kulkarni,Hyd,81072.0,1171609.0
+1432,Varun Khanna,Hyd,177890.0,1349499.0
+1481,Simran Gill,Hyd,68747.0,1418246.0
+1501,Anjali Nair,Hyd,130324.0,1548570.0
+1549,Aditya Choudhury,Hyd,105304.0,1653874.0
+1622,Rajesh Mehta,Hyd,-4770.0,1649104.0
+1767,Tanvi Deshmukh,Hyd,25149.0,1674253.0
+1829,Amit Kumar,Hyd,65345.0,1739598.0
+1839,Varun Khanna,Hyd,159055.0,1898653.0
+1867,Aarav Sharma  ,Hyd,59739.0,1958392.0
+1880,Abhishek Jain  ,Hyd,182348.0,2140740.0
+1928,Sneha Gupta,Hyd,,2140740.0
+1949,Arjun Malhotra,Hyd,,2140740.0
+1966,Ananya Bose,Hyd,35221.0,2175961.0
+1996,Meera Kulkarni  ,Hyd,-4629.0,2171332.0
+1000,ananya bose,hyderabad,129975.0,129975.0
+1000,Gaurav Sinha,Hyderabad,107361.0,237336.0
+1000,Meera Kulkarni,HYDERABAD,53058.0,290394.0
+1090,Aditya Choudhury,HYDERABAD,194151.0,484545.0
+1133,Ananya Bose,HYDERABAD,83129.0,567674.0
+1136,Shruti Menon,hyderabad,38910.0,606584.0
+1142,Vivek Kapoor  ,HYDERABAD,168058.0,774642.0
+1175,Sneha Gupta,hyderabad,175799.0,950441.0
+1179,Simran Gill,HYDERABAD,29816.0,980257.0
+1189,Rohit Singh,HYDERABAD,98826.0,1079083.0
+1204,rohit singh,HYDERABAD,195935.0,1275018.0
+1208,Sneha Gupta,hyderabad,114145.0,1389163.0
+1220,Abhishek Jain,Hyderabad,145028.0,1534191.0
+1225,Abhishek Jain,HYDERABAD,178925.0,1713116.0
+1240,Shruti Menon,hyderabad,94975.0,1808091.0
+1242,Ritu Chauhan,HYDERABAD,82149.0,1890240.0
+1250,Rohit Singh,hyderabad,63811.0,1954051.0
+1254,Amit Kumar,Hyderabad,146806.0,2100857.0
+1266,Pooja Reddy,Hyderabad,55865.0,2156722.0
+1275,Amit Kumar,Hyderabad,174396.0,2331118.0
+1289,Megha Pillai  ,Hyderabad,43216.0,2374334.0
+1319,Kunal Srivastava,hyderabad,117799.0,2492133.0
+1335,Kavita Iyer,Hyderabad,64379.0,2556512.0
+1346,deepika das,HYDERABAD,191641.0,2748153.0
+1349,Kavita Iyer,Hyderabad,197911.0,2946064.0
+1353,Priya Patel,Hyderabad,181210.0,3127274.0
+1369,Sneha Gupta,hyderabad,25168.0,3152442.0
+1373,simran gill,hyderabad,157593.0,3310035.0
+1379,Priya Patel,hyderabad,118822.0,3428857.0
+1388,Pooja Reddy,Hyderabad,35998.0,3464855.0
+1410,Aarav Sharma,Hyderabad,,3464855.0
+1437,Vikram Joshi,hyderabad,108890.0,3573745.0
+1462,Abhishek Jain,Hyderabad,63765.0,3637510.0
+1470,Anjali Nair,Hyderabad,189152.0,3826662.0
+1497,Deepika Das,Hyderabad,194824.0,4021486.0
+1512,Vivek Kapoor,HYDERABAD,186576.0,4208062.0
+1513,Karan Bhat,hyderabad,146291.0,4354353.0
+1532,Sneha Gupta,HYDERABAD,142681.0,4497034.0
+1536,Sneha Gupta,Hyderabad,,4497034.0
+1545,Rajesh Mehta,Hyderabad,43926.0,4540960.0
+1547,Tanvi Deshmukh,hyderabad,97250.0,4638210.0
+1548,Pooja Reddy,Hyderabad,96253.0,4734463.0
+1586,Ishita Roy,HYDERABAD,175102.0,4909565.0
+1604,Vivek Kapoor,Hyderabad,67455.0,4977020.0
+1613,Harsh Bansal,hyderabad,43509.0,5020529.0
+1617,Ishita Roy,Hyderabad,188378.0,5208907.0
+1618,Vikram Joshi,Hyderabad,97985.0,5306892.0
+1619,Ishita Roy,Hyderabad,42126.0,5349018.0
+1661,Suresh Yadav,HYDERABAD,138728.0,5487746.0
+1705,Meera Kulkarni,hyderabad,186954.0,5674700.0
+1736,Tushar Dubey,Hyderabad,40410.0,5715110.0
+1773,Swati Mishra,hyderabad,152169.0,5867279.0
+1790,MANISH TIWARI,hyderabad,96186.0,5963465.0
+1803,Bhavna Hegde,HYDERABAD,75692.0,6039157.0
+1813,Karan Bhat,HYDERABAD,179805.0,6218962.0
+1822,Varun Khanna,Hyderabad,156969.0,6375931.0
+1832,Ritu Chauhan,Hyderabad,138297.0,6514228.0
+1856,Pooja Reddy,hyderabad,91627.0,6605855.0
+1861,Vikram Joshi,Hyderabad,30006.0,6635861.0
+1872,Suresh Yadav  ,hyderabad,170769.0,6806630.0
+1876,Harsh Bansal,hyderabad,183005.0,6989635.0
+1893,RAJESH MEHTA,Hyderabad,38631.0,7028266.0
+1904,Vivek Kapoor,hyderabad,157476.0,7185742.0
+1916,Amit Kumar,HYDERABAD,159771.0,7345513.0
+1933,Karan Bhat,Hyderabad,81994.0,7427507.0
+1934,Ananya Bose,HYDERABAD,164425.0,7591932.0
+1945,Bhavna Hegde,Hyderabad,108864.0,7700796.0
+1956,Tushar Dubey,hyderabad,154969.0,7855765.0
+1961,Kavita Iyer,hyderabad,99913.0,7955678.0
+1000,Harsh Bansal,Jaipur,151929.0,151929.0
+1000,Meera Kulkarni,jaipur,104715.0,256644.0
+1063,Anjali Nair,Jaipur,-1561.0,255083.0
+1068,Karan Bhat,Jaipur,53128.0,308211.0
+1075,Swati Mishra,jaipur,40105.0,348316.0
+1079,Shruti Menon,jaipur,162464.0,510780.0
+1107,Karan Bhat,Jaipur,125405.0,636185.0
+1110,Meera Kulkarni,jaipur,152716.0,788901.0
+1116,Kunal Srivastava,Jaipur,129164.0,918065.0
+1127,Meera Kulkarni,Jaipur,60956.0,979021.0
+1132,Rohit Singh,jaipur,187284.0,1166305.0
+1135,Divya Saxena,jaipur,59962.0,1226267.0
+1140,Abhishek Jain,Jaipur,46586.0,1272853.0
+1143,Rahul Chopra,Jaipur,173712.0,1446565.0
+1157,Vivek Kapoor,Jaipur,175606.0,1622171.0
+1228,Meera Kulkarni,jaipur,117177.0,1739348.0
+1244,Vivek Kapoor,jaipur,51318.0,1790666.0
+1261,Anjali Nair,jaipur,137413.0,1928079.0
+1263,deepika das,Jaipur,66950.0,1995029.0
+1268,megha pillai,Jaipur,149737.0,2144766.0
+1298,Swati Mishra,jaipur,108240.0,2253006.0
+1307,Sanjay Pandey,Jaipur,102034.0,2355040.0
+1311,Sanjay Pandey,Jaipur,99197.0,2454237.0
+1313,Divya Saxena,jaipur,,2454237.0
+1316,Rajesh Mehta,jaipur,58683.0,2512920.0
+1327,Shruti Menon,Jaipur,54236.0,2567156.0
+1329,KARAN BHAT,Jaipur,129200.0,2696356.0
+1331,Nikhil Agarwal,Jaipur,98319.0,2794675.0
+1341,ROHIT SINGH,jaipur,,2794675.0
+1342,Neha Verma,jaipur,196499.0,2991174.0
+1357,POOJA REDDY,jaipur,173758.0,3164932.0
+1363,ananya bose,jaipur,74663.0,3239595.0
+1367,Manish Tiwari,jaipur,189335.0,3428930.0
+1381,Shruti Menon,jaipur,31908.0,3460838.0
+1383,Karan Bhat  ,jaipur,197121.0,3657959.0
+1395,Karan Bhat,Jaipur,199701.0,3857660.0
+1435,Nikhil Agarwal,jaipur,140840.0,3998500.0
+1436,Karan Bhat,jaipur,90279.0,4088779.0
+1499,Vivek Kapoor  ,Jaipur,144339.0,4233118.0
+1503,Vikram Joshi,jaipur,74369.0,4307487.0
+1519,Sanjay Pandey,Jaipur,69182.0,4376669.0
+1521,Swati Mishra,jaipur,159544.0,4536213.0
+1522,Varun Khanna  ,jaipur,153439.0,4689652.0
+1558,KUNAL SRIVASTAVA,Jaipur,191898.0,4881550.0
+1559,Gaurav Sinha,Jaipur,29454.0,4911004.0
+1560,Arjun Malhotra,Jaipur,149162.0,5060166.0
+1585,Varun Khanna,jaipur,33030.0,5093196.0
+1598,Simran Gill,Jaipur,110688.0,5203884.0
+1615,Pooja Reddy,jaipur,193382.0,5397266.0
+1628,Deepika Das,Jaipur,33049.0,5430315.0
+1632,Pooja Reddy,Jaipur,66187.0,5496502.0
+1637,Kunal Srivastava,Jaipur,118980.0,5615482.0
+1638,Rajesh Mehta,Jaipur,50315.0,5665797.0
+1644,Rohit Singh,jaipur,82417.0,5748214.0
+1659,KUNAL SRIVASTAVA,Jaipur,32647.0,5780861.0
+1664,Amit Kumar,Jaipur,0.0,5780861.0
+1671,Manish Tiwari,Jaipur,65886.0,5846747.0
+1672,Anjali Nair,Jaipur,101555.0,5948302.0
+1681,Divya Saxena,Jaipur,95684.0,6043986.0
+1682,rajesh mehta,jaipur,36364.0,6080350.0
+1692,Nikhil Agarwal,Jaipur,75425.0,6155775.0
+1708,Vikram Joshi,Jaipur,,6155775.0
+1712,Vivek Kapoor,jaipur,136568.0,6292343.0
+1735,Kunal Srivastava,jaipur,115425.0,6407768.0
+1738,RITU CHAUHAN,jaipur,,6407768.0
+1744,Aditya Choudhury,Jaipur,57792.0,6465560.0
+1748,Karan Bhat,Jaipur,185552.0,6651112.0
+1753,Gaurav Sinha,jaipur,100181.0,6751293.0
+1760,Ritu Chauhan,jaipur,61271.0,6812564.0
+1772,Pooja Reddy,jaipur,,6812564.0
+1781,Bhavna Hegde,jaipur,72907.0,6885471.0
+1782,Manish Tiwari,Jaipur,27825.0,6913296.0
+1788,Suresh Yadav,Jaipur,177100.0,7090396.0
+1792,Simran Gill,jaipur,64379.0,7154775.0
+1796,Ishita Roy,jaipur,174410.0,7329185.0
+1798,Sanjay Pandey,jaipur,169925.0,7499110.0
+1801,Shruti Menon,Jaipur,187644.0,7686754.0
+1818,Deepika Das,jaipur,131134.0,7817888.0
+1833,Nisha Thakur,jaipur,120761.0,7938649.0
+1873,Sanjay Pandey,Jaipur,141128.0,8079777.0
+1892,Priya Patel,Jaipur,95365.0,8175142.0
+1897,Abhishek Jain,Jaipur,87761.0,8262903.0
+1908,Sanjay Pandey,Jaipur,48141.0,8311044.0
+1909,Sanjay Pandey,jaipur,136972.0,8448016.0
+1926,Suresh Yadav,Jaipur,46857.0,8494873.0
+1939,Pooja Reddy,Jaipur,88459.0,8583332.0
+1947,Shruti Menon,Jaipur,77840.0,8661172.0
+1953,Simran Gill,Jaipur,38571.0,8699743.0
+1959,gaurav sinha,jaipur,47744.0,8747487.0
+1964,Aditya Choudhury,Jaipur,170227.0,8917714.0
+1000,harsh bansal,kolkata,65056.0,65056.0
+1000,Neha Verma,kolkata,38044.0,103100.0
+1000,Nisha Thakur,kolkata,196683.0,299783.0
+1000,PRIYA PATEL,Kolkata,190089.0,489872.0
+1000,Rohit Singh,Kolkata,59448.0,549320.0
+1055,Harsh Bansal,kolkata,102500.0,651820.0
+1067,Ritu Chauhan,kolkata,,651820.0
+1072,Harsh Bansal,kolkata,,651820.0
+1081,Kavita Iyer,kolkata,178887.0,830707.0
+1089,Manish Tiwari,kolkata,192538.0,1023245.0
+1144,Aditya Choudhury,kolkata,107107.0,1130352.0
+1150,Bhavna Hegde,kolkata,59164.0,1189516.0
+1176,swati mishra,Kolkata,175999.0,1365515.0
+1183,Simran Gill,kolkata,190320.0,1555835.0
+1214,Nikhil Agarwal,Kolkata,87159.0,1642994.0
+1217,Vivek Kapoor,Kolkata,46781.0,1689775.0
+1237,Aditya Choudhury,kolkata,,1689775.0
+1259,Arjun Malhotra,Kolkata,156983.0,1846758.0
+1278,Vikram Joshi,kolkata,197942.0,2044700.0
+1322,Ishita Roy,kolkata,47215.0,2091915.0
+1326,vivek kapoor,Kolkata,95581.0,2187496.0
+1361,Deepika Das,Kolkata,0.0,2187496.0
+1371,Nisha Thakur,Kolkata,,2187496.0
+1391,Ritu Chauhan,kolkata,55255.0,2242751.0
+1394,Vikram Joshi,kolkata,-3120.0,2239631.0
+1398,Aarav Sharma,Kolkata,35174.0,2274805.0
+1399,Nikhil Agarwal,kolkata,108599.0,2383404.0
+1403,Priya Patel,kolkata,53391.0,2436795.0
+1423,Meera Kulkarni,Kolkata,92333.0,2529128.0
+1426,Abhishek Jain,Kolkata,68708.0,2597836.0
+1438,Ananya Bose  ,Kolkata,107666.0,2705502.0
+1453,Arjun Malhotra,kolkata,185725.0,2891227.0
+1471,Amit Kumar,kolkata,92239.0,2983466.0
+1474,ANANYA BOSE,Kolkata,,2983466.0
+1510,Tushar Dubey  ,kolkata,44029.0,3027495.0
+1524,Sneha Gupta,kolkata,38924.0,3066419.0
+1529,Ritu Chauhan,kolkata,153938.0,3220357.0
+1544,Sneha Gupta,kolkata,101731.0,3322088.0
+1573,Harsh Bansal,Kolkata,169340.0,3491428.0
+1588,SURESH YADAV,kolkata,34880.0,3526308.0
+1590,Megha Pillai,kolkata,-2328.0,3523980.0
+1606,Rohit Singh,Kolkata,,3523980.0
+1660,Nisha Thakur,Kolkata,128285.0,3652265.0
+1662,Bhavna Hegde,Kolkata,47186.0,3699451.0
+1686,Harsh Bansal,kolkata,171560.0,3871011.0
+1687,RAHUL CHOPRA,kolkata,140598.0,4011609.0
+1696,Amit Kumar,kolkata,166119.0,4177728.0
+1697,Abhishek Jain,kolkata,161519.0,4339247.0
+1725,Manish Tiwari,Kolkata,81097.0,4420344.0
+1737,Ishita Roy,Kolkata,85414.0,4505758.0
+1808,Harsh Bansal,Kolkata,0.0,4505758.0
+1814,Ishita Roy  ,Kolkata,154321.0,4660079.0
+1823,SURESH YADAV,kolkata,75045.0,4735124.0
+1830,Swati Mishra,Kolkata,95197.0,4830321.0
+1835,Ananya Bose,Kolkata,180640.0,5010961.0
+1838,Ritu Chauhan,Kolkata,194617.0,5205578.0
+1842,Karan Bhat,kolkata,,5205578.0
+1901,Pooja Reddy,kolkata,184885.0,5390463.0
+1905,Rajesh Mehta,Kolkata,197445.0,5587908.0
+1910,Shruti Menon,kolkata,76043.0,5663951.0
+1944,Kunal Srivastava,kolkata,48818.0,5712769.0
+1960,Tushar Dubey,Kolkata,177974.0,5890743.0
+1000,amit kumar,lucknow,122687.0,122687.0
+1000,Nisha Thakur  ,Lucknow,166289.0,288976.0
+1000,Simran Gill,lucknow,146803.0,435779.0
+1000,Sneha Gupta  ,Lucknow,149845.0,585624.0
+1058,Megha Pillai  ,lucknow,150479.0,736103.0
+1064,Priya Patel,lucknow,177967.0,914070.0
+1071,Aditya Choudhury,lucknow,140825.0,1054895.0
+1092,Abhishek Jain,Lucknow,179120.0,1234015.0
+1097,Sanjay Pandey,lucknow,193983.0,1427998.0
+1100,Pooja Reddy,lucknow,96298.0,1524296.0
+1115,Tanvi Deshmukh,lucknow,134741.0,1659037.0
+1156,Ishita Roy,Lucknow,71788.0,1730825.0
+1164,Varun Khanna,lucknow,0.0,1730825.0
+1167,Shruti Menon,lucknow,128758.0,1859583.0
+1174,Ritu Chauhan,lucknow,56598.0,1916181.0
+1181,Gaurav Sinha,Lucknow,52989.0,1969170.0
+1182,Divya Saxena,lucknow,42337.0,2011507.0
+1186,Sneha Gupta,lucknow,,2011507.0
+1190,Gaurav Sinha,lucknow,107707.0,2119214.0
+1194,Sneha Gupta  ,lucknow,39103.0,2158317.0
+1200,Gaurav Sinha,Lucknow,173937.0,2332254.0
+1205,Arjun Malhotra,Lucknow,180749.0,2513003.0
+1210,Aarav Sharma  ,Lucknow,50504.0,2563507.0
+1219,Amit Kumar,Lucknow,87556.0,2651063.0
+1238,Karan Bhat,lucknow,188727.0,2839790.0
+1239,Priya Patel,lucknow,147498.0,2987288.0
+1257,Rohit Singh,Lucknow,40913.0,3028201.0
+1262,Gaurav Sinha,lucknow,27071.0,3055272.0
+1296,Divya Saxena,Lucknow,0.0,3055272.0
+1305,Tanvi Deshmukh,Lucknow,,3055272.0
+1315,Swati Mishra,Lucknow,153566.0,3208838.0
+1320,Shruti Menon,Lucknow,164567.0,3373405.0
+1336,Rajesh Mehta,lucknow,136105.0,3509510.0
+1339,Tushar Dubey  ,Lucknow,144091.0,3653601.0
+1340,Varun Khanna  ,lucknow,53416.0,3707017.0
+1347,Shruti Menon,lucknow,181533.0,3888550.0
+1352,Nikhil Agarwal,Lucknow,189860.0,4078410.0
+1354,MEERA KULKARNI,Lucknow,114865.0,4193275.0
+1358,Suresh Yadav,lucknow,99720.0,4292995.0
+1364,Rahul Chopra,Lucknow,78366.0,4371361.0
+1377,Kunal Srivastava,Lucknow,142836.0,4514197.0
+1400,Divya Saxena,Lucknow,36961.0,4551158.0
+1404,Sneha Gupta,Lucknow,113570.0,4664728.0
+1407,Sanjay Pandey,lucknow,136716.0,4801444.0
+1408,Kunal Srivastava,Lucknow,85773.0,4887217.0
+1424,DIVYA SAXENA,lucknow,197284.0,5084501.0
+1428,Gaurav Sinha,lucknow,184830.0,5269331.0
+1431,Swati Mishra,Lucknow,111680.0,5381011.0
+1439,Manish Tiwari,Lucknow,88737.0,5469748.0
+1446,Kavita Iyer,lucknow,148158.0,5617906.0
+1459,Tushar Dubey,lucknow,44905.0,5662811.0
+1467,Sneha Gupta,lucknow,48842.0,5711653.0
+1468,Karan Bhat,lucknow,74303.0,5785956.0
+1472,Neha Verma,Lucknow,122229.0,5908185.0
+1489,Deepika Das,Lucknow,149829.0,6058014.0
+1492,Abhishek Jain,Lucknow,53244.0,6111258.0
+1496,Ritu Chauhan,lucknow,99811.0,6211069.0
+1498,Aarav Sharma,Lucknow,25002.0,6236071.0
+1514,Megha Pillai,lucknow,91797.0,6327868.0
+1516,Suresh Yadav,lucknow,29571.0,6357439.0
+1517,Deepika Das,Lucknow,141005.0,6498444.0
+1525,Deepika Das,lucknow,112566.0,6611010.0
+1554,Deepika Das,Lucknow,123441.0,6734451.0
+1565,Swati Mishra,lucknow,155377.0,6889828.0
+1570,Abhishek Jain,lucknow,175152.0,7064980.0
+1592,Megha Pillai,lucknow,161264.0,7226244.0
+1596,Meera Kulkarni,Lucknow,110223.0,7336467.0
+1620,Ishita Roy,lucknow,166139.0,7502606.0
+1679,Tanvi Deshmukh,Lucknow,146740.0,7649346.0
+1698,AMIT KUMAR,Lucknow,54561.0,7703907.0
+1720,harsh bansal,Lucknow,30941.0,7734848.0
+1726,Arjun Malhotra,lucknow,157554.0,7892402.0
+1739,Swati Mishra  ,Lucknow,177560.0,8069962.0
+1755,Manish Tiwari,Lucknow,80543.0,8150505.0
+1756,Varun Khanna,Lucknow,130979.0,8281484.0
+1761,Simran Gill,lucknow,134607.0,8416091.0
+1765,Kavita Iyer,lucknow,54656.0,8470747.0
+1770,Pooja Reddy  ,Lucknow,176987.0,8647734.0
+1797,Kavita Iyer  ,Lucknow,162477.0,8810211.0
+1805,Vikram Joshi,lucknow,187307.0,8997518.0
+1807,Kunal Srivastava,lucknow,134451.0,9131969.0
+1827,Aditya Choudhury,lucknow,166971.0,9298940.0
+1836,Nikhil Agarwal,lucknow,169753.0,9468693.0
+1843,Tushar Dubey,Lucknow,155605.0,9624298.0
+1845,ABHISHEK JAIN,lucknow,45164.0,9669462.0
+1862,Sanjay Pandey,lucknow,145588.0,9815050.0
+1883,Ritu Chauhan,lucknow,141375.0,9956425.0
+1888,Ishita Roy,Lucknow,93204.0,10049629.0
+1918,Ishita Roy,Lucknow,98495.0,10148124.0
+1931,Nisha Thakur  ,Lucknow,32231.0,10180355.0
+1935,Ishita Roy,Lucknow,72480.0,10252835.0
+1937,Pooja Reddy,Lucknow,118309.0,10371144.0
+1938,Gaurav Sinha  ,Lucknow,171945.0,10543089.0
+1965,Varun Khanna,Lucknow,66152.0,10609241.0
+1971,Kunal Srivastava,lucknow,,10609241.0
+1974,Tushar Dubey,lucknow,111960.0,10721201.0
+1984,Rahul Chopra,Lucknow,51698.0,10772899.0
+1989,Simran Gill,Lucknow,65919.0,10838818.0
+1998,Rajesh Mehta,Lucknow,25903.0,10864721.0
+1000,Arjun Malhotra,Madras,137893.0,137893.0
+1000,Rohit Singh,Madras,145665.0,283558.0
+1000,Sneha Gupta,Madras,0.0,283558.0
+1053,VIVEK KAPOOR,Madras,29257.0,312815.0
+1088,Suresh Yadav,Madras,66978.0,379793.0
+1104,Nikhil Agarwal,Madras,96291.0,476084.0
+1120,Neha Verma,Madras,175014.0,651098.0
+1161,Divya Saxena,Madras,73204.0,724302.0
+1172,Nikhil Agarwal,Madras,109790.0,834092.0
+1196,varun khanna,Madras,139125.0,973217.0
+1253,Shruti Menon,Madras,49365.0,1022582.0
+1330,Meera Kulkarni,Madras,69855.0,1092437.0
+1416,Vivek Kapoor,Madras,151499.0,1243936.0
+1434,Abhishek Jain,Madras,72889.0,1316825.0
+1452,Harsh Bansal,Madras,68420.0,1385245.0
+1494,Anjali Nair,Madras,55211.0,1440456.0
+1572,Meera Kulkarni,Madras,110400.0,1550856.0
+1595,Vikram Joshi,Madras,194193.0,1745049.0
+1600,priya patel,Madras,159055.0,1904104.0
+1636,Harsh Bansal,Madras,145353.0,2049457.0
+1669,Ishita Roy  ,Madras,175893.0,2225350.0
+1707,Aarav Sharma,Madras,104985.0,2330335.0
+1710,Nikhil Agarwal,Madras,72395.0,2402730.0
+1729,Tanvi Deshmukh,Madras,66827.0,2469557.0
+1758,Nisha Thakur,Madras,0.0,2469557.0
+1802,Aarav Sharma,Madras,67825.0,2537382.0
+1858,Bhavna Hegde,Madras,148923.0,2686305.0
+1983,Deepika Das,Madras,71620.0,2757925.0
+1985,Pooja Reddy,Madras,84956.0,2842881.0
+1991,Divya Saxena,Madras,199996.0,3042877.0
+1000,Anjali Nair,mumbai,35965.0,35965.0
+1000,Neha Verma,mumbai,42987.0,78952.0
+1000,Shruti Menon,Mumbai,82068.0,161020.0
+1080,Meera Kulkarni,Mumbai,124421.0,285441.0
+1102,ishita roy,MUMBAI,106447.0,391888.0
+1108,Simran Gill,mumbai,197193.0,589081.0
+1122,Nikhil Agarwal,mumbai,93007.0,682088.0
+1124,Anjali Nair,mumbai,190421.0,872509.0
+1134,Rohit Singh,Mumbai,179485.0,1051994.0
+1139,Ritu Chauhan,MUMBAI,187078.0,1239072.0
+1141,megha pillai,Mumbai,143259.0,1382331.0
+1165,Sneha Gupta,mumbai,98954.0,1481285.0
+1192,Deepika Das,Mumbai,161929.0,1643214.0
+1197,Nikhil Agarwal,mumbai,61416.0,1704630.0
+1209,Amit Kumar,Mumbai,142783.0,1847413.0
+1276,Sneha Gupta,mumbai,127723.0,1975136.0
+1279,Tushar Dubey,MUMBAI,141555.0,2116691.0
+1281,Bhavna Hegde,Mumbai,123543.0,2240234.0
+1294,Divya Saxena  ,Mumbai,34029.0,2274263.0
+1306,Sanjay Pandey,MUMBAI,130331.0,2404594.0
+1309,Pooja Reddy,mumbai,176235.0,2580829.0
+1312,Anjali Nair,MUMBAI,50178.0,2631007.0
+1324,TUSHAR DUBEY,MUMBAI,114690.0,2745697.0
+1344,Abhishek Jain,Mumbai,133316.0,2879013.0
+1348,Gaurav Sinha,MUMBAI,79988.0,2959001.0
+1372,neha verma,Mumbai,101172.0,3060173.0
+1389,Swati Mishra,MUMBAI,0.0,3060173.0
+1397,Nikhil Agarwal,Mumbai,161654.0,3221827.0
+1401,Rahul Chopra,Mumbai,81522.0,3303349.0
+1412,divya saxena,MUMBAI,77083.0,3380432.0
+1421,Nisha Thakur,MUMBAI,,3380432.0
+1441,Arjun Malhotra,Mumbai,132683.0,3513115.0
+1449,Rajesh Mehta,mumbai,33971.0,3547086.0
+1460,Priya Patel,Mumbai,140436.0,3687522.0
+1488,Vivek Kapoor,mumbai,154559.0,3842081.0
+1491,Sneha Gupta,mumbai,99044.0,3941125.0
+1506,Tushar Dubey,Mumbai,173124.0,4114249.0
+1523,Kunal Srivastava,mumbai,31258.0,4145507.0
+1567,Simran Gill,mumbai,29710.0,4175217.0
+1591,Meera Kulkarni,Mumbai,137225.0,4312442.0
+1599,Sanjay Pandey,MUMBAI,192097.0,4504539.0
+1601,Sneha Gupta  ,Mumbai,130564.0,4635103.0
+1603,Aarav Sharma,mumbai,58607.0,4693710.0
+1610,Swati Mishra,MUMBAI,36087.0,4729797.0
+1612,nisha thakur,MUMBAI,132673.0,4862470.0
+1645,sanjay pandey,MUMBAI,72912.0,4935382.0
+1653,Meera Kulkarni  ,mumbai,87985.0,5023367.0
+1655,Aditya Choudhury,MUMBAI,49693.0,5073060.0
+1689,Nikhil Agarwal,mumbai,182475.0,5255535.0
+1699,Rahul Chopra,MUMBAI,,5255535.0
+1703,Tanvi Deshmukh,mumbai,116735.0,5372270.0
+1750,Manish Tiwari  ,MUMBAI,169378.0,5541648.0
+1763,Suresh Yadav,Mumbai,169831.0,5711479.0
+1775,Manish Tiwari,MUMBAI,150259.0,5861738.0
+1780,Nisha Thakur  ,mumbai,149940.0,6011678.0
+1806,kavita iyer,MUMBAI,128194.0,6139872.0
+1810,Varun Khanna,Mumbai,110646.0,6250518.0
+1824,Arjun Malhotra,mumbai,187587.0,6438105.0
+1851,Tanvi Deshmukh,MUMBAI,60130.0,6498235.0
+1852,Neha Verma,Mumbai,165210.0,6663445.0
+1855,Rajesh Mehta,mumbai,178906.0,6842351.0
+1877,Abhishek Jain,mumbai,43117.0,6885468.0
+1891,Neha Verma,MUMBAI,194111.0,7079579.0
+1927,Karan Bhat,mumbai,39805.0,7119384.0
+1941,Sanjay Pandey,Mumbai,86277.0,7205661.0
+1951,Kavita Iyer,MUMBAI,192683.0,7398344.0
+1962,Arjun Malhotra,MUMBAI,103441.0,7501785.0
+1968,Priya Patel,mumbai,124755.0,7626540.0
+1970,Megha Pillai,Mumbai,48166.0,7674706.0
+1994,Harsh Bansal,MUMBAI,93202.0,7767908.0
+1997,Aarav Sharma,Mumbai,55013.0,7822921.0
+1000,Anjali Nair,new delhi,182915.0,182915.0
+1000,Ritu Chauhan  ,New Delhi,94045.0,276960.0
+1000,Sanjay Pandey,New Delhi,165568.0,442528.0
+1000,Shruti Menon  ,new delhi,180313.0,622841.0
+1066,Harsh Bansal,new delhi,63397.0,686238.0
+1076,Vivek Kapoor,new delhi,29019.0,715257.0
+1129,Ritu Chauhan,new delhi,49366.0,764623.0
+1130,BHAVNA HEGDE,New Delhi,54605.0,819228.0
+1154,Ishita Roy,New Delhi,160723.0,979951.0
+1160,Kunal Srivastava,New Delhi,158809.0,1138760.0
+1169,Tushar Dubey,new delhi,120440.0,1259200.0
+1234,Amit Kumar,new delhi,110709.0,1369909.0
+1235,Kavita Iyer,new delhi,60255.0,1430164.0
+1241,Rohit Singh,new delhi,-4672.0,1425492.0
+1269,Varun Khanna,new delhi,99803.0,1525295.0
+1280,Sneha Gupta,new delhi,77526.0,1602821.0
+1297,Varun Khanna,new delhi,28484.0,1631305.0
+1308,Suresh Yadav,new delhi,82770.0,1714075.0
+1310,Nisha Thakur  ,new delhi,34003.0,1748078.0
+1343,Megha Pillai,New Delhi,107239.0,1855317.0
+1376,Tanvi Deshmukh,new delhi,-4489.0,1850828.0
+1380,Sneha Gupta,new delhi,43550.0,1894378.0
+1420,Aarav Sharma,new delhi,104417.0,1998795.0
+1433,Amit Kumar,New Delhi,97958.0,2096753.0
+1440,Nikhil Agarwal,New Delhi,179614.0,2276367.0
+1461,Nikhil Agarwal,new delhi,89722.0,2366089.0
+1540,Aarav Sharma,new delhi,50159.0,2416248.0
+1541,Arjun Malhotra,New Delhi,133011.0,2549259.0
+1542,Tanvi Deshmukh,New Delhi,169233.0,2718492.0
+1550,Amit Kumar  ,new delhi,36502.0,2754994.0
+1578,Tushar Dubey,new delhi,168160.0,2923154.0
+1614,Vivek Kapoor,new delhi,47315.0,2970469.0
+1629,Divya Saxena,new delhi,105106.0,3075575.0
+1665,Aarav Sharma,New Delhi,179272.0,3254847.0
+1666,Priya Patel,new delhi,118393.0,3373240.0
+1674,Divya Saxena,new delhi,174075.0,3547315.0
+1713,abhishek jain,new delhi,191915.0,3739230.0
+1724,Harsh Bansal,New Delhi,,3739230.0
+1757,Nikhil Agarwal,New Delhi,45017.0,3784247.0
+1875,Pallavi Rao,new delhi,178402.0,3962649.0
+1919,Rajesh Mehta,New Delhi,31071.0,3993720.0
+1921,Sanjay Pandey,New Delhi,138086.0,4131806.0
+1930,Varun Khanna,new delhi,27369.0,4159175.0
+1932,Pooja Reddy,new delhi,86951.0,4246126.0
+1976,Ritu Chauhan,New Delhi,144892.0,4391018.0
+1993,Varun Khanna,New Delhi,108106.0,4499124.0
+1000,Ananya Bose,Pune,181732.0,181732.0
+1000,ISHITA ROY,Pune,93724.0,275456.0
+1000,simran gill,pune,,275456.0
+1061,Varun Khanna,Pune,66864.0,342320.0
+1065,Rajesh Mehta,PUNE,107248.0,449568.0
+1070,Karan Bhat,PUNE,150352.0,599920.0
+1074,Rajesh Mehta,Pune,176023.0,775943.0
+1086,Abhishek Jain,PUNE,134655.0,910598.0
+1106,AMIT KUMAR,pune,141242.0,1051840.0
+1111,Pallavi Rao  ,pune,108759.0,1160599.0
+1123,Ritu Chauhan,pune,105500.0,1266099.0
+1125,Nikhil Agarwal,Pune,189282.0,1455381.0
+1126,ISHITA ROY,Pune,30744.0,1486125.0
+1147,Tanvi Deshmukh,pune,83431.0,1569556.0
+1151,Arjun Malhotra,Pune,161252.0,1730808.0
+1155,Arjun Malhotra,pune,172631.0,1903439.0
+1158,Nikhil Agarwal,pune,87164.0,1990603.0
+1162,Karan Bhat,pune,69723.0,2060326.0
+1173,Divya Saxena,Pune,,2060326.0
+1178,Sneha Gupta,Pune,96122.0,2156448.0
+1184,nisha thakur,PUNE,57386.0,2213834.0
+1187,Kunal Srivastava,pune,119421.0,2333255.0
+1188,Kunal Srivastava,PUNE,107965.0,2441220.0
+1201,Ritu Chauhan,pune,148006.0,2589226.0
+1207,Priya Patel,PUNE,199222.0,2788448.0
+1221,Priya Patel,PUNE,132922.0,2921370.0
+1224,Divya Saxena,PUNE,47905.0,2969275.0
+1236,Rohit Singh  ,pune,178083.0,3147358.0
+1245,Kunal Srivastava,Pune,59998.0,3207356.0
+1248,Kunal Srivastava,PUNE,187439.0,3394795.0
+1249,Ananya Bose,pune,94142.0,3488937.0
+1258,Kunal Srivastava,Pune,127333.0,3616270.0
+1271,Meera Kulkarni,Pune,156185.0,3772455.0
+1292,Deepika Das,Pune,45062.0,3817517.0
+1295,Amit Kumar,PUNE,36537.0,3854054.0
+1301,Rajesh Mehta,pune,26095.0,3880149.0
+1302,Ananya Bose,PUNE,88531.0,3968680.0
+1323,Aarav Sharma,Pune,35552.0,4004232.0
+1338,Shruti Menon,Pune,180694.0,4184926.0
+1345,vikram joshi,pune,77290.0,4262216.0
+1360,Arjun Malhotra,PUNE,61113.0,4323329.0
+1425,Nisha Thakur,Pune,171186.0,4494515.0
+1427,Deepika Das,PUNE,190222.0,4684737.0
+1451,Harsh Bansal  ,pune,56530.0,4741267.0
+1458,Kavita Iyer,Pune,166095.0,4907362.0
+1475,Karan Bhat,PUNE,87303.0,4994665.0
+1480,Aditya Choudhury,Pune,173578.0,5168243.0
+1482,Divya Saxena,PUNE,136283.0,5304526.0
+1483,Aarav Sharma,Pune,189135.0,5493661.0
+1486,Ananya Bose,pune,74882.0,5568543.0
+1504,Pooja Reddy,pune,,5568543.0
+1527,Ritu Chauhan,pune,92655.0,5661198.0
+1530,Vivek Kapoor  ,Pune,121145.0,5782343.0
+1533,Nisha Thakur,PUNE,110697.0,5893040.0
+1564,Gaurav Sinha,Pune,185399.0,6078439.0
+1580,Rahul Chopra,pune,55142.0,6133581.0
+1607,nisha thakur,Pune,89619.0,6223200.0
+1627,Ananya Bose,pune,,6223200.0
+1630,Amit Kumar,PUNE,169826.0,6393026.0
+1633,Priya Patel,Pune,168587.0,6561613.0
+1639,Divya Saxena,PUNE,122739.0,6684352.0
+1642,Aarav Sharma,Pune,175471.0,6859823.0
+1651,Ritu Chauhan,pune,27897.0,6887720.0
+1654,Manish Tiwari,PUNE,184382.0,7072102.0
+1658,Ritu Chauhan,PUNE,25756.0,7097858.0
+1678,Aditya Choudhury,Pune,48337.0,7146195.0
+1683,Priya Patel  ,pune,55093.0,7201288.0
+1685,Tanvi Deshmukh,Pune,,7201288.0
+1694,Neha Verma,Pune,183488.0,7384776.0
+1702,Priya Patel,Pune,195562.0,7580338.0
+1706,Arjun Malhotra,Pune,192774.0,7773112.0
+1717,Kunal Srivastava,PUNE,164274.0,7937386.0
+1723,Harsh Bansal,pune,101519.0,8038905.0
+1740,Swati Mishra,PUNE,46622.0,8085527.0
+1742,ANJALI NAIR,Pune,110134.0,8195661.0
+1749,Ishita Roy,PUNE,51412.0,8247073.0
+1754,Megha Pillai,PUNE,148773.0,8395846.0
+1759,Amit Kumar,pune,125485.0,8521331.0
+1768,Swati Mishra,Pune,34068.0,8555399.0
+1777,Rohit Singh  ,Pune,114834.0,8670233.0
+1784,Sneha Gupta,pune,143324.0,8813557.0
+1787,Suresh Yadav,PUNE,,8813557.0
+1800,Nikhil Agarwal  ,pune,,8813557.0
+1820,Neha Verma,PUNE,126975.0,8940532.0
+1828,Tushar Dubey,pune,162032.0,9102564.0
+1831,Aditya Choudhury,pune,65070.0,9167634.0
+1840,Suresh Yadav,Pune,114198.0,9281832.0
+1846,Harsh Bansal,PUNE,32516.0,9314348.0
+1857,Swati Mishra,pune,88570.0,9402918.0
+1886,Swati Mishra,PUNE,44175.0,9447093.0
+1896,Simran Gill,PUNE,148213.0,9595306.0
+1911,Shruti Menon,PUNE,168928.0,9764234.0
+1915,Rajesh Mehta,PUNE,191476.0,9955710.0
+1923,Bhavna Hegde,PUNE,40549.0,9996259.0
+1929,rohit singh,Pune,142022.0,10138281.0
+1940,Anjali Nair,pune,65403.0,10203684.0
+1943,Simran Gill,Pune,89391.0,10293075.0
+1948,Megha Pillai,PUNE,114135.0,10407210.0
+1963,deepika das,Pune,0.0,10407210.0
+1969,ANJALI NAIR,Pune,47636.0,10454846.0
+1980,Shruti Menon,pune,61119.0,10515965.0
+1981,Gaurav Sinha,PUNE,69751.0,10585716.0
+1999,Ananya Bose,Pune,113623.0,10699339.0

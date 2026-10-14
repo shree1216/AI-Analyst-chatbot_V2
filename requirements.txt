@@ -1,0 +1,11 @@
+streamlit
+pandas
+SQLAlchemy
+pyodbc
+openpyxl
+openai
+python-dotenv
+azure-cognitiveservices-speech
+Pillow
+plotly
+reportlab
