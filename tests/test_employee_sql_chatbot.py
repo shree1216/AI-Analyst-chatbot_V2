@@ -207,6 +207,60 @@ class WorkforceTests(unittest.TestCase):
         self.assertIn("Department Salary Profile", copy_response.call_args.args[0])
         self.assertIn("Key Findings", copy_response.call_args.args[0])
 
+    def test_recall_uses_previous_question_without_model(self):
+        turns = (("user", PAY_QUESTION), ("assistant", "Finance has the highest average pay."))
+        with patch.object(self.chatbot, "get_azure_openai_client") as client:
+            answer = self.chatbot.answer_general_question("do you remember what i asked you before", turns)
+        self.assertIn(PAY_QUESTION, answer)
+        client.assert_not_called()
+
+    def test_recall_without_history_does_not_invent_messages(self):
+        answer = self.chatbot.answer_general_question("What was my previous question?", ())
+        self.assertIn("no earlier messages", answer)
+
+    def test_general_answer_receives_prior_turns_once(self):
+        turns = (("user", "Explain headcount"), ("assistant", "It counts employees."))
+        with patch.dict(os.environ, {"AZURE_OPENAI_DEPLOYMENT_MINI": "test"}), patch.object(
+            self.chatbot, "get_azure_openai_client"
+        ) as client:
+            client.return_value.chat.completions.create.return_value.choices[0].message.content = "A useful metric."
+            self.chatbot.answer_general_question("Why is that useful?", turns)
+        messages = client.return_value.chat.completions.create.call_args.kwargs["messages"]
+        self.assertEqual(messages[1:], [
+            {"role": "user", "content": "Explain headcount"},
+            {"role": "assistant", "content": "It counts employees."},
+            {"role": "user", "content": "Why is that useful?"},
+        ])
+
+    def test_context_is_bounded_and_excludes_internal_fields(self):
+        messages = [{"question": f"Question {index}", "answer": "a" * 5000, "sql": "private SQL"} for index in range(10)]
+        context = self.chatbot.conversation_context(messages)
+        self.assertEqual(len(context), 12)
+        self.assertEqual(context[0], ("user", "Question 4"))
+        self.assertTrue(context[1][1].endswith("[truncated]"))
+        self.assertNotIn("private SQL", str(context))
+
+    def test_recall_question_is_not_routed_to_employee_sql(self):
+        with patch.object(self.chatbot, "generate_employee_query") as query:
+            request = self.chatbot.translate_question("What did I ask about employee salary before?")
+        self.assertIsNone(request)
+        query.assert_not_called()
+
+    def test_chat_recall_survives_rerun_and_new_chat_clears_context(self):
+        with patch("sqlalchemy.engine.Engine.connect"), patch("pandas.read_sql", return_value=self.result):
+            app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+            app.chat_input[0].set_value(PAY_QUESTION).run(timeout=30)
+            app.chat_input[0].set_value("do you remember what i asked you before").run(timeout=30)
+            self.assertEqual(len(app.exception), 0)
+            answer = app.session_state["chat_history"][-1]["answer"]
+            self.assertIn(PAY_QUESTION, answer)
+            app.run(timeout=30)
+            self.assertEqual(app.session_state["chat_history"][-1]["answer"], answer)
+            app.button(key="new_chat").click().run(timeout=30)
+            app.chat_input[0].set_value("do you remember what i asked you before").run(timeout=30)
+            self.assertEqual(len(app.exception), 0)
+            self.assertIn("no earlier messages", app.session_state["chat_history"][-1]["answer"])
+
     def test_repeated_reports_have_independent_widgets(self):
         with patch("sqlalchemy.engine.Engine.connect"), patch("pandas.read_sql", return_value=self.result):
             app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)

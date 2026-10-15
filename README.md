@@ -82,6 +82,9 @@ guardrail, not a replacement for database permissions or access controls.
 - Optional Azure OpenAI support for generated SQL and response summaries.
 - Optional Azure Speech support for voice input and spoken responses.
 - Optional SMTP support for emailing PDF reports.
+- General answers use the last six exchanges in the current chat, with long
+    messages shortened. Previous-question recall uses actual session history.
+    **New chat** clears that history; it is not persistent memory across sessions.
 - Analyze uploaded JPG, PNG, and WebP images when Azure OpenAI is configured.
 
 ## Technology
