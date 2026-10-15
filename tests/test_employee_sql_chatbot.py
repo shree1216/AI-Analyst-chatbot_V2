@@ -59,6 +59,92 @@ class WorkforceTests(unittest.TestCase):
         self.assertEqual(request.parameters, {"department": "Sales"})
         self.assertIn("WHERE [department] = :department", request.sql)
 
+    def test_status_pie_includes_all_named_statuses(self):
+        request = self.chatbot.translate_question(
+            "Create a pie chart showing the proportion of Active, On Leave and Inactive employees"
+        )
+        self.assertEqual(request.response_kind, "chart_employee_count")
+        self.assertNotIn("status", request.parameters)
+        self.assertIn("GROUP BY [status]", request.sql)
+
+    def test_chart_types_follow_explicit_request(self):
+        result = pd.DataFrame({"group": ["IT", "Sales"], "value": [3, 4]})
+        for kind, trace_type, orientation in (
+            ("pie", "pie", None), ("donut", "pie", None),
+            ("bar", "bar", "h"), ("column", "bar", "v"),
+            ("line", "scatter", None),
+        ):
+            with self.subTest(kind=kind):
+                chart = self.chatbot.create_query_chart(result, "Employees", "Employees", kind)
+                self.assertEqual(chart.data[0].type, trace_type)
+                if orientation:
+                    self.assertEqual(chart.data[0].orientation, orientation)
+
+    def test_monthly_chart_uses_join_dates_and_chronological_order(self):
+        request = self.chatbot.translate_question("Show a line chart of monthly employee joinings")
+        self.assertIn("DATEFROMPARTS", request.sql)
+        self.assertIn("ORDER BY chart_group", request.sql)
+
+    def test_status_report_preserves_requested_pie_chart(self):
+        report = self.chatbot.build_business_report(
+            "Create a PDF report with a pie chart of Active, On Leave and Inactive employees",
+            self.result,
+        )
+        chart = self.chatbot.create_report_chart(report)
+        self.assertEqual(chart.data[0].type, "pie")
+        self.assertEqual(set(chart.data[0].labels), {"Active", "On Leave", "Inactive"})
+        self.assertEqual(sum(chart.data[0].values), len(self.result))
+
+    def test_automatic_chart_selection(self):
+        for question, dimension, expected in (
+            ("Show employee proportions", "department", "pie"),
+            ("Chart employee status", "status", "pie"),
+            ("Chart monthly joinings", "join_date", "line"),
+            ("Chart employees by job title", "job_title", "bar"),
+            ("Chart average salary by department", "department", "column"),
+        ):
+            with self.subTest(question=question):
+                self.assertEqual(self.chatbot.chart_type_for(question, dimension), expected)
+
+    def test_chart_keeps_explicit_single_status_filter(self):
+        request = self.chatbot.translate_question("Show a column chart of Active employees by department")
+        self.assertEqual(request.parameters, {"status": "Active"})
+        self.assertIn("GROUP BY [department]", request.sql)
+
+    def test_temporal_report_sorted_by_date(self):
+        result = self.result.assign(join_date=["2024-03-01", "2024-01-01", "2024-03-02", "2024-02-01", "2024-01-02", "2024-03-03"])
+        report = self.chatbot.build_business_report("Monthly joinings PDF report", result)
+        chart = self.chatbot.create_report_chart(report)
+        self.assertEqual(chart.data[0].type, "scatter")
+        self.assertEqual(list(chart.data[0].x), ["2024-01", "2024-02", "2024-03"])
+        self.assertEqual(list(chart.data[0].y), [2, 1, 3])
+        self.assertIn("largest group is 2024-03", report.executive_summary)
+
+    def test_pdf_chart_types_match_request(self):
+        for kind, expected_class in (
+            ("pie", "Pie"), ("donut", "Pie"), ("bar", "HorizontalBarChart"),
+            ("column", "VerticalBarChart"), ("line", "HorizontalLineChart"),
+        ):
+            with self.subTest(kind=kind):
+                question = f"Create a department report with a {kind} chart"
+                report = self.chatbot.build_business_report(question, self.result)
+                drawing = self.chatbot.report_pdf_chart(report)
+                self.assertEqual(type(drawing.contents[-1]).__name__, expected_class)
+                pdf = self.chatbot.generate_business_report_pdf(question, report, None)
+                self.assertTrue(pdf.startswith(b"%PDF-"))
+                self.assertTrue(pdf.rstrip().endswith(b"%%EOF"))
+
+    def test_long_chart_summary_is_concise(self):
+        result = pd.DataFrame({"chart_group": [f"Group {index}" for index in range(30)], "chart_value": [2] * 30})
+        request = self.chatbot.translate_question("Show a line chart of monthly employee joinings")
+        answer = self.chatbot.deterministic_response(result, request)
+        self.assertIn("60 employees across 30 groups", answer)
+        self.assertLess(len(answer), 200)
+
+    def test_pdf_table_retains_all_groups(self):
+        table = pd.DataFrame({"Group": range(30), "Headcount": [2] * 30})
+        self.assertEqual(len(self.chatbot.report_pdf_table(table)._cellvalues), 31)
+
     def test_pronoun_it_does_not_filter_department(self):
         request = self.chatbot.translate_question("Create a department pay report and email it to me")
         self.assertEqual(request.parameters, {})
@@ -101,6 +187,25 @@ class WorkforceTests(unittest.TestCase):
         self.assertTrue(pdf.startswith(b"%PDF-"))
         self.assertTrue(pdf.rstrip().endswith(b"%%EOF"))
         self.assertGreater(len(pdf), 1000)
+
+    def test_copy_component_passes_text_as_data_with_independent_keys(self):
+        answer = '<script>alert("test")</script>\nEmployee count: 6'
+        with patch.object(self.chatbot, "copy_response_component") as component:
+            self.chatbot.render_copy_response(answer, "first")
+            self.chatbot.render_copy_response("Another answer", "second")
+        self.assertEqual(component.call_args_list[0].kwargs, {
+            "data": {"text": answer}, "key": "copy_response_first",
+        })
+        self.assertEqual(component.call_args_list[1].kwargs["key"], "copy_response_second")
+
+    def test_report_copy_includes_tables_and_findings(self):
+        report = self.chatbot.build_business_report(PAY_QUESTION, self.result)
+        with patch.object(self.chatbot, "render_copy_response") as copy_response:
+            summary = self.chatbot.display_business_report(PAY_QUESTION, self.result, "report_test")
+        copy_response.assert_called_once_with(self.chatbot.business_report_markdown(report), "report_test")
+        self.assertEqual(summary, report.executive_summary)
+        self.assertIn("Department Salary Profile", copy_response.call_args.args[0])
+        self.assertIn("Key Findings", copy_response.call_args.args[0])
 
     def test_repeated_reports_have_independent_widgets(self):
         with patch("sqlalchemy.engine.Engine.connect"), patch("pandas.read_sql", return_value=self.result):

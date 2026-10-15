@@ -20,7 +20,9 @@ import streamlit as st
 from dotenv import load_dotenv
 from openai import AzureOpenAI
 from PIL import Image
-from reportlab.graphics.charts.barcharts import VerticalBarChart
+from reportlab.graphics.charts.barcharts import HorizontalBarChart, VerticalBarChart
+from reportlab.graphics.charts.linecharts import HorizontalLineChart
+from reportlab.graphics.charts.piecharts import Pie
 from reportlab.graphics.shapes import Drawing, String
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import landscape, letter
@@ -135,6 +137,7 @@ class SqlRequest:
     response_field: str | None = None
     distinct_label: str | None = None
     rank_position: int | None = None
+    chart_type: str | None = None
 
 
 @dataclass
@@ -146,6 +149,63 @@ class BusinessReport:
     recommendations: list[str]
     limitations: list[str]
     follow_up: str
+    chart_type: str = "column"
+
+
+copy_response_component = st.components.v2.component(
+    "copy_response",
+    html='''
+        <button type="button" title="Copy response" aria-label="Copy response">
+            <span class="copy-icon" aria-hidden="true">content_copy</span>
+            <span class="copy-label">Copy</span>
+        </button>
+        <span class="copy-status" role="status" aria-live="polite"></span>
+        <textarea aria-label="Response text to copy manually" readonly hidden></textarea>
+    ''',
+    css='''
+        button {
+            display: inline-flex; align-items: center; gap: 5px;
+            min-width: 76px; height: 32px; padding: 4px 8px;
+            background: transparent; border: 1px solid transparent;
+            border-radius: 4px; color: #6B6558; cursor: pointer;
+            font: inherit; font-size: 13px;
+        }
+        button:hover { background: #EFEDE4; color: #147D73; }
+        button:focus-visible { outline: 2px solid #147D73; outline-offset: 2px; }
+        .copy-icon { font-family: "Material Symbols Rounded"; font-size: 16px; }
+        .copy-status { font: inherit; font-size: 12px; }
+        textarea { width: 100%; height: 100px; box-sizing: border-box; }
+    ''',
+    js='''
+        export default function(component) {
+            const { parentElement, data } = component;
+            const button = parentElement.querySelector('button');
+            const label = parentElement.querySelector('.copy-label');
+            const status = parentElement.querySelector('.copy-status');
+            const fallback = parentElement.querySelector('textarea');
+            button.onclick = async () => {
+                try {
+                    await navigator.clipboard.writeText(data.text);
+                    label.textContent = 'Copied';
+                    status.textContent = 'Response copied.';
+                    fallback.hidden = true;
+                } catch {
+                    label.textContent = 'Copy';
+                    status.textContent = 'Clipboard unavailable. Select and copy the text below.';
+                    fallback.value = data.text;
+                    fallback.hidden = false;
+                    fallback.focus();
+                    fallback.select();
+                }
+            };
+            return () => { button.onclick = null; };
+        }
+    ''',
+)
+
+
+def render_copy_response(answer: str, render_key: str) -> None:
+    copy_response_component(data={"text": answer}, key=f"copy_response_{render_key}")
 
 
 @st.cache_resource
@@ -250,6 +310,54 @@ def needs_generated_employee_query(question: str) -> bool:
     return comparative_average or any(term in question for term in analytical_terms)
 
 
+def chart_type_for(question: str, dimension: str = "department") -> str:
+    normalized = question.lower()
+    for pattern, kind in (
+        (r"\b(donut|doughnut)\b", "donut"),
+        (r"\bpie\b", "pie"),
+        (r"\bline\s*(chart|graph|plot)\b", "line"),
+        (r"\b(column|vertical)\b", "column"),
+        (r"\b(bar|horizontal)\b", "bar"),
+    ):
+        if re.search(pattern, normalized):
+            return kind
+    if dimension == "join_date":
+        return "line"
+    if not re.search(r"\b(salary|salaries|pay)\b", normalized) and (
+        dimension in {"status", "gender"}
+        or re.search(r"\b(proportions?|shares?|percentages?)\b", normalized)
+    ):
+        return "pie"
+    return "bar" if dimension == "job_title" else "column"
+
+
+def chart_dimension(question: str) -> tuple[str, str]:
+    if re.search(r"\b(monthly|months?|yearly|years?|annual|trend)\b|over time", question):
+        return "join_date", "Joining year" if re.search(r"\b(yearly|years?|annual)\b", question) else "Joining month"
+    if "status" in question or sum(
+        bool(re.search(rf"\b{re.escape(status.lower())}\b", question)) for status in STATUSES
+    ) > 1:
+        return "status", "Employment status"
+    for phrase, column, label in REPORT_DIMENSIONS:
+        if phrase in question:
+            return column, label
+    return "department", "Department"
+
+
+def visual_filters(question: str) -> tuple[str, dict[str, Any]]:
+    mentioned_statuses = [
+        status for status in STATUSES
+        if re.search(rf"\b{re.escape(status.lower())}\b", question)
+    ]
+    where_clause, parameters = filters_for(question, {"status"} if len(mentioned_statuses) > 1 else set())
+    if len(mentioned_statuses) > 1:
+        status_parameters = {f"status_{index}": status for index, status in enumerate(mentioned_statuses)}
+        where_clause += " AND " if where_clause else " WHERE "
+        where_clause += "[status] IN (" + ", ".join(f":{name}" for name in status_parameters) + ")"
+        parameters.update(status_parameters)
+    return where_clause, parameters
+
+
 def translate_question(question: str) -> SqlRequest | None:
     normalized = question.lower().strip()
     where_clause, parameters = filters_for(normalized)
@@ -281,13 +389,7 @@ def translate_question(question: str) -> SqlRequest | None:
         )
 
     if any(term in normalized for term in REPORT_INTENT_TERMS):
-        reported_columns = (
-            {"status"}
-            if "employment status" in normalized
-            or re.search(r"\bstatus(?:es)?\s+(?:breakdown|distribution|overview)\b", normalized)
-            else set()
-        )
-        where_clause, parameters = filters_for(normalized, reported_columns)
+        where_clause, parameters = visual_filters(normalized)
         return SqlRequest(
             f"SELECT [emp_id], [name], [age], [gender], [department], [city], [status], "
             f"[job_title], [salary], [join_date] FROM {TABLE}{where_clause} ORDER BY [emp_id]",
@@ -297,27 +399,27 @@ def translate_question(question: str) -> SqlRequest | None:
         )
 
     if any(term in normalized for term in CHART_INTENT_TERMS):
-        if any(term in normalized for term in ("department", "team")):
-            chart_column, chart_label = "department", "Department"
-        elif any(term in normalized for term in ("city", "location")):
-            chart_column, chart_label = "city", "Location"
-        else:
-            chart_column, chart_label = "department", "Department"
-
-        if "salary" in normalized or "pay" in normalized:
-            return SqlRequest(
-                f"SELECT [{chart_column}] AS chart_group, AVG(CAST([salary] AS FLOAT)) AS chart_value "
-                f"FROM {TABLE}{where_clause} GROUP BY [{chart_column}] ORDER BY chart_value DESC",
-                parameters,
-                f"Charting average salary by {chart_label.lower()}.",
-                response_kind="chart_average_salary",
+        chart_column, chart_label = chart_dimension(normalized)
+        where_clause, parameters = visual_filters(normalized)
+        group_expression = f"[{chart_column}]"
+        ordering = "chart_value DESC"
+        if chart_column == "join_date":
+            group_expression = (
+                "YEAR([join_date])" if chart_label == "Joining year"
+                else "DATEFROMPARTS(YEAR([join_date]), MONTH([join_date]), 1)"
             )
+            where_clause += (" AND " if where_clause else " WHERE ") + "[join_date] IS NOT NULL"
+            ordering = "chart_group"
+        is_salary = bool(re.search(r"\b(salary|salaries|pay)\b", normalized))
+        metric = "AVG(CAST([salary] AS FLOAT))" if is_salary else "COUNT(*)"
+        metric_label = "average salary" if is_salary else "employee count"
         return SqlRequest(
-            f"SELECT [{chart_column}] AS chart_group, COUNT(*) AS chart_value "
-            f"FROM {TABLE}{where_clause} GROUP BY [{chart_column}] ORDER BY chart_value DESC",
+            f"SELECT {group_expression} AS chart_group, {metric} AS chart_value "
+            f"FROM {TABLE}{where_clause} GROUP BY {group_expression} ORDER BY {ordering}",
             parameters,
-            f"Charting employee count by {chart_label.lower()}.",
-            response_kind="chart_employee_count",
+            f"{metric_label.title()} by {chart_label.lower()}.",
+            response_kind="chart_average_salary" if is_salary else "chart_employee_count",
+            chart_type=chart_type_for(normalized, chart_column),
         )
 
     field = requested_field(question)
@@ -768,6 +870,11 @@ def deterministic_response(result: pd.DataFrame, request: SqlRequest) -> str:
         return f"Top {rank_limit} highest-paid employees: {employees}."
 
     if request.response_kind == "chart_employee_count":
+        if len(result) > MAX_SUMMARY_ROWS:
+            return (
+                f"The chart shows {int(result['chart_value'].sum()):,} employees across "
+                f"{len(result):,} groups. {request.explanation}"
+            )
         counts = ", ".join(
             f"{row.chart_group}: {format_value(row.chart_value, 'employee_count')}"
             for row in result.itertuples(index=False)
@@ -775,6 +882,8 @@ def deterministic_response(result: pd.DataFrame, request: SqlRequest) -> str:
         return f"Employee count chart data: {counts}."
 
     if request.response_kind == "chart_average_salary":
+        if len(result) > MAX_SUMMARY_ROWS:
+            return f"The chart compares average salary across {len(result):,} groups. {request.explanation}"
         salaries = ", ".join(
             f"{row.chart_group}: {format_value(row.chart_value, 'salary')}"
             for row in result.itertuples(index=False)
@@ -815,6 +924,9 @@ def deterministic_response(result: pd.DataFrame, request: SqlRequest) -> str:
 
 def report_dimensions(question: str) -> list[tuple[str, str]]:
     normalized = question.lower()
+    primary_column, primary_label = chart_dimension(normalized)
+    if primary_column in {"join_date", "status"}:
+        return [(primary_column, primary_label)]
     dimensions: list[tuple[str, str]] = []
     used_columns: set[str] = set()
     for phrase, column, label in REPORT_DIMENSIONS:
@@ -871,11 +983,20 @@ def build_business_report(question: str, result: pd.DataFrame) -> BusinessReport
         if column not in result.columns:
             limitations.append(f"{label} is not available in the employee data.")
             continue
-        breakdown = count_breakdown(result, column, label)
+        grouped_result = result
+        if column == "join_date":
+            dates = pd.to_datetime(result[column], errors="coerce")
+            grouped_result = result.assign(join_date=dates.dt.strftime("%Y" if label == "Joining year" else "%Y-%m"))
+            limitations.append("Joining-date groups describe employees in this snapshot, not historical workforce size or attrition.")
+        breakdown = count_breakdown(grouped_result, column, label)
+        if breakdown.empty:
+            continue
+        if column == "join_date":
+            breakdown = breakdown.sort_values(label)
         if int(breakdown["Headcount"].sum()) != total_headcount:
             limitations.append(f"{label} could not be reconciled to the total headcount.")
             continue
-        largest = breakdown.iloc[0]
+        largest = breakdown.loc[breakdown["Headcount"].idxmax()]
         interpretation = (
             f"{largest[label]} is the largest {label.lower()} group with "
             f"{int(largest['Headcount']):,} employees ({largest['Percentage of total']:.1f}% of headcount)."
@@ -905,6 +1026,8 @@ def build_business_report(question: str, result: pd.DataFrame) -> BusinessReport
     title_parts = " and ".join(label.lower() for _, label in dimensions)
     title = "Department Pay Report" if is_department_pay_report else f"Workforce Report: {title_parts.title()}"
     largest_table = tables[0][1] if tables else pd.DataFrame()
+    if not largest_table.empty:
+        largest_table = largest_table.sort_values("Headcount", ascending=False)
     executive_summary = f"This report includes {total_headcount:,} employees."
     if not largest_table.empty:
         leading_column = largest_table.columns[0]
@@ -957,6 +1080,7 @@ def build_business_report(question: str, result: pd.DataFrame) -> BusinessReport
         recommendations=recommendations,
         limitations=limitations,
         follow_up="Create a tenure and attrition report to identify groups with potential retention risk.",
+        chart_type=chart_type_for(question, dimensions[0][0]),
     )
 
 
@@ -988,59 +1112,62 @@ def create_report_chart(report: BusinessReport):
     metric = "Average salary" if "Average salary" in table.columns else "Headcount"
     if metric not in table.columns:
         return None
-    category_column = table.columns[0]
-    figure = px.bar(
-        table,
-        x=category_column,
-        y=metric,
-        text=metric,
-        color_discrete_sequence=["#0F766E"],
+    return create_query_chart(
+        table[[table.columns[0], metric]],
+        f"{report.title} - {heading}",
+        "Average salary (INR)" if metric == "Average salary" else "Employees",
+        report.chart_type,
     )
-    figure.update_layout(
-        height=360,
-        margin={"l": 24, "r": 24, "t": 50, "b": 24},
-        paper_bgcolor="#F7F8FA",
-        plot_bgcolor="#FFFFFF",
-        showlegend=False,
-        title=f"{report.title} - {heading}",
-        xaxis_title=None,
-        yaxis_title="Average salary (INR)" if metric == "Average salary" else "Employees",
-    )
-    figure.update_traces(
-        textposition="outside",
-        cliponaxis=False,
-        texttemplate="%{y:,.2f}" if metric == "Average salary" else "%{y:,d}",
-    )
-    return figure
 
 
-def create_query_chart(result: pd.DataFrame, title: str, value_label: str):
+def create_query_chart(result: pd.DataFrame, title: str, value_label: str, chart_type: str = "column"):
     if result.empty or len(result.columns) != 2:
         return None
     category_column, value_column = result.columns
-    figure = px.bar(
-        result,
-        x=category_column,
-        y=value_column,
-        text=value_column,
-        color_discrete_sequence=["#0F766E"],
-    )
+    result = result.copy()
+    result[category_column] = result[category_column].fillna("Not recorded")
+    is_salary = "salary" in value_label.lower()
+    horizontal = chart_type == "bar"
+    if chart_type in {"pie", "donut"}:
+        figure = px.pie(
+            result, names=category_column, values=value_column,
+            hole=0.45 if chart_type == "donut" else 0,
+            color_discrete_sequence=["#0F766E", "#2563EB", "#D97706", "#DB2777", "#64748B", "#65A30D"],
+        )
+        figure.update_traces(textinfo="label+percent", sort=False)
+    elif chart_type == "line":
+        figure = px.line(result, x=category_column, y=value_column, markers=True, color_discrete_sequence=["#0F766E"])
+    else:
+        figure = px.bar(
+            result,
+            x=value_column if horizontal else category_column,
+            y=category_column if horizontal else value_column,
+            orientation="h" if horizontal else "v",
+            text=value_column,
+            color_discrete_sequence=["#0F766E"],
+        )
+        axis = "x" if horizontal else "y"
+        figure.update_traces(
+            textposition="outside", cliponaxis=False,
+            texttemplate="%{" + axis + (":,.2f}" if is_salary else ":,d}"),
+        )
+        if horizontal:
+            figure.update_yaxes(autorange="reversed")
     figure.update_layout(
-        height=360,
-        margin={"l": 24, "r": 24, "t": 50, "b": 24},
+        height=max(360, len(result) * 28 + 100) if horizontal else 400,
+        margin={"l": 24, "r": 48, "t": 70, "b": 40},
         paper_bgcolor="#F7F8FA",
         plot_bgcolor="#FFFFFF",
         showlegend=False,
         title=title,
-        xaxis_title=None,
-        yaxis_title=value_label,
+        xaxis_title=value_label if horizontal else None,
+        yaxis_title=None if horizontal else value_label,
     )
-    figure.update_traces(textposition="outside", cliponaxis=False)
     return figure
 
 
 def report_pdf_table(table: pd.DataFrame) -> Table:
-    display_table = table.head(MAX_SUMMARY_ROWS).copy()
+    display_table = table.copy()
     values = [list(display_table.columns)]
     for row in display_table.itertuples(index=False, name=None):
         rendered_row = []
@@ -1085,25 +1212,57 @@ def report_pdf_chart(report: BusinessReport) -> Drawing | None:
     metric = "Average salary" if "Average salary" in table.columns else "Headcount"
     if metric not in table.columns:
         return None
-    chart_table = table.head(10)
-    drawing = Drawing(700, 255)
-    drawing.add(String(20, 232, heading, fontName="Helvetica-Bold", fontSize=13))
-    chart = VerticalBarChart()
-    chart.x = 45
-    chart.y = 35
+    chart_table = table.dropna(subset=[metric])
+    if chart_table.empty:
+        return None
+    labels = [str(value) for value in chart_table.iloc[:, 0].tolist()]
+    values = chart_table[metric].astype(float).tolist()
+    metric_label = "Average salary (INR)" if metric == "Average salary" else "Employees"
+    drawing = Drawing(700, 290)
+    drawing.add(String(20, 268, f"{heading}: {metric_label}", fontName="Helvetica-Bold", fontSize=12))
+    if report.chart_type in {"pie", "donut"}:
+        if sum(values) <= 0 or min(values) < 0:
+            return None
+        chart = Pie()
+        chart.x, chart.y = 245, 35
+        chart.width, chart.height = 200, 200
+        chart.data = values
+        chart.labels = [f"{label}: {value / sum(values):.1%}" for label, value in zip(labels, values)]
+        chart.slices.fontSize = 9
+        chart.sideLabels = True
+        if report.chart_type == "donut":
+            chart.innerRadiusFraction = 0.45
+        palette = ["#0F766E", "#2563EB", "#D97706", "#DB2777", "#64748B", "#65A30D"]
+        for index in range(len(values)):
+            chart.slices[index].fillColor = colors.HexColor(palette[index % len(palette)])
+        drawing.add(chart)
+        return drawing
+    horizontal = report.chart_type == "bar"
+    if report.chart_type == "line":
+        chart = HorizontalLineChart()
+        chart.lines[0].strokeColor = colors.HexColor("#0F766E")
+        chart.lines[0].strokeWidth = 2
+    else:
+        chart = HorizontalBarChart() if horizontal else VerticalBarChart()
+        chart.bars[0].fillColor = colors.HexColor("#0F766E")
+    chart.x = 150 if horizontal else 65
+    chart.y = 65
     chart.height = 175
-    chart.width = 620
-    chart.data = [chart_table[metric].tolist()]
-    chart.categoryAxis.categoryNames = [str(value)[:18] for value in chart_table.iloc[:, 0].tolist()]
-    chart.categoryAxis.labels.angle = 25
-    chart.categoryAxis.labels.boxAnchor = "ne"
+    chart.width = 510 if horizontal else 600
+    chart.data = [list(reversed(values)) if horizontal else values]
+    chart.categoryAxis.categoryNames = list(reversed(labels)) if horizontal else labels
+    if not horizontal and len(labels) > 12:
+        label_step = (len(labels) + 11) // 12
+        chart.categoryAxis.categoryNames = [
+            label if index % label_step == 0 or index == len(labels) - 1 else ""
+            for index, label in enumerate(labels)
+        ]
+    chart.categoryAxis.labels.angle = 0 if horizontal else 30
+    chart.categoryAxis.labels.boxAnchor = "e" if horizontal else "ne"
     chart.categoryAxis.labels.fontSize = 7
     chart.valueAxis.valueMin = 0
-    chart.valueAxis.valueMax = max(chart_table[metric].max() * 1.15, 1)
+    chart.valueAxis.valueMax = max(max(values) * 1.15, 1)
     chart.valueAxis.labels.fontSize = 7
-    chart.barWidth = 18
-    chart.groupSpacing = 8
-    chart.bars[0].fillColor = colors.HexColor("#0F766E")
     drawing.add(chart)
     return drawing
 
@@ -1373,6 +1532,7 @@ def display_business_report(question: str, result: pd.DataFrame, render_key: str
                 st.success(status)
             else:
                 st.error(status)
+    render_copy_response(business_report_markdown(report), render_key)
     return report.executive_summary
 
 
@@ -1398,7 +1558,7 @@ def display_response(
     if request.response_kind in {"chart_employee_count", "chart_average_salary"}:
         metric_label = "Average salary" if request.response_kind == "chart_average_salary" else "Employees"
         chart_title = request.explanation.rstrip(".")
-        chart = create_query_chart(result, chart_title, metric_label)
+        chart = create_query_chart(result, chart_title, metric_label, request.chart_type or "column")
         if chart is not None:
             st.plotly_chart(
                 chart,
@@ -2232,7 +2392,8 @@ for index, message in enumerate(history):
             audio_response = synthesize_speech(answer)
             if audio_response:
                 st.audio(audio_response, format="audio/wav")
-        st.markdown(
-            '<div class="assistant-actions"><span title="Copy response">&#10697; Copy</span></div>',
-            unsafe_allow_html=True,
-        )
+        if answer and (
+            message.get("kind") == "image"
+            or getattr(message.get("request"), "response_kind", None) != "business_report"
+        ):
+            render_copy_response(answer, str(index))

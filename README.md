@@ -234,6 +234,11 @@ Open [http://localhost:8501](http://localhost:8501) in a browser.
 ```text
 How many employees are in each department?
 Show the average salary by department.
+Create a pie chart showing the proportion of Active, On Leave and Inactive employees.
+Show a donut chart of employees by gender.
+Show a bar graph of employee count by job title.
+Show a column chart of average salary by department.
+Show a line chart of monthly employee joinings.
 Create a workforce report showing the breakdown by employment status.
 Who are the top 3 highest-paid employees in each department?
 What is the email address for Shree?
@@ -249,6 +254,15 @@ Create a PDF report comparing department salaries.
 
 Department pay comparisons use the mean of the recorded employee salaries, not
 total payroll or a job-adjusted pay-equity calculation.
+
+Explicit pie, donut, horizontal bar, vertical column, and line chart requests
+are supported in the chat and PDF reports. Without an explicit type, status and
+gender proportions use pie charts, joining-date trends use lines, job-title
+comparisons use horizontal bars, and other comparisons use columns.
+For example, ask `Create a PDF report with a pie chart of employment status`.
+Monthly and yearly trends group the current employee snapshot by joining date;
+they do not reconstruct historical headcount or attrition. Missing-date records
+are excluded from time-series query charts, and only recorded periods are plotted.
 
 ## Tests
 
