@@ -161,20 +161,36 @@ def get_engine() -> Engine:
 
 def find_filter(question: str, values: list[str], column: str) -> tuple[str, dict[str, str]]:
     for value in values:
-        if re.search(rf"\b{re.escape(value.lower())}\b", question):
+        if column == "department" and value == "IT":
+            matches_value = any(
+                re.search(pattern, question)
+                for pattern in (
+                    r"\bit\s+(?:department|team|employees?|staff|workforce)\b",
+                    r"\b(?:department|team)\s+(?:is\s+)?it\b",
+                    r"\bin\s+(?:the\s+)?it(?:\s+department)?\b",
+                )
+            )
+        else:
+            matches_value = bool(re.search(rf"\b{re.escape(value.lower())}\b", question))
+        if matches_value:
             parameter_name = column
             return f"[{column}] = :{parameter_name}", {parameter_name: value}
     return "", {}
 
 
-def filters_for(question: str) -> tuple[str, dict[str, str]]:
+def filters_for(
+    question: str, excluded_columns: set[str] | None = None
+) -> tuple[str, dict[str, str]]:
     filters: list[str] = []
     parameters: dict[str, str] = {}
+    excluded_columns = excluded_columns or set()
     for values, column in (
         (DEPARTMENTS, "department"),
         (CITIES, "city"),
         (STATUSES, "status"),
     ):
+        if column in excluded_columns:
+            continue
         filter_sql, filter_parameters = find_filter(question, values, column)
         if filter_sql:
             filters.append(filter_sql)
@@ -265,6 +281,13 @@ def translate_question(question: str) -> SqlRequest | None:
         )
 
     if any(term in normalized for term in REPORT_INTENT_TERMS):
+        reported_columns = (
+            {"status"}
+            if "employment status" in normalized
+            or re.search(r"\bstatus(?:es)?\s+(?:breakdown|distribution|overview)\b", normalized)
+            else set()
+        )
+        where_clause, parameters = filters_for(normalized, reported_columns)
         return SqlRequest(
             f"SELECT [emp_id], [name], [age], [gender], [department], [city], [status], "
             f"[job_title], [salary], [join_date] FROM {TABLE}{where_clause} ORDER BY [emp_id]",
@@ -882,7 +905,7 @@ def build_business_report(question: str, result: pd.DataFrame) -> BusinessReport
     title_parts = " and ".join(label.lower() for _, label in dimensions)
     title = "Department Pay Report" if is_department_pay_report else f"Workforce Report: {title_parts.title()}"
     largest_table = tables[0][1] if tables else pd.DataFrame()
-    executive_summary = f"The employee dataset contains {total_headcount:,} employees."
+    executive_summary = f"This report includes {total_headcount:,} employees."
     if not largest_table.empty:
         leading_column = largest_table.columns[0]
         executive_summary += (
@@ -983,7 +1006,11 @@ def create_report_chart(report: BusinessReport):
         xaxis_title=None,
         yaxis_title="Average salary (INR)" if metric == "Average salary" else "Employees",
     )
-    figure.update_traces(textposition="outside", cliponaxis=False)
+    figure.update_traces(
+        textposition="outside",
+        cliponaxis=False,
+        texttemplate="%{y:,.2f}" if metric == "Average salary" else "%{y:,d}",
+    )
     return figure
 
 

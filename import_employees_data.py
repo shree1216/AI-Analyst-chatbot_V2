@@ -6,8 +6,8 @@ from sqlalchemy.engine import URL
 
 SERVER = r"localhost\SQLEXPRESS"
 DATABASE = "EmployeeDB"
-TABLE_NAME = "employees_data"
-EXCEL_FILE = Path(__file__).with_name("employees_data.xlsx")
+TABLE_NAME = "Employees"
+EXCEL_FILE = Path(__file__).with_name("employee_dataset.xlsx")
 
 master_url = URL.create(
     "mssql+pyodbc",
