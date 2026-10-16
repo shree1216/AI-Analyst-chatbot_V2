@@ -65,6 +65,39 @@ class WorkforceTests(unittest.TestCase):
         self.assertEqual(request.response_kind, "chart_employee_count")
         self.assertIn("GROUP BY [department]", request.sql)
 
+    def test_pasted_numbered_and_bulleted_questions_use_existing_local_routes(self):
+        cases = (
+            ("How many employees do we have?", "employee_count", {}),
+            ("How many employees are older than 30?", "column_query", {"filter_0": 30}),
+            ("Give details of EMP015.", "employee_details", {"emp_id": "emp015"}),
+            ("Whose number is 799.609.1699?", "phone_owner", {"phone_digits": "%7996091699%"}),
+            ("Count employees whose emails end with .org.", "email_suffix_count", {"email_suffix": ".org"}),
+            ("Show the three highest salaries in each department", "column_query", {"rank_limit": 3}),
+            ("Count employees with a performance rating above 4", "data_unavailable", {}),
+        )
+        for question, kind, parameters in cases:
+            for prefix in ("", "1. ", "2) ", "- ", "* ", "\u2022 "):
+                with self.subTest(question=prefix + question), patch.object(self.chatbot, "generate_employee_query") as planner:
+                    request = self.chatbot.translate_question(prefix + question)
+                    self.assertEqual(request.response_kind, kind)
+                    self.assertEqual(request.parameters, parameters)
+                    planner.assert_not_called()
+
+    def test_list_prefix_cleanup_preserves_numeric_values_and_extra_conditions(self):
+        for text in ("799.609.1699", "3.14", "-50000", "EMP015", "1.25 million employees"):
+            self.assertEqual(self.chatbot.strip_question_list_marker(text), text)
+        questions = (
+            "How many employees are older than 30 and in Sales?",
+            "Count employees whose emails end with .org and salary > 60000",
+            "Show name and salary for employees with age > 35",
+            "How many employees do we have?\n2. How many are female?",
+        )
+        for question in questions:
+            with self.subTest(question=question), patch.object(self.chatbot, "generate_employee_query", return_value=None) as planner:
+                request = self.chatbot.translate_question("1. " + question)
+                planner.assert_called_once_with(question)
+                self.assertEqual(request.response_kind, "query_clarification")
+
     def test_job_title_question_reaches_schema_query_path(self):
         expected = self.chatbot.SqlRequest(
             "SELECT COUNT(*) AS employee_count FROM employee_data WHERE job_title = :job_title",
@@ -74,6 +107,87 @@ class WorkforceTests(unittest.TestCase):
             request = self.chatbot.translate_question("how many Site engineer we have")
         generate.assert_called_once_with("how many Site engineer we have")
         self.assertIs(request, expected)
+
+    def test_simple_filtered_counts_skip_azure_and_preserve_boundaries(self):
+        cases = (
+            ("How many employees are older than 30?", "age", ">", 30),
+            ("count employees aged at least 35", "age", ">=", 35),
+            ("count employees with age <= 30", "age", "<=", 30),
+            ("give me the count of employees with salary above 60,000.50", "salary", ">", 60000.5),
+            ("count employees where salary != 100000", "salary", "<>", 100000),
+            ("How many female employees do we have?", "gender", "=", "female"),
+            ("count employees with gender = male", "gender", "=", "male"),
+        )
+        for question, column, operator, value in cases:
+            with self.subTest(question=question), patch.object(self.chatbot, "generate_employee_query") as planner:
+                request = self.chatbot.translate_question(question)
+                planner.assert_not_called()
+                self.assertEqual(request.response_kind, "column_query")
+                self.assertEqual(request.parameters, {"filter_0": value})
+                condition = request.sql.split(" WHERE ")[1]
+                self.assertIn(f"[{column}]", condition)
+                self.assertIn(f" {operator} :filter_0", condition)
+                with patch.object(self.chatbot, "summarize_with_azure_openai") as summary:
+                    self.chatbot.natural_language_response(pd.DataFrame({"employee_count": [3]}), request, question)
+                    summary.assert_not_called()
+
+    def test_filtered_count_fast_path_never_drops_extra_conditions(self):
+        for question in (
+            "How many employees are older than 30 and in Sales?",
+            "count employees with salary above 60000 or age below 25",
+            "count female employees with missing phone numbers",
+            "count employees with age > 30 by department",
+            "count employees with salary above 60,00",
+            "count employees with salary above 60000 dollars",
+            "count employees over 30",
+            "count employees with salary older than 30",
+            "count employees with salary above 60000 years old",
+            "count employees age > 30; DROP TABLE Employees",
+        ):
+            with self.subTest(question=question), patch.object(self.chatbot, "generate_employee_query", return_value=None) as planner:
+                request = self.chatbot.translate_question(question)
+                planner.assert_called_once_with(question)
+                self.assertEqual(request.response_kind, "query_clarification")
+                self.assertEqual(request.sql, "")
+
+    def test_unavailable_fields_are_explained_without_ai_or_sql(self):
+        cases = (
+            ("Count employees with a performance rating above 4", "performance ratings"),
+            ("Show performance_rating for EMP015", "performance ratings"),
+            ("Create a report of employee ratings by department", "performance ratings"),
+            ("Show a chart of performance scores", "performance ratings"),
+            ("Show the home address for EMP015", "street addresses"),
+            ("Give date of birth for EMP015", "dates of birth"),
+            ("Create an employee attrition report", "attrition history"),
+        )
+        for question, field in cases:
+            with self.subTest(question=question), patch.object(self.chatbot, "generate_employee_query") as planner, patch.object(self.chatbot, "run_query") as query, patch.object(self.chatbot.st, "info") as info:
+                request = self.chatbot.translate_question(question)
+                self.assertEqual(request.response_kind, "data_unavailable")
+                self.assertEqual(request.sql, "")
+                answer = self.chatbot.display_response(request, question)
+                self.assertIn(field, answer)
+                self.assertIn("does not include", answer)
+                self.assertIn("Available fields:", answer)
+                self.assertNotIn("retry", answer.lower())
+                info.assert_called_once_with(answer)
+                planner.assert_not_called()
+                query.assert_not_called()
+
+    def test_unavailable_field_detection_preserves_supported_fields_and_values(self):
+        for question in (
+            "Show email address for EMP015",
+            "Who owns rating@example.org?",
+            "Count employees with job_title 'Rating analyst'",
+            'Count employees named "Rating"',
+            "Show age and joining date for EMP015",
+        ):
+            with self.subTest(question=question):
+                self.assertEqual(self.chatbot.unavailable_employee_fields(question), [])
+        self.assertEqual(
+            self.chatbot.unavailable_employee_fields("Show rating and date of birth for EMP015"),
+            ["performance ratings", "dates of birth"],
+        )
 
     def test_unresolved_column_question_never_becomes_total_count(self):
         with patch.object(self.chatbot, "generate_employee_query", return_value=None):
@@ -132,6 +246,47 @@ class WorkforceTests(unittest.TestCase):
         ))
         self.assertIn("ROW_NUMBER() OVER (PARTITION BY [department]", ranked.sql)
         self.assertEqual(ranked.parameters["rank_limit"], 3)
+
+    def test_department_salary_rankings_accept_words_and_digits_without_ai(self):
+        for question in (
+            "Show the three highest salaries in each department",
+            "Show the three highest-paid employees in each department.",
+            ". Show the three highest-paid employees in each department",
+            "Show top 3 highest paid employees per department",
+            "Please give me the top three highest-earning employees from every department",
+            "List 3 employees by salary for each department",
+        ):
+            with self.subTest(question=question), patch.object(self.chatbot, "generate_employee_query") as planner:
+                request = self.chatbot.translate_question(question)
+                self.assertEqual(request.response_kind, "column_query")
+                self.assertEqual(request.parameters, {"rank_limit": 3})
+                self.assertIn("PARTITION BY [department]", request.sql)
+                self.assertIn("[salary] DESC, [emp_id]", request.sql)
+                self.assertIn("WHERE NOT ([salary] IS NULL)", request.sql)
+                self.assertIn("employee_rank <= :rank_limit", request.sql)
+                self.assertTrue(request.sql.endswith("ORDER BY [department] ASC, [salary] DESC"))
+                planner.assert_not_called()
+
+    def test_salary_ranking_fast_path_preserves_extra_conditions_and_distinct_requests(self):
+        for question in (
+            "Show the three highest-paid employees in each department with status Active",
+            "Show the three highest salaries in each department in Delhi",
+            "Show the three highest salaries in each department excluding contractors",
+            "Show the three highest distinct salaries in each department",
+            "Show the three lowest salaries in each department",
+            "Show the 11 highest salaries in each department",
+            "Show the 0 highest salaries in each department",
+        ):
+            with self.subTest(question=question), patch.object(self.chatbot, "generate_employee_query", return_value=None) as planner:
+                request = self.chatbot.translate_question(question)
+                planner.assert_called_once_with(question)
+                self.assertEqual(request.response_kind, "query_clarification")
+
+    def test_salary_ranking_limits_are_not_silently_changed(self):
+        for text, expected in (("one", 1), ("five", 5), ("ten", 10), ("2", 2)):
+            with self.subTest(text=text):
+                request = self.chatbot.translate_question(f"Show the {text} highest salaries in each department")
+                self.assertEqual(request.parameters["rank_limit"], expected)
 
     def test_invalid_or_partially_understood_plans_are_rejected(self):
         for changes in (
@@ -205,6 +360,45 @@ class WorkforceTests(unittest.TestCase):
                 )
                 self.assertIn(str(count), answer)
                 self.assertIn(".org", answer)
+
+    def test_phone_owner_questions_route_directly_without_ai(self):
+        for question in (
+            "whose number is 799.609.1699",
+            "Whose phone number is 799-609-1699?",
+            "Please whose mobile number is (799) 609 1699?",
+            "who owns the phone number 7996091699",
+            "who has 799.609.1699?",
+        ):
+            with self.subTest(question=question), patch.object(self.chatbot, "generate_employee_query") as planner:
+                request = self.chatbot.translate_question(question)
+                self.assertIsNotNone(request)
+                self.assertEqual(request.response_kind, "phone_owner")
+                self.assertEqual(request.parameters, {"phone_digits": "%7996091699%"})
+                self.assertIn("LIKE :phone_digits", request.sql)
+                self.assertNotIn("7996091699", request.sql)
+                planner.assert_not_called()
+
+    def test_phone_questions_with_extra_conditions_use_validated_planner(self):
+        for question in (
+            "whose number is 799.609.1699 and in Sales",
+            "whose number is 799.609.1699 or 555.123.4567",
+            "whose number is 799.609.1699 with status Active",
+        ):
+            with self.subTest(question=question), patch.object(self.chatbot, "generate_employee_query", return_value=None) as planner:
+                request = self.chatbot.translate_question(question)
+                planner.assert_called_once_with(question)
+                self.assertEqual(request.response_kind, "query_clarification")
+
+    def test_phone_owner_answers_and_missing_results_do_not_call_ai(self):
+        question = "whose number is 799.609.1699"
+        request = self.chatbot.translate_question(question)
+        with patch.object(self.chatbot, "summarize_with_azure_openai") as summary:
+            result = pd.DataFrame([{"name": "Example Employee", "phone_number": "799.609.1699"}])
+            answer = self.chatbot.natural_language_response(result, request, question)
+            self.assertIn("belongs to Example Employee", answer)
+            missing = self.chatbot.natural_language_response(result.iloc[:0], request, question)
+            self.assertIn("No employees matched", missing)
+            summary.assert_not_called()
 
     def test_employee_details_route_without_ai_or_name_catalog(self):
         with patch.object(self.chatbot, "generate_employee_query") as generate, patch.object(
@@ -330,6 +524,33 @@ class WorkforceTests(unittest.TestCase):
         chart = self.chatbot.create_report_chart(report)
         self.assertEqual(list(chart.data[0].y), ["Mumbai", "Delhi"])
         self.assertEqual(list(chart.data[0].x), [100000, 80000])
+
+    def test_salary_histogram_uses_numeric_axis_and_preserves_hover_ranges(self):
+        table = self.chatbot.salary_distribution(pd.Series(range(30000, 150000, 800)))
+        chart = self.chatbot.create_query_chart(table[["Salary band (INR)", "Headcount"]], "Salary Distribution", "Employees", "histogram")
+        self.assertEqual(chart.layout.xaxis.type, "linear")
+        self.assertEqual(chart.layout.xaxis.tickangle, 0)
+        self.assertEqual(list(chart.data[0].customdata), table["Salary band (INR)"].tolist())
+        self.assertEqual(sum(chart.data[0].y), 150)
+        self.assertTrue(all(width > 0 for width in chart.data[0].width))
+        self.assertAlmostEqual(sum(chart.data[0].width), 119200)
+        self.assertLessEqual(chart.layout.height, 360)
+
+    def test_salary_histogram_summary_does_not_dump_bins_or_reuse_old_text(self):
+        question = "Show a histogram of employee salaries."
+        request = self.chatbot.translate_question(question)
+        cache = {"result": self.result[["salary"]], "display_answer": "Employee count chart data: old bin listing"}
+        with patch.object(self.chatbot, "run_query") as query, patch.object(self.chatbot.st, "plotly_chart"):
+            answer = self.chatbot.display_response(request, question, "histogram_test", cache)
+        self.assertEqual(answer, "Salary distribution for 6 employees across 2 salary bands (INR).")
+        query.assert_not_called()
+
+    def test_salary_histogram_constant_value_remains_a_visible_bar(self):
+        table = self.chatbot.salary_distribution(pd.Series([50000, 50000, None]))
+        chart = self.chatbot.create_query_chart(table[["Salary band (INR)", "Headcount"]], "Salary Distribution", "Employees", "histogram")
+        self.assertEqual(list(chart.data[0].x), [50000])
+        self.assertEqual(list(chart.data[0].y), [2])
+        self.assertGreater(chart.data[0].width[0], 0)
 
     def test_salary_histogram_pdf_counts_match_screen(self):
         report = self.chatbot.build_business_report("I want the analysis on salaries.", self.result)
@@ -545,6 +766,22 @@ class WorkforceTests(unittest.TestCase):
                 self.assertTrue(pdf.startswith(b"%PDF-"))
                 self.assertTrue(pdf.rstrip().endswith(b"%%EOF"))
 
+    def test_pdf_long_category_labels_fit_without_changing_table_names(self):
+        result = self.result.copy()
+        names = ["Research and International Business Development", "Customer Operations and Technical Support", "Finance"]
+        result["department"] = names * 2
+        for kind in ("bar", "column", "line", "pie", "donut"):
+            with self.subTest(kind=kind):
+                report = self.chatbot.build_business_report(f"Create a department report with a {kind} chart", result)
+                drawing = self.chatbot.report_pdf_chart(report)
+                left, bottom, right, top = drawing.expandUserNodes().getBounds()
+                self.assertGreaterEqual(left, 0)
+                self.assertGreaterEqual(bottom, 0)
+                self.assertLessEqual(right, drawing.width)
+                self.assertLessEqual(top, drawing.height)
+                self.assertTrue(any("Some labels shortened" in getattr(item, "text", "") for item in drawing.contents))
+                self.assertEqual(set(report.tables[0][1].iloc[:, 0]), set(names))
+
     def test_long_chart_summary_is_concise(self):
         result = pd.DataFrame({"chart_group": [f"Group {index}" for index in range(30)], "chart_value": [2] * 30})
         request = self.chatbot.translate_question("Show a line chart of monthly employee joinings")
@@ -599,6 +836,24 @@ class WorkforceTests(unittest.TestCase):
         self.assertTrue(pdf.rstrip().endswith(b"%%EOF"))
         self.assertGreater(len(pdf), 1000)
 
+    def test_report_presentation_metrics_and_scope_use_selected_data(self):
+        selected = self.result[self.result["department"] == "Sales"]
+        report = self.chatbot.build_business_report("Create a Sales department report", selected)
+        self.assertEqual(dict(report.metrics), {"Employees": "2", "Departments": "1", "Locations": "2"})
+        self.assertEqual(report.scope, "Department: Sales")
+        self.assertEqual(report.recommendations, [])
+        self.assertEqual(report.follow_up, "")
+
+    def test_salary_report_metrics_include_mean_and_median(self):
+        report = self.chatbot.build_business_report(PAY_QUESTION, self.result)
+        self.assertEqual(dict(report.metrics), {"Employees": "6", "Average Salary": "INR 90,000.00", "Median Salary": "INR 90,000.00"})
+        self.assertEqual(report.scope, "All employees")
+
+    def test_empty_salary_report_metrics_do_not_show_nan(self):
+        report = self.chatbot.build_business_report("Salary analysis", self.result.iloc[:0])
+        self.assertEqual(dict(report.metrics)["Employees"], "0")
+        self.assertEqual(dict(report.metrics)["Average Salary"], "Not available")
+
     def test_copy_component_passes_text_as_data_with_independent_keys(self):
         answer = '<script>alert("test")</script>\nEmployee count: 6'
         with patch.object(self.chatbot, "copy_response_component") as component:
@@ -612,11 +867,35 @@ class WorkforceTests(unittest.TestCase):
     def test_report_copy_includes_tables_and_findings(self):
         report = self.chatbot.build_business_report(PAY_QUESTION, self.result)
         with patch.object(self.chatbot, "render_copy_response") as copy_response:
-            summary = self.chatbot.display_business_report(PAY_QUESTION, self.result, "report_test")
+            summary = self.chatbot.display_business_report(PAY_QUESTION, self.result, "report_test", {"business_report": report, "report_layout_version": 4})
         copy_response.assert_called_once_with(self.chatbot.business_report_markdown(report), "report_test")
         self.assertEqual(summary, report.executive_summary)
         self.assertIn("Department Salary Profile", copy_response.call_args.args[0])
         self.assertIn("Key Findings", copy_response.call_args.args[0])
+
+    def test_pdf_summary_precedes_detail_pages_and_tables_wrap(self):
+        report = self.chatbot.build_business_report(PAY_QUESTION, self.result)
+        with patch.object(self.chatbot.SimpleDocTemplate, "build", autospec=True) as build:
+            self.chatbot.generate_business_report_pdf(PAY_QUESTION, report, None)
+        story = build.call_args.args[1]
+        summary_index = next(index for index, item in enumerate(story) if isinstance(item, self.chatbot.Paragraph) and item.getPlainText() == "Executive Summary")
+        chart_index = next(index for index, item in enumerate(story) if isinstance(item, self.chatbot.Drawing))
+        page_break_index = next(index for index, item in enumerate(story) if isinstance(item, self.chatbot.PageBreak))
+        self.assertLess(summary_index, chart_index)
+        self.assertLess(chart_index, page_break_index)
+        table = self.chatbot.report_pdf_table(pd.DataFrame({"Job title": ["A very long job title " * 10], "Headcount": [1]}))
+        self.assertEqual(table.repeatRows, 1)
+        self.assertIsInstance(table._cellvalues[1][0], self.chatbot.Paragraph)
+        self.assertLessEqual(sum(table._colWidths), 520)
+
+    def test_report_screen_puts_chart_before_expandable_details(self):
+        with patch("sqlalchemy.engine.Engine.connect"), patch("pandas.read_sql", return_value=self.result):
+            app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+            app.chat_input[0].set_value(PAY_QUESTION).run(timeout=30)
+            self.assertEqual(len(app.exception), 0)
+            self.assertTrue(any("report-metrics" in item.value for item in app.markdown))
+            self.assertTrue(any(item.label == "Detailed Breakdown" and not item.proto.expanded for item in app.expander))
+            self.assertEqual(len(app.get("plotly_chart")), 1)
 
     def test_recall_uses_previous_question_without_model(self):
         turns = (("user", PAY_QUESTION), ("assistant", "Finance has the highest average pay."))

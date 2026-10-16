@@ -8,7 +8,7 @@ import os
 import re
 import smtplib
 import ssl
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from hashlib import sha256
 from html import escape
 from pathlib import Path
@@ -30,10 +30,11 @@ from reportlab.graphics.charts.linecharts import HorizontalLineChart
 from reportlab.graphics.charts.piecharts import Pie
 from reportlab.graphics.shapes import Drawing, String
 from reportlab.lib import colors
-from reportlab.lib.pagesizes import landscape, letter
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfbase.pdfmetrics import stringWidth
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle, PageBreak, KeepTogether
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL, Engine
 from sqlalchemy.exc import SQLAlchemyError
@@ -69,7 +70,7 @@ EMPLOYEE_COLUMN_ALIASES = {
 MAX_IMAGE_BYTES = 4_000_000
 MAX_IMAGE_DIMENSION = 2048
 EMAIL_PATTERN = r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}"
-PHONE_PATTERN = r"(?<!\w)(?:\+?\d[\d\s().-]{6,}\d)(?!\w)"
+PHONE_PATTERN = r"(?<!\w)(?:\+?\(?\d[\d\s().-]{6,}\d)(?!\w)"
 DEFAULT_SPEECH_VOICE = "en-IN-NeerjaNeural"
 REPORT_INTENT_TERMS = ("report", "analysis", "analyze", "analyse", "breakdown", "overview", "dashboard", "pdf")
 CHART_INTENT_TERMS = ("chart", "graph", "visualization", "visualise", "visualize", "plot")
@@ -169,6 +170,9 @@ class BusinessReport:
     limitations: list[str]
     follow_up: str
     chart_type: str = "column"
+    metrics: list[tuple[str, str]] = field(default_factory=list)
+    scope: str = "All employees"
+    generated_at: datetime = field(default_factory=datetime.now)
 
 
 copy_response_component = st.components.v2.component(
@@ -469,7 +473,7 @@ def is_simple_employee_count(question: str) -> bool:
     )
     remaining = re.sub(
         r"\b(please|give|show|tell|me|the|total|count|number|of|all|employees?|emails?|"
-        r"we|have|how|many|do|are|there|is|i|want|having|with|status|department|city|in|from|and)\b",
+        r"we|have|how|many|do|are|there|is|i|want|having|with|whose|status|department|city|in|from|and)\b",
         " ", remaining,
     )
     return not remaining.strip(" .?!")
@@ -507,19 +511,135 @@ def employee_profile_lookup(question: str) -> tuple[str, str] | None:
     return "name", subject
 
 
+def translate_simple_filtered_count(question: str) -> SqlRequest | None:
+    normalized = " ".join(question.lower().strip().split())
+    prefix = r"(?:please\s+)?(?:(?:give|show|tell)\s+(?:me\s+)?(?:the\s+)?)?(?:how many|(?:total\s+)?(?:count|number)\s+of|count)\s+"
+    gender_match = re.fullmatch(prefix + r"(male|female)\s+employees?(?:\s+(?:do\s+)?we\s+have)?[?.!]*", normalized)
+    condition = None
+    if gender_match:
+        condition = {"column": "gender", "op": "eq", "value": gender_match.group(1)}
+    else:
+        match = re.fullmatch(
+            prefix + r"(?:employees?|staff)\s+(?:(?:who|whose)\s+)?"
+            r"(?:(?:are|have|having|with|where)\s+)?(.+?)[?.!]*", normalized,
+        )
+        if match is None:
+            return None
+        gender_match = re.fullmatch(r"(?:gender\s*(?:is|=)\s*)?(male|female)", match.group(1))
+        numeric_match = re.fullmatch(
+            r"(?:(age|aged|salary|pay)\s*(?:is\s+)?)?"
+            r"(older than|younger than|greater than|more than|less than|at least|at most|equal to|above|below|over|under|>=|<=|!=|>|<|=)\s*"
+            r"(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(\s+years(?:\s+old)?)?",
+            match.group(1),
+        )
+        if gender_match:
+            condition = {"column": "gender", "op": "eq", "value": gender_match.group(1)}
+        elif numeric_match:
+            column, comparison, amount, years = numeric_match.groups()
+            age_comparison = comparison in {"older than", "younger than"}
+            if column is None and not age_comparison:
+                return None
+            column = "age" if column in {None, "age", "aged"} else "salary"
+            if column == "salary" and (age_comparison or years):
+                return None
+            operators = {
+                "older than": "gt", "greater than": "gt", "more than": "gt", "above": "gt", "over": "gt", ">": "gt",
+                "younger than": "lt", "less than": "lt", "below": "lt", "under": "lt", "<": "lt",
+                "at least": "gte", ">=": "gte", "at most": "lte", "<=": "lte",
+                "equal to": "eq", "=": "eq", "!=": "ne",
+            }
+            value = float(amount.replace(",", ""))
+            if not math.isfinite(value):
+                return None
+            condition = {"column": column, "op": operators[comparison], "value": value}
+    if condition is None:
+        return None
+    return compile_employee_plan({
+        "understood": True, "unhandled_conditions": [], "columns": [],
+        "metrics": [{"function": "count", "column": "*"}], "filter": condition,
+    })
+
+
+def unavailable_employee_fields(question: str) -> list[str]:
+    field_text = re.sub(EMAIL_PATTERN, " ", question, flags=re.IGNORECASE)
+    field_text = re.sub(r"'[^']*'|\"[^\"]*\"", " ", field_text)
+    unsupported = (
+        ("performance ratings", r"\b(?:performance[ _-]+)?ratings?\b|\bperformance[ _-]+scores?\b"),
+        ("street addresses", r"\b(?:street|home|residential|postal)[ _-]+address(?:es)?\b"),
+        ("dates of birth", r"\b(?:dates?[ _-]+of[ _-]+birth|birth[ _-]+dates?|dob)\b"),
+        ("attrition history", r"\battrition\b|\bresignation[ _-]+dates?\b"),
+    )
+    return [label for label, pattern in unsupported if re.search(pattern, field_text, flags=re.IGNORECASE)]
+
+
+def translate_department_salary_ranking(question: str) -> SqlRequest | None:
+    normalized = " ".join(question.lower().strip().split())
+    number_words = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
+    match = re.fullmatch(
+        r"\.?\s*(?:please\s+)?(?:(?:show|give|list|find|get)\s+(?:me\s+)?(?:the\s+)?)?"
+        r"(?:top\s+)?(?P<limit>\d{1,2}|" + "|".join(number_words) + r")\s+"
+        r"(?:highest[ -](?:paid|earning)\s+employees|highest\s+salaries|"
+        r"employees\s+(?:by\s+(?:salary|pay)|with\s+(?:the\s+)?highest\s+salaries))\s+"
+        r"(?:(?:in|from)\s+(?:each|every)|(?:for\s+)?each|per)\s+department[?.!]*",
+        normalized,
+    )
+    if match is None:
+        return None
+    limit_text = match.group("limit")
+    rank_limit = number_words[limit_text] if limit_text in number_words else int(limit_text)
+    if not 1 <= rank_limit <= 10:
+        return None
+    return compile_employee_plan({
+        "understood": True, "unhandled_conditions": [],
+        "columns": ["emp_id", "name", "department", "job_title", "salary"], "metrics": [],
+        "filter": {"column": "salary", "op": "not_null", "value": None},
+        "per_group": ["department"], "limit_per_group": rank_limit,
+        "order_by": [{"column": "department", "direction": "asc"}, {"column": "salary", "direction": "desc"}],
+    })
+
+
+def strip_question_list_marker(question: str) -> str:
+    return re.sub(r"^(?:\d+[.)]|[-*\u2022])[ \t]+(?=[A-Za-z])", "", question.strip(), count=1)
+
+
 def translate_question(question: str) -> SqlRequest | None:
+    question = strip_question_list_marker(question)
     normalized = question.lower().strip()
     if is_previous_question_request(question):
         return None
+    unavailable = unavailable_employee_fields(question)
+    if unavailable:
+        return SqlRequest(
+            "", {},
+            "The current employee dataset does not include " + ", ".join(unavailable) + ". "
+            "I cannot answer this request from the available data.\n\n"
+            "Available fields: " + ", ".join(EMPLOYEE_COLUMN_NAMES) + ".",
+            response_kind="data_unavailable",
+        )
+    ranking = translate_department_salary_ranking(question)
+    if ranking is not None:
+        return ranking
     visual = any(re.search(rf"\b{term}s?\b", normalized) for term in REPORT_INTENT_TERMS + CHART_INTENT_TERMS + ("histogram",))
     profile = employee_profile_lookup(question) is not None
     count_question = bool(re.search(r"\bcount\b|\bnumber of\b|\bhow many\b", normalized))
     contact_lookup = not count_question and bool(re.search(EMAIL_PATTERN, question, re.IGNORECASE)) and not re.search(
         r"\b(and|or|not|except|salary|age|status|department|city|job|title|phone)\b", normalized
     )
-    if visual or profile or contact_lookup or is_simple_employee_count(normalized):
+    phone_reference = bool(re.search(PHONE_PATTERN, question)) and bool(re.search(
+        r"\b(phones?|mobile|contact|number)\b", normalized,
+    ))
+    phone_lookup = bool(re.fullmatch(
+        r"(?:please\s+)?(?:whose\s+(?:(?:phone|mobile|contact)\s+)?number\s+is|"
+        r"who\s+(?:owns|has)\s+(?:(?:the\s+)?(?:(?:phone|mobile|contact)\s+)?number\s+)?)\s*"
+        + PHONE_PATTERN + r"[?.!]*", normalized,
+    ))
+    if visual or profile or contact_lookup or phone_lookup or is_simple_employee_count(normalized):
         return translate_known_question(question)
-    data_question = count_question or bool(referenced_employee_columns(question)) or bool(re.search(
+    if count_question:
+        local_request = translate_simple_filtered_count(question)
+        if local_request is not None:
+            return local_request
+    data_question = count_question or phone_reference or bool(referenced_employee_columns(question)) or bool(re.search(
         r"\b(details|profile|information)\s+(of|for|about)\b|"
         r"\b(employees?|staff|emp_id|id|name|names|salary|salaries|pay|paid|earns?|earnings?|departments?|"
         r"city|cities|locations?|jobs?|job_title|titles?|roles?|designation|joined|joining|join_date|"
@@ -1294,7 +1414,15 @@ def deterministic_response(result: pd.DataFrame, request: SqlRequest) -> str:
         )
         return f"Top {rank_limit} highest-paid employees: {employees}."
 
-    if request.response_kind in {"chart_employee_count", "chart_salary_distribution"}:
+    if request.response_kind == "chart_salary_distribution":
+        count = int(result["chart_value"].sum())
+        bands = len(result)
+        return (
+            f"Salary distribution for {count:,} employee{'s' if count != 1 else ''} "
+            f"across {bands} salary band{'s' if bands != 1 else ''} (INR)."
+        )
+
+    if request.response_kind == "chart_employee_count":
         if len(result) > MAX_SUMMARY_ROWS:
             return (
                 f"The chart shows {int(result['chart_value'].sum()):,} employees across "
@@ -1401,9 +1529,14 @@ def salary_distribution(salaries: pd.Series) -> pd.DataFrame:
     if values.nunique() == 1:
         labels = [f"{values.iloc[0]:,.2f}"]
         counts = [len(values)]
+        half_width = max(abs(float(values.iloc[0])) * 0.01, 0.5)
+        edges = [float(values.iloc[0]) - half_width, float(values.iloc[0]) + half_width]
     else:
         bins = min(10, max(2, int(len(values) ** 0.5)))
-        grouped = pd.cut(values, bins=bins, include_lowest=True).value_counts(sort=False)
+        categories, boundaries = pd.cut(values, bins=bins, include_lowest=True, retbins=True)
+        grouped = categories.value_counts(sort=False)
+        edges = boundaries.tolist()
+        edges[0] = float(values.min())
         labels = [
             f"{max(interval.left, values.min()):,.2f} to {interval.right:,.2f}"
             for interval in grouped.index
@@ -1411,11 +1544,38 @@ def salary_distribution(salaries: pd.Series) -> pd.DataFrame:
         counts = grouped.tolist()
     table = pd.DataFrame({"Salary band (INR)": labels, "Headcount": counts})
     table["Percentage of total"] = (table["Headcount"] / len(salaries) * 100).round(1)
+    table.attrs["salary_bin_edges"] = edges
     return table
+
+
+def report_metrics(question: str, result: pd.DataFrame) -> list[tuple[str, str]]:
+    metrics = [("Employees", f"{len(result):,}")]
+    if is_pay_question(question):
+        salaries = pd.to_numeric(result.get("salary", pd.Series(dtype=float)), errors="coerce").dropna()
+        metrics.extend([
+            ("Average Salary", format_value(salaries.mean(), "salary") if not salaries.empty else "Not available"),
+            ("Median Salary", format_value(salaries.median(), "salary") if not salaries.empty else "Not available"),
+        ])
+    else:
+        metrics.extend([
+            ("Departments", f"{result['department'].nunique():,}" if "department" in result else "Not available"),
+            ("Locations", f"{result['city'].nunique():,}" if "city" in result else "Not available"),
+        ])
+    return metrics
+
+
+def report_scope(question: str) -> str:
+    _, parameters = visual_filters(question.lower())
+    parts = [f"{column.title()}: {parameters[column]}" for column in ("department", "city", "status") if column in parameters]
+    statuses = [value for key, value in parameters.items() if key.startswith("status_")]
+    if statuses:
+        parts.append("Status: " + ", ".join(statuses))
+    return "; ".join(parts) or "All employees"
 
 
 def build_business_report(question: str, result: pd.DataFrame) -> BusinessReport:
     total_headcount = len(result)
+    presentation = {"metrics": report_metrics(question, result), "scope": report_scope(question)}
     dimensions = report_dimensions(question)
     tables: list[tuple[str, pd.DataFrame, str]] = []
     limitations: list[str] = []
@@ -1430,14 +1590,14 @@ def build_business_report(question: str, result: pd.DataFrame) -> BusinessReport
             title="Salary Analysis", executive_summary="No recorded salaries are available for this selection.",
             tables=[], findings=[], recommendations=[],
             limitations=["Salary analysis needs recorded salary values; no headcount chart has been substituted."],
-            follow_up="Choose a selection with recorded salary values.", chart_type=selected_chart_type,
+            follow_up="", chart_type=selected_chart_type, **presentation,
         )
     if is_department_pay_report and pay_column not in result.columns:
         return BusinessReport(
             title="Salary Analysis", executive_summary=f"{pay_label} is not available for salary grouping.",
             tables=[], findings=[], recommendations=[],
             limitations=["The requested salary comparison cannot be calculated from this selection."],
-            follow_up="Choose an available grouping.", chart_type=selected_chart_type,
+            follow_up="", chart_type=selected_chart_type, **presentation,
         )
     for column, label in dimensions:
         if column not in result.columns:
@@ -1481,7 +1641,7 @@ def build_business_report(question: str, result: pd.DataFrame) -> BusinessReport
             return BusinessReport(
                 title="Salary Analysis", executive_summary=f"No recorded salaries can be grouped by {pay_label.lower()} for this selection.",
                 tables=[], findings=[], recommendations=[], limitations=limitations,
-                follow_up="Choose a grouping with recorded salary values.", chart_type=selected_chart_type,
+                follow_up="", chart_type=selected_chart_type, **presentation,
             )
         highest_salary = salary_table["Average salary"].max()
         lowest_salary = salary_table["Average salary"].min()
@@ -1539,13 +1699,10 @@ def build_business_report(question: str, result: pd.DataFrame) -> BusinessReport
     findings = []
     if not largest_table.empty and not is_department_pay_report:
         largest_share = float(largest_table.iloc[0]["Percentage of total"])
-        if largest_share >= 35:
-            findings.append("Headcount is concentrated in the largest reported group, which can create capacity or continuity risk.")
-        else:
-            findings.append("Headcount is distributed across the reported groups without a single dominant concentration.")
+        findings.append(f"The largest reported group accounts for {largest_share:.1f}% of selected employees across {len(largest_table):,} groups.")
     if "status" in result.columns and not is_department_pay_report:
         inactive_count = int(result["status"].isin(["Inactive", "On Leave"]).sum())
-        findings.append(f"{inactive_count:,} employees are recorded as inactive or on leave and may need workforce coverage review.")
+        findings.append(f"{inactive_count:,} selected employees are recorded as inactive or on leave; these statuses do not establish attrition.")
     if is_department_pay_report:
         pay_range = highest_salary - lowest_salary
         findings.append(
@@ -1553,10 +1710,7 @@ def build_business_report(question: str, result: pd.DataFrame) -> BusinessReport
             f"{format_value(pay_range, 'salary')}."
         )
 
-    recommendations = [
-        "Review staffing capacity in the largest groups before assigning additional workload or approving new vacancies.",
-        "Compare salary and tenure patterns within the largest groups to identify retention or pay-equity risks.",
-    ]
+    recommendations = []
     if is_department_pay_report:
         recommendations = [
             "Review pay differences alongside job responsibilities and seniority before making compensation decisions.",
@@ -1575,22 +1729,28 @@ def build_business_report(question: str, result: pd.DataFrame) -> BusinessReport
         findings=findings,
         recommendations=recommendations,
         limitations=limitations,
-        follow_up="Compare average salary by job title." if is_department_pay_report else "Compare headcount by employment status.",
+        follow_up="",
         chart_type=selected_chart_type,
+        **presentation,
     )
 
 
 def business_report_markdown(report: BusinessReport) -> str:
-    sections = [f"## {report.title}", "### Executive Summary", report.executive_summary]
+    sections = [f"## {report.title}", f"Generated {report.generated_at:%d %b %Y, %H:%M} | {report.scope}"]
+    if report.metrics:
+        sections.append(" | ".join(f"**{label}:** {value}" for label, value in report.metrics))
+    sections.extend(["### Executive Summary", report.executive_summary])
     for heading, table, interpretation in report.tables:
         sections.extend([f"### {heading}", report_table_markdown(table), interpretation])
     sections.append("### Key Findings")
     sections.extend(f"- {finding}" for finding in report.findings)
-    sections.append("### Recommendations")
-    sections.extend(f"- {recommendation}" for recommendation in report.recommendations)
+    if report.recommendations:
+        sections.append("### Analyst Notes")
+        sections.extend(f"- {recommendation}" for recommendation in report.recommendations)
     sections.append("### Data Limitations")
     sections.extend(f"- {limitation}" for limitation in report.limitations)
-    sections.extend(["### Suggested Follow-up", report.follow_up])
+    if report.follow_up:
+        sections.extend(["### Suggested Follow-up", report.follow_up])
     return "\n\n".join(sections)
 
 
@@ -1635,6 +1795,10 @@ def create_query_chart(result: pd.DataFrame, title: str, value_label: str, chart
     category_column, value_column = result.columns
     result = result.copy()
     result[category_column] = result[category_column].fillna("Not recorded")
+    bin_edges = result.attrs.get("salary_bin_edges") if chart_type == "histogram" else None
+    histogram_labels = result[category_column].tolist()
+    if bin_edges is not None:
+        result[category_column] = [(lower + upper) / 2 for lower, upper in zip(bin_edges, bin_edges[1:])]
     is_salary = "salary" in value_label.lower()
     horizontal = chart_type == "bar"
     if chart_type in {"pie", "donut"}:
@@ -1673,38 +1837,61 @@ def create_query_chart(result: pd.DataFrame, title: str, value_label: str, chart
         yaxis_title=None if horizontal else value_label,
     )
     if chart_type == "histogram":
-        figure.update_layout(title="<b>Salary Distribution</b>", bargap=0, xaxis_title="Salary band (INR)", yaxis_title="Employees")
-        figure.update_xaxes(tickmode="auto", nticks=4, tickangle=-60, tickfont={"size": 10}, automargin=True)
+        figure.update_layout(
+            title={"text": "Salary Distribution", "font": {"family": "DM Sans", "size": 18}},
+            font={"family": "DM Sans", "size": 12},
+            bargap=0, xaxis_title="Salary (INR)", yaxis_title="Employees",
+            height=340, margin={"l": 48, "r": 20, "t": 52, "b": 56},
+        )
+        figure.update_xaxes(tickmode="auto", nticks=4, tickangle=0, tickfont={"size": 11}, automargin=True)
+        figure.update_yaxes(rangemode="tozero", tickformat=",d")
+        if bin_edges is not None:
+            figure.update_xaxes(type="linear", tickformat="~s", range=[bin_edges[0], bin_edges[-1]])
+            figure.update_traces(
+                width=[upper - lower for lower, upper in zip(bin_edges, bin_edges[1:])],
+                customdata=histogram_labels,
+                hovertemplate="Salary: INR %{customdata}<br>Employees: %{y:,d}<extra></extra>",
+            )
         figure.update_traces(marker_line_color="white", marker_line_width=1)
     return figure
 
 
-def report_pdf_table(table: pd.DataFrame) -> Table:
+def report_pdf_table(table: pd.DataFrame, width: float = letter[0] - 1.3 * inch) -> Table:
     display_table = table.copy()
-    values = [list(display_table.columns)]
+    header_style = ParagraphStyle("ReportTableHeader", fontName="Helvetica-Bold", fontSize=8, leading=11, textColor=colors.white)
+    number_header_style = ParagraphStyle("ReportTableNumberHeader", parent=header_style, alignment=2)
+    text_style = ParagraphStyle("ReportTableText", fontName="Helvetica", fontSize=9, leading=12, wordWrap="CJK")
+    number_style = ParagraphStyle("ReportTableNumber", parent=text_style, alignment=2)
+    values = [[Paragraph(escape(str(column)), header_style if index == 0 else number_header_style) for index, column in enumerate(display_table.columns)]]
     for row in display_table.itertuples(index=False, name=None):
         rendered_row = []
-        for column, value in zip(display_table.columns, row):
-            if column == "Percentage of total":
-                rendered_row.append(f"{float(value):.1f}%")
+        for index, (column, value) in enumerate(zip(display_table.columns, row)):
+            if pd.isna(value):
+                rendered = "Not available"
+            elif column == "Percentage of total":
+                rendered = f"{float(value):.1f}%"
             elif column == "Average salary":
-                rendered_row.append(format_value(value, "salary"))
+                rendered = format_value(value, "salary")
+            elif column == "Headcount":
+                rendered = f"{int(value):,}"
             else:
-                rendered_row.append(str(value))
+                rendered = str(value)
+            rendered_row.append(Paragraph(escape(rendered), text_style if index == 0 else number_style))
         values.append(rendered_row)
-    table_element = Table(values, repeatRows=1)
+    column_count = len(display_table.columns)
+    widths = [width] if column_count == 1 else [width * 0.43] + [width * 0.57 / (column_count - 1)] * (column_count - 1)
+    table_element = Table(values, colWidths=widths, repeatRows=1, hAlign="LEFT")
     table_element.setStyle(
         TableStyle(
             [
                 ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0F766E")),
                 ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#DED8CE")),
+                ("LINEBELOW", (0, 1), (-1, -1), 0.25, colors.HexColor("#E0E6E3")),
                 ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F2F6F5")]),
                 ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("FONTSIZE", (0, 0), (-1, -1), 8),
-                ("LEADING", (0, 0), (-1, -1), 10),
-                ("TOPPADDING", (0, 0), (-1, -1), 5),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("TOPPADDING", (0, 0), (-1, -1), 7),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
             ]
         )
     )
@@ -1719,20 +1906,48 @@ def report_pdf_chart(report: BusinessReport) -> Drawing | None:
     chart_table = table.dropna(subset=[metric])
     if chart_table.empty:
         return None
+    omitted_groups = max(0, len(chart_table) - 12) if report.chart_type == "bar" else 0
+    if omitted_groups:
+        chart_table = chart_table.head(12)
     labels = [str(value) for value in chart_table.iloc[:, 0].tolist()]
+    label_width = 110 if report.chart_type in {"bar", "pie", "donut"} else 70
+    label_size = 9 if report.chart_type in {"pie", "donut"} else 8
+    fitted_labels = []
+    for label in labels:
+        fitted = label
+        while fitted and stringWidth(fitted, "Helvetica", label_size) > label_width:
+            fitted = fitted[:-1]
+        if fitted != label:
+            while fitted and stringWidth(fitted + "...", "Helvetica", label_size) > label_width:
+                fitted = fitted[:-1]
+            fitted = fitted.rstrip() + "..."
+        fitted_labels.append(fitted)
+    shortened_labels = fitted_labels != labels
+    labels = fitted_labels
     values = chart_table[metric].astype(float).tolist()
     metric_label = "Average salary (INR)" if metric == "Average salary" else "Employees"
-    drawing = Drawing(700, 290)
-    drawing.add(String(20, 268, f"{heading}: {metric_label}", fontName="Helvetica-Bold", fontSize=12))
+    drawing = Drawing(510, 240)
+    drawing.add(String(0, 226, f"{heading}: {metric_label}", fontName="Helvetica-Bold", fontSize=10))
+    chart_notes = []
+    if omitted_groups:
+        chart_notes.append(f"First 12 of {len(chart_table) + omitted_groups} groups shown.")
+    if shortened_labels:
+        chart_notes.append("Some labels shortened.")
+    if chart_notes:
+        chart_notes.append("Full names and data in the detailed breakdown.")
+        drawing.add(String(0, 3, " ".join(chart_notes), fontName="Helvetica", fontSize=7))
     if report.chart_type in {"pie", "donut"}:
         if sum(values) <= 0 or min(values) < 0:
             return None
         chart = Pie()
-        chart.x, chart.y = 245, 35
-        chart.width, chart.height = 200, 200
+        chart.x, chart.y = 165, 22
+        chart.width, chart.height = 180, 180
         chart.data = values
         chart.labels = [f"{label}: {value / sum(values):.1%}" for label, value in zip(labels, values)]
         chart.slices.fontSize = 9
+        chart.slices.fontName = "Helvetica"
+        chart.slices.fontColor = colors.HexColor("#526158")
+        chart.slices.strokeColor = colors.white
         chart.sideLabels = True
         if report.chart_type == "donut":
             chart.innerRadiusFraction = 0.45
@@ -1749,27 +1964,37 @@ def report_pdf_chart(report: BusinessReport) -> Drawing | None:
     else:
         chart = HorizontalBarChart() if horizontal else VerticalBarChart()
         chart.bars[0].fillColor = colors.HexColor("#0F766E")
+        chart.bars[0].strokeColor = colors.HexColor("#0F766E")
         if report.chart_type == "histogram":
             chart.groupSpacing = 0
             chart.barSpacing = 0
-    chart.x = 150 if horizontal else 65
-    chart.y = 65
-    chart.height = 175
-    chart.width = 510 if horizontal else 600
+    chart.x = 130 if horizontal else 70
+    chart.y = 55 if horizontal else 65
+    chart.height = 150 if horizontal else 140
+    chart.width = 350 if horizontal else 410
     chart.data = [list(reversed(values)) if horizontal else values]
     chart.categoryAxis.categoryNames = list(reversed(labels)) if horizontal else labels
-    if not horizontal and len(labels) > 12:
-        label_step = (len(labels) + 11) // 12
+    if not horizontal and len(labels) > 6:
+        label_step = (len(labels) + 5) // 6
         chart.categoryAxis.categoryNames = [
             label if index % label_step == 0 or index == len(labels) - 1 else ""
             for index, label in enumerate(labels)
         ]
     chart.categoryAxis.labels.angle = 0 if horizontal else 30
     chart.categoryAxis.labels.boxAnchor = "e" if horizontal else "ne"
-    chart.categoryAxis.labels.fontSize = 7
+    chart.categoryAxis.labels.fontSize = 8
+    chart.categoryAxis.labels.fontName = "Helvetica"
+    chart.categoryAxis.labels.fillColor = colors.HexColor("#526158")
+    chart.categoryAxis.strokeColor = colors.HexColor("#CBD8D1")
     chart.valueAxis.valueMin = 0
     chart.valueAxis.valueMax = max(max(values) * 1.15, 1)
-    chart.valueAxis.labels.fontSize = 7
+    chart.valueAxis.labels.fontSize = 8
+    chart.valueAxis.labels.fontName = "Helvetica"
+    chart.valueAxis.labels.fillColor = colors.HexColor("#526158")
+    chart.valueAxis.strokeColor = colors.HexColor("#CBD8D1")
+    chart.valueAxis.labelTextFormat = lambda value: f"{value:,.0f}"
+    if metric == "Headcount":
+        chart.valueAxis.valueStep = max(1, math.ceil(max(values) / 5))
     drawing.add(chart)
     return drawing
 
@@ -1778,33 +2003,78 @@ def generate_business_report_pdf(question: str, report: BusinessReport, chart) -
     output = BytesIO()
     document = SimpleDocTemplate(
         output,
-        pagesize=landscape(letter),
-        rightMargin=0.45 * inch,
-        leftMargin=0.45 * inch,
-        topMargin=0.45 * inch,
-        bottomMargin=0.55 * inch,
+        pagesize=letter,
+        rightMargin=0.65 * inch,
+        leftMargin=0.65 * inch,
+        topMargin=0.65 * inch,
+        bottomMargin=0.65 * inch,
+        title=report.title,
+        author="Workforce Compass",
     )
     styles = getSampleStyleSheet()
-    story = [Paragraph(escape(report.title), styles["Title"])]
-    story.append(Paragraph(f"Generated {datetime.now():%d %B %Y, %H:%M}", styles["Normal"]))
-    story.append(Paragraph(f"Question: {escape(question)}", styles["Normal"]))
-    story.extend([Spacer(1, 0.15 * inch), Paragraph("Executive Summary", styles["Heading2"]), Paragraph(escape(report.executive_summary), styles["BodyText"])])
-    for heading, table, interpretation in report.tables:
-        story.extend([Spacer(1, 0.12 * inch), Paragraph(escape(heading), styles["Heading2"]), report_pdf_table(table), Spacer(1, 0.07 * inch), Paragraph(escape(interpretation), styles["BodyText"])])
+    styles["Title"].fontName = "Times-Bold"
+    styles["Title"].fontSize = 25
+    styles["Title"].leading = 29
+    styles["Title"].alignment = 0
+    styles["Title"].textColor = colors.HexColor("#25332E")
+    styles["Heading2"].fontName = "Helvetica-Bold"
+    styles["Heading2"].fontSize = 12
+    styles["Heading2"].leading = 16
+    styles["Heading2"].spaceBefore = 12
+    styles["Heading2"].textColor = colors.HexColor("#0F766E")
+    styles["BodyText"].fontSize = 10
+    styles["BodyText"].leading = 15
+    styles["BodyText"].textColor = colors.HexColor("#35433D")
+    note_style = ParagraphStyle("ReportNote", parent=styles["BodyText"], fontSize=8, leading=11, textColor=colors.HexColor("#647269"))
+    brand_style = ParagraphStyle("ReportBrand", parent=note_style, fontName="Helvetica-Bold", textColor=colors.HexColor("#0F766E"), spaceAfter=10)
+    metric_style = ParagraphStyle("ReportMetric", fontName="Helvetica-Bold", fontSize=15, leading=20, textColor=colors.HexColor("#25332E"))
+    story = [Paragraph("WORKFORCE COMPASS / ANALYTICS REPORT", brand_style), Paragraph(escape(report.title), styles["Title"])]
+    story.append(Paragraph(f"Generated {report.generated_at:%d %B %Y, %H:%M} | Source: {DATABASE}.dbo.Employees", note_style))
+    story.append(Paragraph(f"Scope: {escape(report.scope)}", note_style))
+    if report.metrics:
+        metric_cells = [[Paragraph(escape(label.upper()), note_style), Paragraph(escape(value), metric_style)] for label, value in report.metrics]
+        metric_table = Table([metric_cells], colWidths=[document.width / len(metric_cells)] * len(metric_cells), hAlign="LEFT")
+        metric_table.setStyle(TableStyle([
+            ("LINEABOVE", (0, 0), (-1, 0), 0.6, colors.HexColor("#CBD8D1")),
+            ("LINEBELOW", (0, 0), (-1, 0), 0.6, colors.HexColor("#CBD8D1")),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("TOPPADDING", (0, 0), (-1, -1), 11), ("BOTTOMPADDING", (0, 0), (-1, -1), 11),
+        ]))
+        story.extend([Spacer(1, 14), metric_table])
+    story.extend([Paragraph("Executive Summary", styles["Heading2"]), Paragraph(escape(report.executive_summary), styles["BodyText"])])
     pdf_chart = report_pdf_chart(report)
     if pdf_chart is not None:
-        story.extend([Spacer(1, 0.15 * inch), Paragraph("Workforce Chart", styles["Heading2"]), pdf_chart])
-    for heading, items in (("Key Findings", report.findings), ("Recommendations", report.recommendations), ("Data Limitations", report.limitations)):
-        story.extend([Spacer(1, 0.12 * inch), Paragraph(heading, styles["Heading2"])])
-        story.extend(Paragraph(f"- {escape(item)}", styles["BodyText"]) for item in items)
-    story.extend([Spacer(1, 0.12 * inch), Paragraph("Suggested Follow-up", styles["Heading2"]), Paragraph(escape(report.follow_up), styles["BodyText"])])
+        story.extend([Spacer(1, 14), pdf_chart])
+    if report.findings:
+        story.append(Paragraph("Key Findings", styles["Heading2"]))
+        story.extend(Paragraph(f"&#8226; {escape(item)}", styles["BodyText"]) for item in report.findings)
+    if report.limitations:
+        notes = [Paragraph("Data Notes", styles["Heading2"])]
+        notes.extend(Paragraph(f"&#8226; {escape(item)}", note_style) for item in report.limitations)
+        story.append(KeepTogether(notes))
+    if report.tables:
+        story.extend([PageBreak(), Paragraph("Detailed Breakdown", styles["Title"])])
+        for heading, table, interpretation in report.tables:
+            story.extend([
+                Paragraph(escape(heading), styles["Heading2"]), report_pdf_table(table, document.width),
+                Spacer(1, 6), Paragraph(escape(interpretation), note_style),
+            ])
+            if "Headcount" in table:
+                story.append(Paragraph(f"Table total: {int(table['Headcount'].sum()):,} employees.", note_style))
+    for heading, items in (("Analyst Notes", report.recommendations),):
+        if items:
+            story.append(KeepTogether([Paragraph(heading, styles["Heading2"]), Paragraph(f"&#8226; {escape(items[0])}", styles["BodyText"])]))
+            story.extend(Paragraph(f"&#8226; {escape(item)}", styles["BodyText"]) for item in items[1:])
+    story.extend([Spacer(1, 12), Paragraph(f"Original question: {escape(question)}", note_style)])
 
     def footer(canvas, document) -> None:
         canvas.saveState()
         canvas.setFont("Helvetica", 8)
-        canvas.setFillColor(colors.HexColor("#716C65"))
+        canvas.setFillColor(colors.HexColor("#647269"))
+        canvas.setStrokeColor(colors.HexColor("#CBD8D1"))
+        canvas.line(document.leftMargin, 0.48 * inch, document.pagesize[0] - document.rightMargin, 0.48 * inch)
         canvas.drawString(document.leftMargin, 0.3 * inch, "Created by Vijayashree | All rights reserved 2026")
-        canvas.drawRightString(11 * inch - document.rightMargin, 0.3 * inch, f"Page {document.page}")
+        canvas.drawRightString(document.pagesize[0] - document.rightMargin, 0.3 * inch, f"Page {document.page}")
         canvas.restoreState()
 
     document.build(story, onFirstPage=footer, onLaterPages=footer)
@@ -2105,11 +2375,26 @@ def display_business_report(
     response_cache: dict[str, Any] | None = None,
 ) -> str:
     cache = response_cache if response_cache is not None else {}
+    if cache.get("report_layout_version") != 4:
+        cache.pop("business_report", None)
+        cache.pop("pdf_report", None)
+        cache["report_layout_version"] = 4
     if "business_report" not in cache:
         cache["business_report"] = build_business_report(question, result)
     report = cache["business_report"]
     chart = create_report_chart(report)
-    st.markdown(business_report_markdown(report))
+    st.markdown(
+        f'<header class="report-heading"><div class="report-brand">Workforce Compass / Workforce Analytics</div>'
+        f'<h2>{escape(report.title)}</h2><div class="report-meta">Generated {report.generated_at:%d %b %Y, %H:%M}'
+        f' &middot; {escape(report.scope)}</div></header>', unsafe_allow_html=True,
+    )
+    metric_html = "".join(
+        f'<div class="report-metric"><span>{escape(label)}</span><strong>{escape(value)}</strong></div>'
+        for label, value in report.metrics
+    )
+    st.markdown(f'<div class="report-metrics">{metric_html}</div>', unsafe_allow_html=True)
+    st.markdown('<h3 class="report-section">Executive Summary</h3>', unsafe_allow_html=True)
+    st.write(report.executive_summary)
     if chart is not None:
         st.plotly_chart(
             chart,
@@ -2117,6 +2402,38 @@ def display_business_report(
             use_container_width=True,
             config={"displayModeBar": False},
         )
+        source = report_chart_source(report)
+        if source:
+            interpretation = next(text for heading, _, text in report.tables if heading == source[0])
+            if interpretation not in report.executive_summary:
+                st.caption(interpretation)
+    if report.findings:
+        st.markdown('<h3 class="report-section">Key Findings</h3>', unsafe_allow_html=True)
+        for finding in report.findings:
+            st.markdown(f"- {escape(finding)}")
+    with st.expander("Detailed Breakdown", expanded=False):
+        for heading, table, interpretation in report.tables:
+            st.markdown(f"#### {heading}")
+            formatted = table.copy()
+            for column in formatted.columns[1:]:
+                if column == "Average salary":
+                    formatted[column] = formatted[column].map(lambda value: format_value(value, "salary"))
+                elif column == "Percentage of total":
+                    formatted[column] = formatted[column].map(lambda value: f"{value:.1f}%")
+            st.dataframe(formatted, hide_index=True, width="stretch")
+            st.caption(interpretation)
+            if "Headcount" in table:
+                st.caption(f"Table total: {int(table['Headcount'].sum()):,} employees.")
+        if not report.tables:
+            st.write("No matching data is available for a breakdown.")
+    with st.expander("Data Notes", expanded=False):
+        st.caption(f"Source: {DATABASE}.dbo.Employees | Question: {question}")
+        for limitation in report.limitations:
+            st.markdown(f"- {escape(limitation)}")
+        if report.recommendations:
+            st.markdown("#### Analyst Notes")
+            for recommendation in report.recommendations:
+                st.markdown(f"- {escape(recommendation)}")
 
     report_digest = sha256(
         (question + result.to_csv(index=False, lineterminator="\n")).encode("utf-8")
@@ -2131,6 +2448,7 @@ def display_business_report(
         mime="application/pdf",
         key=f"download_report_{report_digest}_{render_key}",
         use_container_width=False,
+        icon=":material/download:",
     )
     with st.expander("Email PDF report"):
         recipient = st.text_input(
@@ -2138,7 +2456,7 @@ def display_business_report(
             key=f"report_recipient_{report_digest}_{render_key}",
             placeholder="manager@example.com",
         ).strip()
-        if st.button("Send PDF report", key=f"send_report_{report_digest}_{render_key}"):
+        if st.button("Send PDF report", key=f"send_report_{report_digest}_{render_key}", icon=":material/mail:"):
             sent, status = send_report_email(recipient, report, pdf_report)
             if sent:
                 st.success(status)
@@ -2152,6 +2470,9 @@ def display_response(
     request: SqlRequest, question: str | None = None, render_key: str = "current",
     response_cache: dict[str, Any] | None = None,
 ) -> str | None:
+    if request.response_kind == "data_unavailable":
+        st.info(request.explanation)
+        return request.explanation
     if request.response_kind == "query_clarification":
         st.warning(request.explanation)
         return request.explanation
@@ -2168,7 +2489,7 @@ def display_response(
     if request.response_kind == "chart_salary_distribution":
         result = salary_distribution(result["salary"])[["Salary band (INR)", "Headcount"]]
         result.columns = ["chart_group", "chart_value"]
-    if "display_answer" not in cache:
+    if "display_answer" not in cache or request.response_kind == "chart_salary_distribution":
         cache["display_answer"] = natural_language_response(result, request, question)
     answer = cache["display_answer"]
     if request.response_kind == "column_query":
@@ -2825,6 +3146,21 @@ def apply_theme() -> None:
             }
 
             /* Feedback and scrollbar */
+            .report-heading { border-top: 3px solid #0f766e; padding: 16px 0 12px; }
+            .report-brand { color: #0f766e; font: 600 12px 'DM Sans', sans-serif; }
+            .report-heading h2 { font-size: 26px; line-height: 1.25; margin: 8px 0; overflow-wrap: anywhere; }
+            .report-meta { color: var(--wc-muted); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+            .report-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--wc-line); border-bottom: 1px solid var(--wc-line); padding: 16px 0; gap: 12px; }
+            .report-metric { min-width: 0; }
+            .report-metric span { display: block; color: var(--wc-muted); font-size: 12px; }
+            .report-metric strong { display: block; margin-top: 4px; font: 600 20px/1.4 'DM Sans', sans-serif; color: var(--wc-ink); overflow-wrap: anywhere; }
+            h3.report-section { font: 600 17px/1.4 'DM Sans', sans-serif; margin: 16px 0 6px; }
+            @media (max-width: 640px) {
+                .report-heading h2 { font-size: 22px; }
+                .report-metrics { grid-template-columns: 1fr; gap: 10px; }
+                .report-metric { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+                .report-metric strong { font-size: 18px; text-align: right; }
+            }
             [data-testid="stSpinner"] {
                 color: var(--wc-muted);
                 font-size: 0.88rem;

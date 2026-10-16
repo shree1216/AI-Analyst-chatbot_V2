@@ -16,8 +16,16 @@ production HR system.
 
 ## Report Preview
 
-Compare department averages, inspect the supporting numbers, and export a report
-with findings, recommendations, and limitations.
+Reports open with the generation date, applied scope, key metrics, executive
+summary, and chart. **Detailed Breakdown** contains the supporting tables and
+totals; **Data Notes** contains the source, limitations, and relevant analyst notes.
+
+PDF exports use a portrait layout with summary and chart first, followed by
+detailed tables with repeating headers, wrapped text, consistent INR formatting,
+and numbered pages. Larger datasets can span additional pages; horizontal PDF
+charts show up to 12 groups, while the detailed tables retain every group.
+Long PDF chart labels are shortened to fit, with an explanatory note; complete
+category names remain available in the detailed tables.
 
 **[View the sample department pay report (PDF)](docs/sample-department-pay-report.pdf)**
 
@@ -45,7 +53,7 @@ data may change the results.
 | --- | --- |
 | Ask about the workforce | Database-backed answers and grouped metrics |
 | Compare departments | Headcount and average-pay charts |
-| Prepare a business report | Executive summary, tables, findings, and PDF download |
+| Prepare a business report | Key metrics, scope, summary, chart, detailed tables, and PDF download |
 | Share a report | PDF attachment sent through authenticated SMTP with TLS |
 | Ask by voice or upload an image | Optional Azure Speech and Azure OpenAI integrations |
 
@@ -79,7 +87,8 @@ are not a replacement for database permissions or access controls.
 - Ask natural-language questions about employees, departments, salaries, cities,
   employment status, and joining dates.
 - Generate workforce breakdowns and interactive charts.
-- Create business reports with findings and recommendations.
+- Create business reports with key metrics, applied scope, factual findings, and
+    relevant analyst notes.
 - Download reports as PDF files.
 - Look up employee details such as department, city, email, and phone number.
 - Azure OpenAI support for structured column queries; results are rendered directly
