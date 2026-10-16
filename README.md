@@ -56,8 +56,8 @@ flowchart LR
     User[Question] --> UI[Streamlit]
     UI --> Router[Intent routing]
     Router --> Rules[Deterministic SQL templates]
-    Router --> AI[Azure OpenAI SQL fallback]
-    AI --> Validation[Query validation]
+    Router --> AI[Azure OpenAI structured query plan]
+    AI --> Validation[Schema validation and SQL compilation]
     Rules --> DB[(SQL Server)]
     Validation --> DB
     DB --> Results[pandas results]
@@ -67,9 +67,12 @@ flowchart LR
     PDF --> Email[SMTP with TLS]
 ```
 
-Supported question patterns use deterministic queries; other employee questions
-can use an Azure-generated SQL fallback. Query validation is an application
-guardrail, not a replacement for database permissions or access controls.
+Recognized simple counts, profile lookups, and chart/report patterns use existing
+templates. Other employee questions use an Azure-generated JSON query plan, not
+model-written SQL. The app validates columns, operators, types, ordering, and row
+limits, then compiles SQL with bound filter values. Unresolved questions request
+clarification instead of falling back to a total employee count. These checks
+are not a replacement for database permissions or access controls.
 
 ## Features
 
@@ -79,13 +82,23 @@ guardrail, not a replacement for database permissions or access controls.
 - Create business reports with findings and recommendations.
 - Download reports as PDF files.
 - Look up employee details such as department, city, email, and phone number.
-- Optional Azure OpenAI support for generated SQL and response summaries.
+- Azure OpenAI support for structured column queries; results are rendered directly
+    from SQL, with the interpreted filters displayed for verification.
 - Optional Azure Speech support for voice input and spoken responses.
 - Optional SMTP support for emailing PDF reports.
 - General answers use the last six exchanges in the current chat, with long
     messages shortened. Previous-question recall uses actual session history.
     **New chat** clears that history; it is not persistent memory across sessions.
 - Analyze uploaded JPG, PNG, and WebP images when Azure OpenAI is configured.
+
+To analyze an image, attach it using the upload button in the message box and
+select **Send message**. A question is optional. Successful submissions display
+the image and analysis in the chat. Failed analyses keep the image with a specific
+error and a **Retry image analysis** button; retrying does not require reuploading.
+You can also resubmit the same image to ask a different question.
+Image analysis allows 60 seconds and up to 2,000 completion tokens per request.
+Images must be smaller than 4 MB; high-detail vision
+is used for readability, but extracted text and numbers should still be checked.
 
 ## Technology
 
@@ -207,6 +220,7 @@ Add only the credentials for the integrations you want to use:
 | `AZURE_OPENAI_API_KEY` | Azure OpenAI API key |
 | `AZURE_OPENAI_API_VERSION` | Azure OpenAI API version |
 | `AZURE_OPENAI_DEPLOYMENT_MINI` | Chat model deployment name |
+| `AZURE_OPENAI_DEPLOYMENT_VISION` | Optional image-capable deployment; defaults to the chat deployment |
 | `AZURE_SPEECH_KEY` | Azure AI Speech key |
 | `AZURE_SPEECH_REGION` | Azure AI Speech region |
 | `SMTP_HOST` | SMTP server hostname |
@@ -237,16 +251,56 @@ Open [http://localhost:8501](http://localhost:8501) in a browser.
 ```text
 How many employees are in each department?
 Show the average salary by department.
+Give details of EMP015.
+Show Name, Salary and Job Title for employee_id EMP015.
+Show joining_date for employee_id EMP015.
+How many Site engineers do we have?
+Count female employees aged over 35 with salary above 70000.
+List employee ID, name and joining date for employees who joined in 2023.
+Show employees whose phone number is missing.
+Give the minimum and maximum salary by job title.
 Create a pie chart showing the proportion of Active, On Leave and Inactive employees.
 Show a donut chart of employees by gender.
 Show a bar graph of employee count by job title.
 Show a column chart of average salary by department.
+I want the analysis on salaries.
+Analyze highest and lowest department salaries.
+Show a histogram of salaries.
 Show a line chart of monthly employee joinings.
 Create a workforce report showing the breakdown by employment status.
 Who are the top 3 highest-paid employees in each department?
 What is the email address for Shree?
 Create a PDF report comparing department salaries.
 ```
+
+### Column Queries
+
+The query planner covers all columns in `dbo.Employees`: employee ID, name, age,
+gender, department, city, status, job title, salary, joining date, email, and phone
+number. The app still uses this plural table, not the separate `dbo.employee` table.
+
+Use database column names or their underscored aliases: `Employee ID`, `employee_id`,
+and `emp_id` refer to the same column; `Joining Date`, `joining_date`, and `join_date`
+are also equivalent. Direct profile lookups distinguish IDs such as `EMP015` from
+names and preserve leading zeroes. Profile requests with additional column
+conditions use the query planner instead of treating the condition as a name.
+
+Supported operations include counts, distinct counts, selected records, numeric
+and date comparisons, text prefixes/suffixes/contains, missing values, AND/OR
+filters, grouped count/average/sum/minimum/maximum, sorting, and top-N per group.
+Row lists and grouped outputs are capped at 100 rows. General column questions
+require a working Azure deployment; recognized simple queries still work without it.
+New text questions appear before AI interpretation starts. Previous messages retain
+their database-result snapshots and report PDFs, so reruns do not execute their SQL
+or regenerate their PDFs. Submit a question again for fresh database values.
+Up to 64 successful query interpretations are reused within the current chat;
+this skips repeated AI calls without caching new submissions' database results.
+New chat clears these interpretations. First-time AI questions still depend on
+Azure response time, and failed queries are not cached.
+Check the interpreted conditions. Ambiguous requests, unsupported calculations,
+unavailable columns, and service failures cannot be guaranteed an answer; the app
+asks for clarification rather than inventing one. Chart/report templates retain
+their existing supported dimensions and metrics.
 
 ### Demo Walkthrough
 
@@ -258,10 +312,21 @@ Create a PDF report comparing department salaries.
 Department pay comparisons use the mean of the recorded employee salaries, not
 total payroll or a job-adjusted pay-equity calculation.
 
-Explicit pie, donut, horizontal bar, vertical column, and line chart requests
-are supported in the chat and PDF reports. Without an explicit type, status and
-gender proportions use pie charts, joining-date trends use lines, job-title
-comparisons use horizontal bars, and other comparisons use columns.
+Explicit pie, donut, horizontal bar, vertical column, line, and salary histogram
+requests are supported in the chat and PDF reports. Automatic selection uses the
+question's metric and grouping, not random chart rotation:
+
+- Broad salary analysis and salary distributions use histograms of recorded salaries.
+- Average-pay comparisons and rankings use horizontal bars, grouped by the requested field.
+- Status and gender proportions use pie charts.
+- Joining-date trends use lines.
+- Job-title comparisons use horizontal bars; other categorical breakdowns use columns.
+
+Explicit chart types override these defaults. Salary histograms use up to ten
+equal-width bands; missing salaries are excluded, and constant salaries form one
+band. Reports include mean and median salary and identify missing salary records.
+Salary values are shown in INR as recorded, without assuming a pay period.
+
 For example, ask `Create a PDF report with a pie chart of employment status`.
 Monthly and yearly trends group the current employee snapshot by joining date;
 they do not reconstruct historical headcount or attrition. Missing-date records
