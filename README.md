@@ -2,6 +2,8 @@
 
 [![Tests](https://github.com/shree1216/AI-Analyst-chatbot_V2/actions/workflows/tests.yml/badge.svg)](https://github.com/shree1216/AI-Analyst-chatbot_V2/actions/workflows/tests.yml)
 
+**[Open the live Workforce Compass demo](https://workforce-compass-vijayashree.streamlit.app/)**
+
 Ask workforce questions in plain English. Explore department pay and headcount,
 build PDF business reports, and email the results from one Streamlit application.
 
@@ -152,7 +154,8 @@ Install the following before starting:
 
 Direct dependencies are pinned to the locally tested versions. CI targets Python
 3.14 on Windows and Linux (including the SQLite demo); the SQL Server setup is
-Windows-only. Cloud deployment still needs a live deployment check.
+Windows-only. The hosted demo has been checked for public access, employee counts,
+department charts, and PDF downloads.
 Transitive dependencies are resolved by pip, so this is not a complete
 environment lockfile.
 
@@ -385,10 +388,9 @@ other confidential information.
    **Create app**.
 3. Select repository `shree1216/AI-Analyst-chatbot_V2`, branch `main`, and main file
    `employee_sql_chatbot.py`.
-4. Choose an available app subdomain, for example `workforce-compass-vijayashree`.
-   That would produce `https://workforce-compass-vijayashree.streamlit.app` **only
-   after a successful deployment and if that name is available**; it is not a
-   currently verified live link.
+4. Choose an available app subdomain. This project's deployed demo uses
+   <https://workforce-compass-vijayashree.streamlit.app/>; a fork needs its own
+   available name.
 5. In **Advanced settings**, select **Python 3.14** and add this root-level secret:
 
    ```toml
