@@ -105,6 +105,18 @@ class DemoDatabaseTests(unittest.TestCase):
                 actual = result.set_index("chart_group")["chart_value"].to_dict()
                 self.assertEqual(actual, groups.value_counts().sort_index().to_dict())
 
+    def test_joining_year_count_matches_dataset_and_date_boundaries(self):
+        result = self.query("How many employees joined during 2023?")
+        expected = (pd.to_datetime(self.employees["Joining Date"]).dt.year == 2023).sum()
+        self.assertEqual(result.iloc[0, 0], expected)
+        fixture = self.employees.head(5).copy()
+        fixture["Joining Date"] = ["2022-12-31", "2023-01-01", "2023-12-31", "2024-01-01", None]
+        self.engine.dispose()
+        self.chatbot.get_engine.clear()
+        with patch.object(self.chatbot.pd, "read_excel", return_value=fixture):
+            self.engine = self.chatbot.get_engine()
+        self.assertEqual(self.query("How many employees joined during 2023?").iloc[0, 0], 2)
+
     def test_department_queries_and_rankings_execute(self):
         result = self.query("Which departments have headcount above average?", known_template=True)
         counts = self.employees.groupby("Department").size()
@@ -205,6 +217,12 @@ class DemoDatabaseTests(unittest.TestCase):
         self.assertIn(str(expected), app.session_state["chat_history"][1]["answer"])
         self.assertIn("gender = female", app.session_state["chat_history"][1]["request"].explanation)
         self.assertIn("salary > 80000", app.session_state["chat_history"][1]["request"].explanation)
+        app.chat_input[0].set_value("How many employees joined during 2023?").run(timeout=30)
+        self.assertEqual(len(app.exception), 0)
+        expected = (pd.to_datetime(self.employees["Joining Date"]).dt.year == 2023).sum()
+        self.assertEqual(app.session_state["chat_history"][2]["answer"], f"Employee count: {expected}.")
+        self.assertFalse(any("join date" in caption.value or "gender =" in caption.value for caption in app.caption))
+        self.assertEqual(len(app.code), 0)
 
     def test_cloud_voice_controls_enable_when_speech_settings_are_present(self):
         with patch.dict(os.environ, {"AZURE_SPEECH_KEY": "test-key", "AZURE_SPEECH_REGION": "eastus"}):

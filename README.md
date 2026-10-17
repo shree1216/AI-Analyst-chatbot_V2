@@ -95,7 +95,7 @@ are not a replacement for database permissions or access controls.
 - Download reports as PDF files.
 - Look up employee details such as department, city, email, and phone number.
 - Azure OpenAI support for structured column queries; results are rendered directly
-    from SQL, with the interpreted filters displayed for verification.
+    from the database without displaying SQL or internal filter expressions.
 - Optional Azure Speech support for voice input and spoken responses.
 - Optional SMTP support for emailing PDF reports.
 - General answers use the last six exchanges in the current chat, with long
@@ -273,6 +273,7 @@ Show joining_date for employee_id EMP015.
 How many Site engineers do we have?
 Count female employees aged over 35 with salary above 70000.
 How many female employees have a salary above 80000?
+How many employees joined during 2023?
 Count female employees aged over 35 and salary above 70000.
 List employee ID, name and joining date for employees who joined in 2023.
 Show employees whose phone number is missing.
@@ -313,6 +314,11 @@ with `and`, are handled locally without Azure. For example, `How many female
 employees have a salary above 80000?` applies both filters with a strict `>` salary
 threshold. Unsupported extra conditions are never silently dropped; more complex
 questions, including OR conditions, still use the AI planner.
+Joining-year counts such as `How many employees joined during 2023?` also run
+directly without an AI request. The date filter includes January 1 of the requested
+year and excludes January 1 of the next year; it can be combined with supported
+gender, age, and salary conditions using `and`. This removes AI round-trip time
+for these questions without caching stale database results or shortening timeouts.
 New text questions appear before AI interpretation starts. Previous messages retain
 their database-result snapshots and report PDFs, so reruns do not execute their SQL
 or regenerate their PDFs. Submit a question again for fresh database values.
@@ -320,7 +326,9 @@ Up to 64 successful query interpretations are reused within the current chat;
 this skips repeated AI calls without caching new submissions' database results.
 New chat clears these interpretations. First-time AI questions still depend on
 Azure response time, and failed queries are not cached.
-Check the interpreted conditions. Ambiguous requests, unsupported calculations,
+Column-query answers show only results (or a no-match message), not query code or
+internal filter expressions; copy and spoken responses use the same result text.
+Ambiguous requests, unsupported calculations,
 unavailable columns, and service failures cannot be guaranteed an answer. The app
 distinguishes missing AI configuration, access errors, quota limits, timeouts, and
 invalid service responses from requests that need clarification. Voice settings

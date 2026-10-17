@@ -560,6 +560,10 @@ def translate_simple_filtered_count(question: str) -> SqlRequest | None:
                 "", clause,
             )
             gender_match = re.fullmatch(r"(?:gender\s*(?:is|=)\s*)?(male|female)", clause)
+            joining_year_match = re.fullmatch(
+                r"(?:joined\s+(?:in|during)\s+(?:the\s+year\s+)?|joining\s+year\s*(?:(?:is|=)\s*)?)(\d{4})",
+                clause,
+            )
             numeric_match = re.fullmatch(
                 r"(?:(age|aged|salary|pay)\s*(?:is\s+)?)?"
                 r"(older than|younger than|greater than|more than|less than|at least|at most|equal to|above|below|over|under|>=|<=|!=|>|<|=)\s*"
@@ -568,6 +572,14 @@ def translate_simple_filtered_count(question: str) -> SqlRequest | None:
             )
             if gender_match:
                 conditions.append({"column": "gender", "op": "eq", "value": gender_match.group(1)})
+            elif joining_year_match:
+                year = int(joining_year_match.group(1))
+                if not 1 <= year < 9999:
+                    return None
+                conditions.extend([
+                    {"column": "join_date", "op": "gte", "value": f"{year:04d}-01-01"},
+                    {"column": "join_date", "op": "lt", "value": f"{year + 1:04d}-01-01"},
+                ])
             elif numeric_match:
                 column, comparison, amount, years = numeric_match.groups()
                 age_comparison = comparison in {"older than", "younger than"}
@@ -1404,7 +1416,7 @@ def format_value(value: Any, column_name: str) -> str:
 def deterministic_response(result: pd.DataFrame, request: SqlRequest) -> str:
     if request.response_kind == "column_query":
         if result.empty:
-            return "No matching records. " + request.explanation
+            return "No matching records."
         if len(result) == 1:
             return "; ".join(
                 f"{column.replace('_', ' ').capitalize()}: {format_value(result.iloc[0][column], column)}"
@@ -2578,11 +2590,10 @@ def display_response(
     if request.response_kind == "chart_salary_distribution":
         result = salary_distribution(result["salary"])[["Salary band (INR)", "Headcount"]]
         result.columns = ["chart_group", "chart_value"]
-    if "display_answer" not in cache or request.response_kind == "chart_salary_distribution":
+    if "display_answer" not in cache or request.response_kind in {"chart_salary_distribution", "column_query"}:
         cache["display_answer"] = natural_language_response(result, request, question)
     answer = cache["display_answer"]
     if request.response_kind == "column_query":
-        st.caption(request.explanation)
         if len(result) > 1:
             st.write(f"Returned {len(result):,} rows.")
             st.dataframe(result, hide_index=True, use_container_width=True)

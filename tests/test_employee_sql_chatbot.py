@@ -176,6 +176,67 @@ class WorkforceTests(unittest.TestCase):
                     self.assertIn(comparison, request.sql)
                 self.assertEqual(request.sql.count(" AND "), len(values) - 1)
 
+    def test_joining_year_counts_skip_planning_and_summarization(self):
+        for question in (
+            "How many employees joined during 2023?",
+            "How many employees joined in 2023?",
+            "Count employees who joined during the year 2023.",
+            "Show me the number of employees with joining year = 2023",
+        ):
+            with self.subTest(question=question), patch.object(
+                self.chatbot, "generate_employee_query", side_effect=AssertionError("Unexpected AI planning")
+            ), patch.object(self.chatbot, "summarize_with_azure_openai", side_effect=AssertionError("Unexpected AI summary")):
+                request = self.chatbot.translate_question(question)
+                self.assertEqual(request.parameters, {"filter_0": "2023-01-01", "filter_1": "2024-01-01"})
+                self.assertIn("[join_date] >= :filter_0", request.sql)
+                self.assertIn("[join_date] < :filter_1", request.sql)
+                answer = self.chatbot.natural_language_response(pd.DataFrame({"employee_count": [14]}), request, question)
+                self.assertEqual(answer, "Employee count: 14.")
+
+    def test_joining_year_counts_keep_all_supported_conditions(self):
+        with patch.object(self.chatbot, "generate_employee_query") as planner:
+            request = self.chatbot.translate_question(
+                "How many female employees joined in 2023 and salary above 80000?"
+            )
+        planner.assert_not_called()
+        self.assertEqual(list(request.parameters.values()), ["female", "2023-01-01", "2024-01-01", 80000])
+
+    def test_joining_year_fast_path_does_not_ignore_other_conditions(self):
+        for question in (
+            "Count employees who joined in 2023 or 2024",
+            "How many employees joined during 2023 in Sales?",
+            "How many employees joined during 2023 by department?",
+            "How many employees joined during 2023 excluding interns?",
+            "How many employees joined during 2023 and after June?",
+            "How many employees joined in 0000?",
+            "How many employees joined in 9999?",
+        ):
+            with self.subTest(question=question), patch.object(
+                self.chatbot, "generate_employee_query", return_value=None
+            ) as planner:
+                request = self.chatbot.translate_question(question)
+                planner.assert_called_once_with(question)
+                self.assertEqual(request.sql, "")
+                self.assertEqual(request.response_kind, "query_clarification")
+
+    def test_column_query_rendering_only_displays_results(self):
+        request = self.chatbot.compile_employee_plan(employee_query_plan(
+            filter={"column": "join_date", "op": "gte", "value": "2023-01-01"}
+        ))
+        for result in (pd.DataFrame({"employee_count": [14]}), pd.DataFrame({"name": ["A", "B"]}), pd.DataFrame()):
+            with self.subTest(rows=len(result)), patch.object(self.chatbot.st, "caption") as caption, patch.object(
+                self.chatbot.st, "code"
+            ) as code, patch.object(self.chatbot, "run_query", side_effect=AssertionError("Unexpected database reread")):
+                cache = {"result": result, "display_answer": "Old technical details: " + request.explanation}
+                answer = self.chatbot.display_response(request, response_cache=cache)
+                caption.assert_not_called()
+                code.assert_not_called()
+                self.assertNotIn(request.explanation, answer)
+                self.assertNotIn(request.sql, answer)
+                self.assertEqual(cache["display_answer"], answer)
+                if result.empty:
+                    self.assertEqual(answer, "No matching records.")
+
     def test_unavailable_fields_are_explained_without_ai_or_sql(self):
         cases = (
             ("Count employees with a performance rating above 4", "performance ratings"),
