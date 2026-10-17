@@ -6,8 +6,9 @@ Ask workforce questions in plain English. Explore department pay and headcount,
 build PDF business reports, and email the results from one Streamlit application.
 
 Built with **Python, SQL Server, Azure OpenAI, and Streamlit** using a synthetic
-150-employee dataset. This is a local-first portfolio application, not a
-production HR system.
+150-employee dataset. This is a portfolio application, not a production HR system.
+The local setup uses SQL Server; the optional cloud demo uses the bundled
+synthetic dataset in a read-only, in-memory SQLite database.
 
 [Getting Started](#local-setup-on-windows) | [Example Questions](#example-questions) |
 [Architecture](#architecture) | [Tests](#tests) | [Deployment Notes](#deployment-note)
@@ -130,7 +131,9 @@ is used for readability, but extracted text and numbers should still be checked.
 | `.env.example` | Template for optional Azure and SMTP settings |
 | `requirements.txt` | Python dependencies |
 | `tests/test_employee_sql_chatbot.py` | Isolated routing, report, PDF, UI, and SMTP regression tests |
-| `.github/workflows/tests.yml` | Windows / Python 3.14 CI workflow |
+| `packages.txt` | Linux native libraries for Streamlit Community Cloud |
+| `tests/test_demo_database.py` | Real SQLite demo queries and cloud-mode UI regression tests |
+| `.github/workflows/tests.yml` | Windows and Linux / Python 3.14 CI workflow |
 | `docs/` | Screenshots and a sample PDF report |
 
 The application currently lives in one module. The other dataset generators and
@@ -148,8 +151,9 @@ Install the following before starting:
 4. Git
 
 Direct dependencies are pinned to the locally tested versions. CI targets Python
-3.14 on Windows; other Python versions and operating systems are not currently
-verified. Transitive dependencies are resolved by pip, so this is not a complete
+3.14 on Windows and Linux (including the SQLite demo); the SQL Server setup is
+Windows-only. Cloud deployment still needs a live deployment check.
+Transitive dependencies are resolved by pip, so this is not a complete
 environment lockfile.
 
 The application currently connects to:
@@ -374,13 +378,69 @@ other confidential information.
 
 ## Deployment Note
 
+### Free hosted portfolio demo (no laptop or SQL Server required)
+
+1. Push the project changes to your GitHub repository.
+2. Sign in at <https://share.streamlit.io>, connect your GitHub account, and choose
+   **Create app**.
+3. Select repository `shree1216/AI-Analyst-chatbot_V2`, branch `main`, and main file
+   `employee_sql_chatbot.py`.
+4. Choose an available app subdomain, for example `workforce-compass-vijayashree`.
+   That would produce `https://workforce-compass-vijayashree.streamlit.app` **only
+   after a successful deployment and if that name is available**; it is not a
+   currently verified live link.
+5. In **Advanced settings**, select **Python 3.14** and add this root-level secret:
+
+   ```toml
+   WORKFORCE_DATA_MODE = "demo"
+   ```
+
+6. Click **Deploy**. Verify that the app answers `How many employees do we have?`,
+   renders `Show a bar chart of employee count by department`, and downloads a PDF.
+   Share the URL shown by Streamlit after these checks succeed.
+
+Demo mode loads `employee_dataset.xlsx` into SQLite once per application process,
+uses the same query validation and bound parameters as the local app, and rejects
+database writes. No SQL Server, ODBC driver configuration, or cloud database
+account is required. The original SQL Server mode remains the default when
+`WORKFORCE_DATA_MODE` is not set. Invalid mode values fail explicitly.
+
+Counts, lookups, supported charts, and PDF reports work without Azure credentials.
+Open-ended chat, AI-planned queries, image analysis, and voice still need their
+respective Azure settings. Root-level Streamlit secrets become environment
+variables; use the names in `.env.example`. Environment variables take precedence
+over the local `.env` file. Never commit `.env` or `.streamlit/secrets.toml`.
+For an anonymous public demo, leave SMTP credentials unset and avoid adding Azure
+credentials unless you accept visitor usage charges and have suitable controls.
+There is no authentication or per-user rate limit in this app.
+
+To test demo mode locally:
+
+```powershell
+$env:WORKFORCE_DATA_MODE = "demo"
+python -m streamlit run employee_sql_chatbot.py
+```
+
+Use `Remove-Item Env:\WORKFORCE_DATA_MODE` afterward to restore the default for
+future launches in that terminal (unless the mode is also set in `.env`).
+Free hosting may put inactive apps to sleep; the hosted URL remains shareable,
+but this is not a promise of continuous uptime.
+
+### SQL Server deployment
+
 The default `localhost\SQLEXPRESS` connection works only on the computer running
 SQL Server. It will not connect from Streamlit Community Cloud or another hosted
-environment.
-
-Before deploying publicly, move the employee data to a secured hosted database,
-configure database credentials through the hosting platform's secret manager,
+environment. Hosting the SQL Server version requires a secured hosted database
+and changes to its connection configuration; use the platform's secret manager
 and restrict access to sensitive workforce information.
+
+### Cloudflare Error 1033
+
+Error 1033 means Cloudflare cannot find a healthy tunnel connection. A
+`trycloudflare.com` quick-tunnel link is temporary, not a hosted deployment:
+the computer, Streamlit process, and tunnel must all remain online. Restarting a
+quick tunnel usually gives a different URL, so an old link will not be restored.
+Use the hosted demo above for a stable sharing address independent of your laptop.
 
 ## Security and Limitations
 

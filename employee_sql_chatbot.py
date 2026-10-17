@@ -38,16 +38,24 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, Tabl
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL, Engine
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.pool import StaticPool
 
 
+load_dotenv(Path(__file__).with_name(".env"), override=False)
+
+DATA_MODE = os.getenv("WORKFORCE_DATA_MODE", "sqlserver").strip().lower()
+if DATA_MODE not in {"sqlserver", "demo"}:
+    raise ValueError("WORKFORCE_DATA_MODE must be 'sqlserver' or 'demo'.")
 SERVER = r"localhost\SQLEXPRESS"
 DATABASE = "EmployeeDB"
+EMPLOYEE_TABLE = "Employees" if DATA_MODE == "demo" else "dbo.Employees"
+SOURCE_LABEL = "Bundled synthetic employee_dataset.xlsx" if DATA_MODE == "demo" else f"{DATABASE}.dbo.Employees"
 TABLE = (
     "(SELECT [Employee ID] AS [emp_id], [Name] AS [name], [Age] AS [age], "
     "[Gender] AS [gender], [Department] AS [department], [City] AS [city], "
     "[Status] AS [status], [Job Title] AS [job_title], [Salary] AS [salary], "
     "[Joining Date] AS [join_date], [Email] AS [email], "
-    "[Phone Number] AS [phone_number] FROM dbo.Employees) AS employee_data"
+    f"[Phone Number] AS [phone_number] FROM {EMPLOYEE_TABLE}) AS employee_data"
 )
 MAX_ROWS = 100
 MAX_SUMMARY_ROWS = 20
@@ -127,8 +135,6 @@ LOOKUP_FIELDS = (
     ("gender", "gender", "gender"),
     ("rating", "rating", "rating"),
 )
-
-load_dotenv(Path(__file__).with_name(".env"), override=True)
 
 DEPARTMENTS = ["Sales", "IT", "HR", "Finance", "Marketing", "Operations"]
 CITIES = ["Delhi", "Mumbai", "Bengaluru", "Chennai", "Hyderabad", "Kolkata", "Pune"]
@@ -291,6 +297,19 @@ chat_scroll_component = st.components.v2.component(
 
 @st.cache_resource
 def get_engine() -> Engine:
+    if DATA_MODE == "demo":
+        employees = pd.read_excel(Path(__file__).with_name("employee_dataset.xlsx"))
+        missing = set(EMPLOYEE_COLUMN_NAMES) - set(employees.columns)
+        if missing:
+            raise ValueError(f"Demo dataset is missing columns: {', '.join(sorted(missing))}")
+        employees["Joining Date"] = pd.to_datetime(employees["Joining Date"], errors="raise").dt.strftime("%Y-%m-%d")
+        engine = create_engine(
+            "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool,
+        )
+        with engine.begin() as connection:
+            employees.to_sql("Employees", connection, index=False)
+            connection.exec_driver_sql("PRAGMA query_only = ON")
+        return engine
     database_url = URL.create(
         "mssql+pyodbc",
         host=SERVER,
@@ -298,6 +317,12 @@ def get_engine() -> Engine:
         query={"driver": "ODBC Driver 17 for SQL Server", "trusted_connection": "yes"},
     )
     return create_engine(database_url, pool_pre_ping=True, pool_recycle=1800)
+
+
+def limit_query(sql: str, limit: int) -> str:
+    if DATA_MODE == "demo":
+        return f"{sql} LIMIT {limit}"
+    return f"SELECT TOP {limit} {sql.removeprefix('SELECT ')}"
 
 
 def find_filter(question: str, values: list[str], column: str) -> tuple[str, dict[str, str]]:
@@ -667,8 +692,10 @@ def translate_known_question(question: str) -> SqlRequest | None:
     if email_match:
         email = email_match.group(0).lower()
         return SqlRequest(
-            f"SELECT TOP 1 [emp_id], [name], [department], [city], [status], [email] "
-            f"FROM {TABLE} WHERE LOWER([email]) = :email",
+            limit_query(
+                f"SELECT [emp_id], [name], [department], [city], [status], [email] "
+                f"FROM {TABLE} WHERE LOWER([email]) = :email", 1,
+            ),
             {"email": email},
             "Looking up the employee associated with the email address.",
             response_kind="email_owner",
@@ -681,8 +708,10 @@ def translate_known_question(question: str) -> SqlRequest | None:
             "LOWER([phone_number]), ' ', ''), '-', ''), '(', ''), ')', ''), '+', ''), '.', ''), 'x', '')"
         )
         return SqlRequest(
-            f"SELECT TOP 1 [name], [phone_number] FROM {TABLE} "
-            f"WHERE {normalized_phone} LIKE :phone_digits",
+            limit_query(
+                f"SELECT [name], [phone_number] FROM {TABLE} "
+                f"WHERE {normalized_phone} LIKE :phone_digits", 1,
+            ),
             {"phone_digits": f"%{phone_digits}%"},
             "Looking up the employee associated with the phone number.",
             response_kind="phone_owner",
@@ -722,10 +751,16 @@ def translate_known_question(question: str) -> SqlRequest | None:
         group_expression = f"[{chart_column}]"
         ordering = "chart_value DESC"
         if chart_column == "join_date":
-            group_expression = (
-                "YEAR([join_date])" if chart_label == "Joining year"
-                else "DATEFROMPARTS(YEAR([join_date]), MONTH([join_date]), 1)"
-            )
+            if DATA_MODE == "demo":
+                group_expression = (
+                    "CAST(strftime('%Y', [join_date]) AS INTEGER)" if chart_label == "Joining year"
+                    else "strftime('%Y-%m-01', [join_date])"
+                )
+            else:
+                group_expression = (
+                    "YEAR([join_date])" if chart_label == "Joining year"
+                    else "DATEFROMPARTS(YEAR([join_date]), MONTH([join_date]), 1)"
+                )
             where_clause += (" AND " if where_clause else " WHERE ") + "[join_date] IS NOT NULL"
             ordering = "chart_group"
         is_salary = is_pay_question(normalized)
@@ -745,7 +780,7 @@ def translate_known_question(question: str) -> SqlRequest | None:
     if field and employee_name:
         column, _ = field
         return SqlRequest(
-            f"SELECT TOP 1 [name], [{column}] FROM {TABLE} WHERE LOWER([name]) = :name",
+            limit_query(f"SELECT [name], [{column}] FROM {TABLE} WHERE LOWER([name]) = :name", 1),
             {"name": employee_name.lower()},
             f"Looking up an employee detail for {employee_name}.",
             response_field=column,
@@ -764,7 +799,7 @@ def translate_known_question(question: str) -> SqlRequest | None:
             "SELECT [Employee ID] AS [emp_id], [Name] AS [name], [Department] AS [department], "
             "[Job Title] AS [job_title], [Salary] AS [salary], "
             "ROW_NUMBER() OVER (PARTITION BY [Department] ORDER BY [Salary] DESC, [Employee ID]) AS salary_rank "
-            "FROM dbo.Employees) AS ranked_employees "
+            f"FROM {EMPLOYEE_TABLE}) AS ranked_employees "
             "WHERE salary_rank <= :rank_limit ORDER BY [department], [salary] DESC",
             {"rank_limit": rank_limit},
             f"Finding the top {rank_limit} highest-paid employees in each department.",
@@ -779,10 +814,10 @@ def translate_known_question(question: str) -> SqlRequest | None:
         and any(term in normalized for term in ("more", "above", "higher", "greater"))
     ):
         return SqlRequest(
-            "SELECT [Department] AS department, COUNT(*) AS employee_count FROM dbo.Employees "
+            f"SELECT [Department] AS department, COUNT(*) AS employee_count FROM {EMPLOYEE_TABLE} "
             "GROUP BY [Department] HAVING COUNT(*) > ("
             "SELECT AVG(CAST(department_count AS FLOAT)) FROM ("
-            "SELECT COUNT(*) AS department_count FROM dbo.Employees GROUP BY [Department]"
+            f"SELECT COUNT(*) AS department_count FROM {EMPLOYEE_TABLE} GROUP BY [Department]"
             ") AS department_counts) ORDER BY employee_count DESC",
             {},
             "Finding departments whose headcount is above the average department headcount.",
@@ -795,9 +830,9 @@ def translate_known_question(question: str) -> SqlRequest | None:
         and any(term in normalized for term in ("above", "more than", "higher than"))
     ):
         return SqlRequest(
-            "SELECT COUNT(*) AS employee_count FROM dbo.Employees AS employee "
+            f"SELECT COUNT(*) AS employee_count FROM {EMPLOYEE_TABLE} AS employee "
             "WHERE employee.[Salary] > ("
-            "SELECT AVG(CAST(peer.[Salary] AS FLOAT)) FROM dbo.Employees AS peer "
+            f"SELECT AVG(CAST(peer.[Salary] AS FLOAT)) FROM {EMPLOYEE_TABLE} AS peer "
             "WHERE peer.[Department] = employee.[Department])",
             {},
             "Counting employees whose salary is above their department average.",
@@ -821,7 +856,11 @@ def translate_known_question(question: str) -> SqlRequest | None:
         if suffix_match and re.search(r"\b(employees?|emails?)\b", normalized):
             parameters["email_suffix"] = suffix_match.group(1)
             where_clause += " AND " if where_clause else " WHERE "
-            where_clause += "RIGHT(LOWER(RTRIM([email])), LEN(:email_suffix)) = :email_suffix"
+            where_clause += (
+                "substr(LOWER(RTRIM([email])), -length(:email_suffix)) = :email_suffix"
+                if DATA_MODE == "demo"
+                else "RIGHT(LOWER(RTRIM([email])), LEN(:email_suffix)) = :email_suffix"
+            )
         if "distinct" in normalized or "unique" in normalized:
             for phrase, column, label in DISTINCT_COUNT_FIELDS:
                 if phrase in normalized:
@@ -891,8 +930,10 @@ def translate_known_question(question: str) -> SqlRequest | None:
         number_match = re.search(r"\btop\s+(\d{1,3})\b", normalized)
         row_count = min(int(number_match.group(1)), MAX_ROWS) if number_match else 10
         return SqlRequest(
-            f"SELECT TOP {row_count} [emp_id], [name], [department], [city], [salary] "
-            f"FROM {TABLE}{where_clause} ORDER BY [salary] DESC",
+            limit_query(
+                f"SELECT [emp_id], [name], [department], [city], [salary] "
+                f"FROM {TABLE}{where_clause} ORDER BY [salary] DESC", row_count,
+            ),
             parameters,
             f"Showing the {row_count} highest-paid matching employees.",
             response_kind="top_paid_employees",
@@ -1110,13 +1151,13 @@ def compile_employee_plan(plan: dict[str, Any]) -> SqlRequest:
             raise ValueError("Invalid per-group ranking")
         parameters["rank_limit"] = rank_limit
         sql = (
-            f"SELECT TOP {limit} {projection} FROM (SELECT *, ROW_NUMBER() OVER "
+            f"SELECT {projection} FROM (SELECT *, ROW_NUMBER() OVER "
             f"(PARTITION BY {', '.join(partitioning)} ORDER BY {', '.join(sort_sql)}, [emp_id]) AS employee_rank "
             f"FROM {TABLE}{where_sql}) AS ranked_employees WHERE employee_rank <= :rank_limit"
         )
         description += f"; top {rank_limit} per {', '.join(per_group)}"
     else:
-        sql = f"SELECT {'TOP ' + str(limit) + ' ' if not metrics or groups else ''}{projection} FROM {TABLE}{where_sql}"
+        sql = f"SELECT {projection} FROM {TABLE}{where_sql}"
         if groups:
             sql += f" GROUP BY {', '.join(grouping)}"
     if sort_sql:
@@ -1128,6 +1169,7 @@ def compile_employee_plan(plan: dict[str, Any]) -> SqlRequest:
     if sort_sql:
         description += "; sorted by " + ", ".join(sort_sql)
     if not metrics or groups:
+        sql = limit_query(sql, limit)
         description += f"; at most {limit} rows"
     return SqlRequest(sql, parameters, description, response_kind="column_query")
 
@@ -1153,7 +1195,7 @@ def generate_employee_query(question: str) -> SqlRequest | None:
                     "role": "system",
                     "content": (
                         "Return a JSON employee query plan, NEVER SQL or an answer. Available columns and types: "
-                        f"{json.dumps(EMPLOYEE_COLUMNS)}. The source is the current dbo.Employees snapshot. "
+                        f"{json.dumps(EMPLOYEE_COLUMNS)}. The source is {SOURCE_LABEL}. "
                         f"Recognize these column-name aliases but emit canonical column keys: {json.dumps(EMPLOYEE_COLUMN_ALIASES)}. "
                         "EMP015 and similar identifiers are employee IDs, not names. Preserve their leading zeroes. "
                         "JSON keys: understood (boolean), unhandled_conditions (array of strings), columns (array), "
@@ -2029,7 +2071,7 @@ def generate_business_report_pdf(question: str, report: BusinessReport, chart) -
     brand_style = ParagraphStyle("ReportBrand", parent=note_style, fontName="Helvetica-Bold", textColor=colors.HexColor("#0F766E"), spaceAfter=10)
     metric_style = ParagraphStyle("ReportMetric", fontName="Helvetica-Bold", fontSize=15, leading=20, textColor=colors.HexColor("#25332E"))
     story = [Paragraph("WORKFORCE COMPASS / ANALYTICS REPORT", brand_style), Paragraph(escape(report.title), styles["Title"])]
-    story.append(Paragraph(f"Generated {report.generated_at:%d %B %Y, %H:%M} | Source: {DATABASE}.dbo.Employees", note_style))
+    story.append(Paragraph(f"Generated {report.generated_at:%d %B %Y, %H:%M} | Source: {SOURCE_LABEL}", note_style))
     story.append(Paragraph(f"Scope: {escape(report.scope)}", note_style))
     if report.metrics:
         metric_cells = [[Paragraph(escape(label.upper()), note_style), Paragraph(escape(value), metric_style)] for label, value in report.metrics]
@@ -2427,7 +2469,7 @@ def display_business_report(
         if not report.tables:
             st.write("No matching data is available for a breakdown.")
     with st.expander("Data Notes", expanded=False):
-        st.caption(f"Source: {DATABASE}.dbo.Employees | Question: {question}")
+        st.caption(f"Source: {SOURCE_LABEL} | Question: {question}")
         for limitation in report.limitations:
             st.markdown(f"- {escape(limitation)}")
         if report.recommendations:
@@ -3235,6 +3277,8 @@ def render_recent_chats(placeholder: Any) -> None:
 # Sidebar navigation
 with st.sidebar:
     st.markdown('<div class="sidebar-brand">Workforce Compass</div>', unsafe_allow_html=True)
+    if DATA_MODE == "demo":
+        st.caption("Public portfolio demo - synthetic employee data only.")
     if st.button("New chat", key="new_chat", use_container_width=True):
         history.clear()
         st.session_state.pop("employee_query_plan_cache", None)

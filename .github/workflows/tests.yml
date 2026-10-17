@@ -11,8 +11,12 @@ permissions:
 
 jobs:
   regression:
-    name: Windows / Python 3.14
-    runs-on: windows-latest
+    name: ${{ matrix.os }} / Python 3.14
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-22.04]
     timeout-minutes: 15
     steps:
       - name: Check out repository
@@ -24,6 +28,9 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
+      - name: Install Linux runtime libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y $(cat packages.txt)
       - name: Check dependency compatibility
         run: python -m pip check
       - name: Run isolated regression tests
