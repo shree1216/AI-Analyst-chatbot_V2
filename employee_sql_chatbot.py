@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from hashlib import sha256
 from html import escape
 from pathlib import Path
+from threading import Lock
 from typing import Any
 import wave
 
@@ -991,7 +992,17 @@ def is_safe_generated_query(sql: str) -> bool:
     )
 
 
+@st.cache_resource
+def get_demo_query_lock() -> Lock:
+    return Lock()
+
+
 def run_query(sql: str, parameters: dict[str, Any] | None = None) -> pd.DataFrame:
+    if DATA_MODE == "demo":
+        # StaticPool shares one SQLite connection across all Streamlit sessions.
+        with get_demo_query_lock():
+            with get_engine().connect() as connection:
+                return pd.read_sql(text(sql), connection, params=parameters or {})
     try:
         with get_engine().connect() as connection:
             return pd.read_sql(text(sql), connection, params=parameters or {})
