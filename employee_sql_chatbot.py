@@ -85,6 +85,13 @@ PHONE_PATTERN = r"(?<!\w)(?:\+?\(?\d[\d\s().-]{6,}\d)(?!\w)"
 DEFAULT_SPEECH_VOICE = "en-IN-NeerjaNeural"
 REPORT_INTENT_TERMS = ("report", "analysis", "analyze", "analyse", "breakdown", "overview", "dashboard", "pdf")
 CHART_INTENT_TERMS = ("chart", "graph", "visualization", "visualise", "visualize", "plot")
+SALARY_WORD_PATTERN = r"(?:salary|salaries|salry|salery|sallary|pay)"
+SALARY_METRIC_ALIASES = {
+    "average": "avg", "avg": "avg", "mean": "avg",
+    "avrage": "avg", "avarage": "avg", "averge": "avg",
+    "total": "sum", "sum": "sum", "minimum": "min", "min": "min",
+    "maximum": "max", "max": "max",
+}
 REPORT_DIMENSIONS = (
     ("department", "department", "Department"),
     ("location", "city", "Location"),
@@ -647,6 +654,59 @@ def translate_department_salary_ranking(question: str) -> SqlRequest | None:
     })
 
 
+def translate_salary_summary(question: str) -> SqlRequest | None:
+    normalized = " ".join(question.lower().strip().split()).rstrip("?.!")
+    match = re.fullmatch(
+        r"(?:please\s+)?(?:(?:can|could|would)\s+you\s+)?"
+        r"(?:(?:give|show|tell|calculate|find|get)\s+(?:me\s+)?(?:the\s+)?|what(?:\s+is|'s)\s+(?:the\s+)?)?"
+        r"(?P<metric>" + "|".join(SALARY_METRIC_ALIASES) + r")\s+" + SALARY_WORD_PATTERN + r"(?P<scope>(?:\s+.*)?)",
+        normalized,
+    )
+    if match is None:
+        return None
+    metric = SALARY_METRIC_ALIASES[match.group("metric")]
+    scope = match.group("scope").strip()
+    condition = None
+    groups = []
+    grouping = re.fullmatch(r"(?:by|per|for each)\s+(department|city|gender|status|job title)", scope)
+    if grouping:
+        groups = [grouping.group(1).replace(" ", "_")]
+    elif scope not in {"", "of employees", "for employees", "of all employees", "for all employees"}:
+        scoped = re.fullmatch(r"(?:of|for|in)\s+(?:the\s+)?(.+)", scope)
+        if scoped is None:
+            return None
+        value = scoped.group(1)
+        explicit_department = value.startswith("department ") or value.endswith((" department", " team"))
+        value = re.sub(r"^department\s+|\s+(?:department|team)$", "", value)
+        options = ((DEPARTMENTS, "department"),) if explicit_department else (
+            (DEPARTMENTS, "department"), (CITIES, "city"), (STATUSES, "status"),
+        )
+        for choices, column in options:
+            if value in {choice.lower() for choice in choices}:
+                condition = {"column": column, "op": "eq", "value": value}
+                break
+        if condition is None:
+            if (
+                not re.fullmatch(r"[a-z]+(?:[ -][a-z]+)*", value)
+                or re.search(r"\b(and|or|except|excluding|with|where|by|per|above|below|before|after|over|under|than)\b", value)
+                or referenced_employee_columns(value)
+            ):
+                return None
+            return SqlRequest(
+                "", {},
+                f"I couldn't identify the department, city, or status '{value}'. "
+                f"Supported departments include {', '.join(DEPARTMENTS)}. "
+                "Please specify the department, or clarify if you mean an employee or job title.",
+                response_kind="query_clarification",
+            )
+    return compile_employee_plan({
+        "understood": True, "unhandled_conditions": [],
+        "columns": groups, "group_by": groups,
+        "metrics": [{"function": metric, "column": "salary"}], "filter": condition,
+        "order_by": [{"column": group, "direction": "asc"} for group in groups],
+    })
+
+
 def strip_question_list_marker(question: str) -> str:
     return re.sub(r"^(?:\d+[.)]|[-*\u2022])[ \t]+(?=[A-Za-z])", "", question.strip(), count=1)
 
@@ -668,6 +728,9 @@ def translate_question(question: str) -> SqlRequest | None:
     ranking = translate_department_salary_ranking(question)
     if ranking is not None:
         return ranking
+    salary_summary = translate_salary_summary(question)
+    if salary_summary is not None:
+        return salary_summary
     visual = any(re.search(rf"\b{term}s?\b", normalized) for term in REPORT_INTENT_TERMS + CHART_INTENT_TERMS + ("histogram",))
     profile = employee_profile_lookup(question) is not None
     count_question = bool(re.search(r"\bcount\b|\bnumber of\b|\bhow many\b", normalized))
@@ -688,7 +751,9 @@ def translate_question(question: str) -> SqlRequest | None:
         local_request = translate_simple_filtered_count(question)
         if local_request is not None:
             return local_request
-    data_question = count_question or phone_reference or bool(referenced_employee_columns(question)) or bool(re.search(
+    data_question = count_question or phone_reference or bool(referenced_employee_columns(question)) or bool(
+        re.search(r"\b(?:" + "|".join(SALARY_METRIC_ALIASES) + rf")\s+{SALARY_WORD_PATTERN}\b", normalized)
+    ) or bool(re.search(
         r"\b(details|profile|information)\s+(of|for|about)\b|"
         r"\b(employees?|staff|emp_id|id|name|names|salary|salaries|pay|paid|earns?|earnings?|departments?|"
         r"city|cities|locations?|jobs?|job_title|titles?|roles?|designation|joined|joining|join_date|"
@@ -1208,6 +1273,20 @@ def compile_employee_plan(plan: dict[str, Any]) -> SqlRequest:
     return SqlRequest(sql, parameters, description, response_kind="column_query")
 
 
+def ai_service_error_message(error: APIConnectionError | APIStatusError) -> str:
+    if isinstance(error, APITimeoutError):
+        return "The AI service timed out. Please try again."
+    if isinstance(error, (AuthenticationError, PermissionDeniedError)):
+        return "The AI service denied access. Please ask the app owner to check its configuration."
+    if isinstance(error, RateLimitError):
+        return "The AI service is at its request or quota limit. Please try again later."
+    if isinstance(error, NotFoundError):
+        return "The configured AI deployment could not be found. Please contact the app owner."
+    if isinstance(error, BadRequestError):
+        return "The AI service rejected the request. Please ask the app owner to check the deployment settings."
+    return "The AI service could not be reached or is temporarily unavailable. Please try again."
+
+
 def generate_employee_query(question: str) -> SqlRequest | None:
     def unavailable(message: str, reason: str) -> SqlRequest:
         logger.warning("Employee query planner unavailable: %s", reason)
@@ -1267,18 +1346,8 @@ def generate_employee_query(question: str) -> SqlRequest | None:
                 {"role": "user", "content": question},
             ],
         )
-    except APITimeoutError:
-        return unavailable("AI query interpretation timed out. Please try again.", "timeout")
-    except (AuthenticationError, PermissionDeniedError):
-        return unavailable("The AI service denied access. Please ask the app owner to check its configuration.", "access_denied")
-    except RateLimitError:
-        return unavailable("The AI service is at its request or quota limit. Please try again later.", "rate_limit")
-    except NotFoundError:
-        return unavailable("The configured AI deployment could not be found. Please contact the app owner.", "deployment_not_found")
-    except BadRequestError:
-        return unavailable("The AI service rejected the query request. Please ask the app owner to check the deployment settings.", "request_rejected")
-    except (APIConnectionError, APIStatusError):
-        return unavailable("The AI service could not be reached or is temporarily unavailable. Please try again.", "service_unavailable")
+    except (APIConnectionError, APIStatusError) as error:
+        return unavailable(ai_service_error_message(error), type(error).__name__)
     if not completion.choices or completion.choices[0].finish_reason != "stop":
         return unavailable("The AI service returned an incomplete interpretation. Please try again.", "incomplete_response")
     try:
@@ -1417,6 +1486,11 @@ def deterministic_response(result: pd.DataFrame, request: SqlRequest) -> str:
     if request.response_kind == "column_query":
         if result.empty:
             return "No matching records."
+        if (
+            len(result) == 1 and set(result.columns) <= {"average_salary", "sum_salary", "min_salary", "max_salary"}
+            and result.iloc[0].isna().all()
+        ):
+            return "No recorded salary values matched your request."
         if len(result) == 1:
             return "; ".join(
                 f"{column.replace('_', ' ').capitalize()}: {format_value(result.iloc[0][column], column)}"
@@ -2322,11 +2396,25 @@ def answer_general_question(
                 {"role": "user", "content": question},
             ],
         )
-    except Exception:
-        return "I could not generate an answer right now. Please try again."
+    except (APIConnectionError, APIStatusError) as error:
+        logger.warning("General AI chat unavailable: %s", type(error).__name__)
+        return ai_service_error_message(error)
 
-    answer = completion.choices[0].message.content
-    return answer.strip() if answer else "I could not generate an answer right now. Please try again."
+    if not completion.choices:
+        logger.warning("General AI chat returned no choices")
+        return "The AI service returned no response. Please try again."
+    choice = completion.choices[0]
+    if choice.finish_reason == "length":
+        logger.warning("General AI chat reached its response token limit")
+        return "The AI response reached its length limit before completing. Please try a shorter question."
+    if choice.finish_reason == "content_filter" or choice.message.refusal:
+        logger.warning("General AI chat response was declined")
+        return "The AI service could not answer this request. Please try rephrasing it."
+    answer = choice.message.content
+    if not answer or not answer.strip():
+        logger.warning("General AI chat returned empty text")
+        return "The AI service returned an empty response. Please try again."
+    return answer.strip()
 
 
 class ImageAnalysisError(RuntimeError):

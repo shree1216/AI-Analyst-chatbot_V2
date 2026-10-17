@@ -193,6 +193,70 @@ class WorkforceTests(unittest.TestCase):
                 answer = self.chatbot.natural_language_response(pd.DataFrame({"employee_count": [14]}), request, question)
                 self.assertEqual(answer, "Employee count: 14.")
 
+    def test_salary_summaries_accept_common_spelling_and_phrasing_without_ai(self):
+        for question in (
+            "avrage salry of sales",
+            "give avrage salry of sales",
+            "average salary of Sales",
+            "What is the average salary in Sales?",
+            "Please give me the mean pay for the Sales department.",
+            "avg salery for department Sales",
+            "show the averge sallary for Sales",
+        ):
+            with self.subTest(question=question), patch.object(
+                self.chatbot, "generate_employee_query", side_effect=AssertionError("Unexpected AI request")
+            ), patch.object(self.chatbot, "run_query", side_effect=AssertionError("Unexpected lookup")):
+                request = self.chatbot.translate_question(question)
+                self.assertEqual(request.response_kind, "column_query")
+                self.assertEqual(request.parameters, {"filter_0": "sales"})
+                self.assertIn("AVG(CAST([salary] AS FLOAT))", request.sql)
+                self.assertIn("[department]", request.sql.split(" WHERE ")[1])
+
+    def test_salary_summary_metrics_and_grouping_use_shared_compiler(self):
+        for metric, function in (("average", "AVG"), ("total", "SUM"), ("minimum", "MIN"), ("maximum", "MAX")):
+            with self.subTest(metric=metric), patch.object(self.chatbot, "generate_employee_query") as planner:
+                request = self.chatbot.translate_question(f"{metric} salary by department")
+                self.assertIn(function + "(", request.sql)
+                self.assertIn("GROUP BY [department]", request.sql)
+                planner.assert_not_called()
+        for phrase, column in (("in Delhi", "city"), ("for Active", "status"), ("of IT", "department")):
+            request = self.chatbot.translate_question("average salary " + phrase)
+            self.assertIn(f"[{column}]", request.sql.split(" WHERE ")[1])
+
+    def test_salary_summary_unknown_scope_does_not_return_unfiltered_pay(self):
+        for scope in ("engineering", "enginering", "Atlantis"):
+            with self.subTest(scope=scope), patch.object(self.chatbot, "generate_employee_query") as planner:
+                request = self.chatbot.translate_question("avrage salry of " + scope)
+                self.assertEqual(request.response_kind, "query_clarification")
+                self.assertEqual(request.sql, "")
+                self.assertIn(scope.lower(), request.explanation)
+                planner.assert_not_called()
+
+    def test_salary_typos_do_not_drop_conditions_or_rewrite_names(self):
+        for question in (
+            "avrage salry of Sales and HR",
+            "average salary in Sales excluding interns",
+            "avrage salry of Sales with age above 30",
+            "average salary of Sales by city",
+            "average salary in 2023",
+            "average salry of Sales; DROP TABLE Employees",
+        ):
+            with self.subTest(question=question), patch.object(
+                self.chatbot, "generate_employee_query", return_value=None
+            ) as planner:
+                result = self.chatbot.translate_question(question)
+                planner.assert_called_once_with(question)
+                self.assertEqual(result.sql, "")
+        request = self.chatbot.translate_question("Give details of Avrage Salry")
+        self.assertEqual(request.parameters, {"name": "avrage salry"})
+
+    def test_missing_salary_values_are_not_reported_as_zero(self):
+        request = self.chatbot.translate_question("average salary of Sales")
+        result = pd.DataFrame({"average_salary": [None]})
+        self.assertEqual(self.chatbot.deterministic_response(result, request), "No recorded salary values matched your request.")
+        zero = self.chatbot.deterministic_response(pd.DataFrame({"average_salary": [0]}), request)
+        self.assertIn("INR 0.00", zero)
+
     def test_joining_year_counts_keep_all_supported_conditions(self):
         with patch.object(self.chatbot, "generate_employee_query") as planner:
             request = self.chatbot.translate_question(
@@ -1063,14 +1127,60 @@ class WorkforceTests(unittest.TestCase):
         with patch.dict(os.environ, {"AZURE_OPENAI_DEPLOYMENT_MINI": "test"}), patch.object(
             self.chatbot, "get_azure_openai_client"
         ) as client:
-            client.return_value.chat.completions.create.return_value.choices[0].message.content = "A useful metric."
-            self.chatbot.answer_general_question("Why is that useful?", turns)
+            choice = client.return_value.chat.completions.create.return_value.choices[0]
+            choice.message.content = "A useful metric."
+            choice.message.refusal = None
+            choice.finish_reason = "stop"
+            self.assertEqual(self.chatbot.answer_general_question("Why is that useful?", turns), "A useful metric.")
         messages = client.return_value.chat.completions.create.call_args.kwargs["messages"]
         self.assertEqual(messages[1:], [
             {"role": "user", "content": "Explain headcount"},
             {"role": "assistant", "content": "It counts employees."},
             {"role": "user", "content": "Why is that useful?"},
         ])
+
+    def test_general_chat_reports_service_failures_without_private_details(self):
+        request = httpx2.Request("POST", "https://example.test")
+        errors = (
+            (self.chatbot.APITimeoutError(request=request), "timed out"),
+            (self.chatbot.AuthenticationError("private-key", response=httpx2.Response(401, request=request), body=None), "denied access"),
+            (self.chatbot.RateLimitError("private-key", response=httpx2.Response(429, request=request), body=None), "quota limit"),
+        )
+        for error, message in errors:
+            with self.subTest(error=type(error).__name__), patch.dict(
+                os.environ, {"AZURE_OPENAI_DEPLOYMENT_MINI": "test"}
+            ), patch.object(self.chatbot, "get_azure_openai_client") as client:
+                client.return_value.chat.completions.create.side_effect = error
+                with self.assertLogs(self.chatbot.logger, level="WARNING") as logs:
+                    answer = self.chatbot.answer_general_question("Hello")
+                self.assertIn(message, answer)
+                self.assertNotIn("private-key", answer + " ".join(logs.output))
+
+    def test_general_chat_distinguishes_empty_truncated_and_declined_responses(self):
+        for finish_reason, content, refusal, expected in (
+            ("length", None, None, "length limit"),
+            ("stop", " ", None, "empty response"),
+            ("content_filter", None, None, "could not answer"),
+            ("stop", None, "Declined", "could not answer"),
+        ):
+            with self.subTest(reason=finish_reason, expected=expected), patch.dict(
+                os.environ, {"AZURE_OPENAI_DEPLOYMENT_MINI": "test"}
+            ), patch.object(self.chatbot, "get_azure_openai_client") as client:
+                choice = client.return_value.chat.completions.create.return_value.choices[0]
+                choice.finish_reason = finish_reason
+                choice.message.content = content
+                choice.message.refusal = refusal
+                with self.assertLogs(self.chatbot.logger, level="WARNING"):
+                    answer = self.chatbot.answer_general_question("Hello")
+                self.assertIn(expected, answer)
+
+    def test_general_chat_does_not_hide_unexpected_programming_errors(self):
+        with patch.dict(os.environ, {"AZURE_OPENAI_DEPLOYMENT_MINI": "test"}), patch.object(
+            self.chatbot, "get_azure_openai_client"
+        ) as client:
+            client.return_value.chat.completions.create.side_effect = RuntimeError("unexpected programming error")
+            with self.assertRaisesRegex(RuntimeError, "unexpected programming error"):
+                self.chatbot.answer_general_question("Hello")
 
     def test_context_is_bounded_and_excludes_internal_fields(self):
         messages = [{"question": f"Question {index}", "answer": "a" * 5000, "sql": "private SQL"} for index in range(10)]

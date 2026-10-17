@@ -83,6 +83,38 @@ class DemoDatabaseTests(unittest.TestCase):
         self.assertEqual(result.shape, (1, 1))
         self.assertEqual(result.iloc[0, 0], expected)
 
+    def test_salary_summary_variants_match_real_department_data(self):
+        for department, employees in self.employees.groupby("Department"):
+            for phrase in ("avrage salry", "give avrage salry", "average salary", "mean pay"):
+                with self.subTest(department=department, phrase=phrase), patch.object(
+                    self.chatbot, "generate_employee_query", side_effect=AssertionError("Unexpected AI call")
+                ):
+                    result = self.query(f"{phrase} of {department}")
+                    self.assertEqual(result.columns.tolist(), ["average_salary"])
+                    self.assertAlmostEqual(result.iloc[0, 0], employees["Salary"].mean())
+        for phrase, aggregate in (("total", "sum"), ("minimum", "min"), ("maximum", "max")):
+            result = self.query(f"{phrase} salary of Sales")
+            salaries = self.employees.loc[self.employees["Department"] == "Sales", "Salary"]
+            self.assertAlmostEqual(result.iloc[0, 0], salaries.agg(aggregate))
+        result = self.query("average salary by department")
+        self.assertEqual(
+            result.set_index("department")["average_salary"].to_dict(),
+            self.employees.groupby("Department")["Salary"].mean().to_dict(),
+        )
+
+    def test_salary_typo_ui_shows_only_the_correct_answer(self):
+        app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+        for question in ("avrage salry of sales", "give avrage salry of sales"):
+            app.chat_input[0].set_value(question).run(timeout=30)
+            self.assertEqual(len(app.exception), 0)
+            expected = self.employees.loc[self.employees["Department"] == "Sales", "Salary"].mean()
+            self.assertIn(f"INR {expected:,.2f}", app.session_state["chat_history"][-1]["answer"])
+        app.chat_input[0].set_value("avrage salry of enginering").run(timeout=30)
+        self.assertEqual(len(app.exception), 0)
+        self.assertIn("couldn't identify", app.session_state["chat_history"][-1]["answer"])
+        self.assertEqual(len(app.code), 0)
+        self.assertFalse(any("filter_" in caption.value or "department =" in caption.value for caption in app.caption))
+
     def test_compound_salary_count_excludes_boundary_males_and_missing_values(self):
         fixture = self.employees.head(5).copy()
         fixture["Gender"] = ["Female", "Female", "Female", "Male", "Female"]

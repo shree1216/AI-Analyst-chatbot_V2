@@ -319,6 +319,14 @@ directly without an AI request. The date filter includes January 1 of the reques
 year and excludes January 1 of the next year; it can be combined with supported
 gender, age, and salary conditions using `and`. This removes AI round-trip time
 for these questions without caching stale database results or shortening timeouts.
+Salary averages, totals, minima, and maxima also use the local query compiler,
+including supported department/city/status filters and grouping by department,
+city, gender, status, or job title. Common metric/field spellings such as
+`avrage salry of sales`, `avg salary of Sales`, and `mean pay for Sales` are
+accepted only within this salary-summary grammar; employee names and filter
+values are not spell-corrected. Unrecognized scopes request clarification rather
+than falling back to the whole workforce, and extra conditions still reach the
+AI planner without being dropped. Missing salary values are not treated as zero.
 New text questions appear before AI interpretation starts. Previous messages retain
 their database-result snapshots and report PDFs, so reruns do not execute their SQL
 or regenerate their PDFs. Submit a question again for fresh database values.
@@ -334,6 +342,10 @@ distinguishes missing AI configuration, access errors, quota limits, timeouts, a
 invalid service responses from requests that need clarification. Voice settings
 do not configure the separate Azure OpenAI query service. Failed interpretations
 never execute SQL, return a made-up count, or enter the successful-plan cache.
+General chat also distinguishes access/connection/quota failures, empty responses,
+declined requests, and response-length limits instead of hiding them behind one
+generic retry message. Diagnostic logs record error categories, not credentials
+or service response bodies.
 Chart/report templates retain
 their existing supported dimensions and metrics.
 
