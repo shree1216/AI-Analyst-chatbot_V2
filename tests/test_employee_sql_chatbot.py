@@ -7,6 +7,7 @@ import smtplib
 import unittest
 from unittest.mock import patch
 
+import httpx2
 import pandas as pd
 from streamlit.testing.v1 import AppTest
 
@@ -143,12 +144,37 @@ class WorkforceTests(unittest.TestCase):
             "count employees with salary older than 30",
             "count employees with salary above 60000 years old",
             "count employees age > 30; DROP TABLE Employees",
+            "How many female employees have a salary above 80000 or age below 25?",
+            "How many female employees have a salary above 80000 and in Sales?",
+            "How many female employees have a salary above 80000 excluding contractors?",
+            "How many female employees have a salary above 80000 by department?",
+            "How many female employees have a salary above 80000 and?",
+            "How many female employees have a salary above 80,00?",
         ):
             with self.subTest(question=question), patch.object(self.chatbot, "generate_employee_query", return_value=None) as planner:
                 request = self.chatbot.translate_question(question)
                 planner.assert_called_once_with(question)
                 self.assertEqual(request.response_kind, "query_clarification")
                 self.assertEqual(request.sql, "")
+
+    def test_combined_gender_age_and_salary_counts_do_not_require_azure(self):
+        cases = (
+            ("How many female employees have a salary above 80000?", ["female", 80000], ["[gender]", "[salary] >"]),
+            ("Count male employees with salary at most 80,000.", ["male", 80000], ["[gender]", "[salary] <="]),
+            ("How many employees have gender = female and salary > 80000?", ["female", 80000], ["[gender]", "[salary] >"]),
+            ("Count female employees aged at least 35 and salary <= 100000.", ["female", 35, 100000], ["[gender]", "[age] >=", "[salary] <="]),
+            ("Count employees with salary above 60000 and salary below 90000", [60000, 90000], ["[salary] >", "[salary] <"]),
+            ("How many employees are older than 30 and younger than 50?", [30, 50], ["[age] >", "[age] <"]),
+        )
+        for question, values, comparisons in cases:
+            with self.subTest(question=question), patch.object(self.chatbot, "generate_employee_query") as planner:
+                request = self.chatbot.translate_question(question)
+                planner.assert_not_called()
+                self.assertEqual(request.response_kind, "column_query")
+                self.assertEqual(list(request.parameters.values()), values)
+                for comparison in comparisons:
+                    self.assertIn(comparison, request.sql)
+                self.assertEqual(request.sql.count(" AND "), len(values) - 1)
 
     def test_unavailable_fields_are_explained_without_ai_or_sql(self):
         cases = (
@@ -314,7 +340,70 @@ class WorkforceTests(unittest.TestCase):
             choice.message.content = json.dumps(employee_query_plan())
             self.assertIsNone(self.chatbot.generate_employee_query("how many Site engineer we have"))
             choice.message.content = "SELECT COUNT(*) FROM dbo.Employees"
-            self.assertIsNone(self.chatbot.generate_employee_query("how many Site engineer we have"))
+            with self.assertLogs(self.chatbot.logger, level="WARNING"):
+                invalid = self.chatbot.generate_employee_query("how many Site engineer we have")
+            self.assertIn("invalid query plan", invalid.explanation)
+            self.assertEqual(invalid.sql, "")
+
+    def test_missing_ai_configuration_is_not_reported_as_an_ambiguous_question(self):
+        with patch.object(self.chatbot, "get_azure_openai_client", return_value=None), self.assertLogs(
+            self.chatbot.logger, level="WARNING"
+        ):
+            request = self.chatbot.translate_question("How many Site engineers do we have?")
+        self.assertIn("AI queries are not enabled", request.explanation)
+        self.assertIn("separately from voice", request.explanation)
+        self.assertEqual(request.sql, "")
+        with patch.object(self.chatbot, "run_query") as query, patch.object(self.chatbot.st, "warning") as warning:
+            self.assertEqual(self.chatbot.display_response(request), request.explanation)
+            query.assert_not_called()
+            warning.assert_called_once_with(request.explanation)
+
+    def test_ai_service_errors_are_distinct_safe_and_not_cached(self):
+        http_request = httpx2.Request("POST", "https://example.test")
+        cases = [
+            (self.chatbot.APITimeoutError(request=http_request), "timed out"),
+            (self.chatbot.APIConnectionError(request=http_request), "could not be reached"),
+        ]
+        for error_class, status, message in (
+            (self.chatbot.AuthenticationError, 401, "denied access"),
+            (self.chatbot.PermissionDeniedError, 403, "denied access"),
+            (self.chatbot.RateLimitError, 429, "quota limit"),
+            (self.chatbot.NotFoundError, 404, "could not be found"),
+            (self.chatbot.BadRequestError, 400, "rejected"),
+            (self.chatbot.APIStatusError, 500, "temporarily unavailable"),
+        ):
+            cases.append((error_class(
+                "private-service-details", response=httpx2.Response(status, request=http_request),
+                body={"error": "private-service-details"},
+            ), message))
+        for error, message in cases:
+            with self.subTest(error=type(error).__name__), patch.dict(
+                os.environ, {"AZURE_OPENAI_DEPLOYMENT_MINI": "test"}
+            ), patch.object(self.chatbot, "get_azure_openai_client") as client:
+                client.return_value.chat.completions.create.side_effect = error
+                with self.assertLogs(self.chatbot.logger, level="WARNING") as logs:
+                    result = self.chatbot.generate_employee_query("How many Site engineers do we have?")
+                self.assertIn(message, result.explanation)
+                self.assertEqual(result.sql, "")
+                self.assertNotIn("private-service-details", result.explanation + " ".join(logs.output))
+                self.assertFalse(self.chatbot.st.session_state["employee_query_plan_cache"])
+
+    def test_incomplete_ai_response_is_reported_without_running_sql(self):
+        with patch.dict(os.environ, {"AZURE_OPENAI_DEPLOYMENT_MINI": "test"}), patch.object(
+            self.chatbot, "get_azure_openai_client"
+        ) as client, self.assertLogs(self.chatbot.logger, level="WARNING"):
+            client.return_value.chat.completions.create.return_value.choices[0].finish_reason = "length"
+            request = self.chatbot.generate_employee_query("How many Site engineers do we have?")
+        self.assertIn("incomplete interpretation", request.explanation)
+        self.assertEqual(request.sql, "")
+
+    def test_unexpected_planner_errors_are_not_silently_swallowed(self):
+        with patch.dict(os.environ, {"AZURE_OPENAI_DEPLOYMENT_MINI": "test"}), patch.object(
+            self.chatbot, "get_azure_openai_client"
+        ) as client:
+            client.return_value.chat.completions.create.side_effect = RuntimeError("unexpected programming error")
+            with self.assertRaisesRegex(RuntimeError, "unexpected programming error"):
+                self.chatbot.generate_employee_query("How many Site engineers do we have?")
 
     def test_incomplete_counts_and_filtered_profiles_use_schema_path(self):
         for question in (

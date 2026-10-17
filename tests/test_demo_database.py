@@ -72,6 +72,28 @@ class DemoDatabaseTests(unittest.TestCase):
             result = self.query(f"What is the salary of {employee['Name']}?", known_template=True)
         self.assertEqual(result["salary"].tolist(), [employee["Salary"]])
 
+    def test_female_salary_count_matches_bundled_dataset_without_ai(self):
+        with patch.object(self.chatbot, "generate_employee_query") as planner:
+            result = self.query("How many female employees have a salary above 80000?")
+        planner.assert_not_called()
+        expected = (
+            (self.employees["Gender"].str.lower() == "female") & (self.employees["Salary"] > 80000)
+        ).sum()
+        self.assertEqual(result.columns.tolist(), ["employee_count"])
+        self.assertEqual(result.shape, (1, 1))
+        self.assertEqual(result.iloc[0, 0], expected)
+
+    def test_compound_salary_count_excludes_boundary_males_and_missing_values(self):
+        fixture = self.employees.head(5).copy()
+        fixture["Gender"] = ["Female", "Female", "Female", "Male", "Female"]
+        fixture["Salary"] = [80000, 80001, 79999, 90000, None]
+        self.engine.dispose()
+        self.chatbot.get_engine.clear()
+        with patch.object(self.chatbot.pd, "read_excel", return_value=fixture):
+            self.engine = self.chatbot.get_engine()
+        self.assertEqual(self.query("How many female employees have a salary above 80000?").iloc[0, 0], 1)
+        self.assertEqual(self.query("How many female employees have a salary at least 80000?").iloc[0, 0], 2)
+
     def test_monthly_and_yearly_charts_match_dataset(self):
         dates = pd.to_datetime(self.employees["Joining Date"])
         for question, groups in (
@@ -177,6 +199,12 @@ class DemoDatabaseTests(unittest.TestCase):
         app.chat_input[0].set_value("How many employees do we have?").run(timeout=30)
         self.assertEqual(len(app.exception), 0)
         self.assertIn(f"{len(self.employees)} employees", app.session_state["chat_history"][0]["answer"])
+        app.chat_input[0].set_value("How many female employees have a salary above 80000?").run(timeout=30)
+        expected = ((self.employees["Gender"].str.lower() == "female") & (self.employees["Salary"] > 80000)).sum()
+        self.assertEqual(len(app.exception), 0)
+        self.assertIn(str(expected), app.session_state["chat_history"][1]["answer"])
+        self.assertIn("gender = female", app.session_state["chat_history"][1]["request"].explanation)
+        self.assertIn("salary > 80000", app.session_state["chat_history"][1]["request"].explanation)
 
     def test_cloud_voice_controls_enable_when_speech_settings_are_present(self):
         with patch.dict(os.environ, {"AZURE_SPEECH_KEY": "test-key", "AZURE_SPEECH_REGION": "eastus"}):

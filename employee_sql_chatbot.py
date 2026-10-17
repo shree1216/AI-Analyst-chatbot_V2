@@ -3,6 +3,7 @@ from datetime import datetime
 from email.message import EmailMessage
 from io import BytesIO
 import json
+import logging
 import math
 import os
 import re
@@ -42,6 +43,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.pool import StaticPool
 
 
+logger = logging.getLogger(__name__)
 load_dotenv(Path(__file__).with_name(".env"), override=False)
 
 DATA_MODE = os.getenv("WORKFORCE_DATA_MODE", "sqlserver").strip().lower()
@@ -541,48 +543,57 @@ def translate_simple_filtered_count(question: str) -> SqlRequest | None:
     normalized = " ".join(question.lower().strip().split())
     prefix = r"(?:please\s+)?(?:(?:give|show|tell)\s+(?:me\s+)?(?:the\s+)?)?(?:how many|(?:total\s+)?(?:count|number)\s+of|count)\s+"
     gender_match = re.fullmatch(prefix + r"(male|female)\s+employees?(?:\s+(?:do\s+)?we\s+have)?[?.!]*", normalized)
-    condition = None
+    conditions: list[dict[str, Any]] = []
     if gender_match:
-        condition = {"column": "gender", "op": "eq", "value": gender_match.group(1)}
+        conditions.append({"column": "gender", "op": "eq", "value": gender_match.group(1)})
     else:
         match = re.fullmatch(
-            prefix + r"(?:employees?|staff)\s+(?:(?:who|whose)\s+)?"
-            r"(?:(?:are|have|having|with|where)\s+)?(.+?)[?.!]*", normalized,
+            prefix + r"(?:(male|female)\s+)?(?:employees?|staff)\s+(.+?)[?.!]*", normalized,
         )
         if match is None:
             return None
-        gender_match = re.fullmatch(r"(?:gender\s*(?:is|=)\s*)?(male|female)", match.group(1))
-        numeric_match = re.fullmatch(
-            r"(?:(age|aged|salary|pay)\s*(?:is\s+)?)?"
-            r"(older than|younger than|greater than|more than|less than|at least|at most|equal to|above|below|over|under|>=|<=|!=|>|<|=)\s*"
-            r"(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(\s+years(?:\s+old)?)?",
-            match.group(1),
-        )
-        if gender_match:
-            condition = {"column": "gender", "op": "eq", "value": gender_match.group(1)}
-        elif numeric_match:
-            column, comparison, amount, years = numeric_match.groups()
-            age_comparison = comparison in {"older than", "younger than"}
-            if column is None and not age_comparison:
+        if match.group(1):
+            conditions.append({"column": "gender", "op": "eq", "value": match.group(1)})
+        for clause in re.split(r"\s+and\s+", match.group(2)):
+            clause = re.sub(
+                r"^(?:(?:who|whose)\s+)?(?:(?:are|have|having|with|where)\s+)?(?:a\s+)?",
+                "", clause,
+            )
+            gender_match = re.fullmatch(r"(?:gender\s*(?:is|=)\s*)?(male|female)", clause)
+            numeric_match = re.fullmatch(
+                r"(?:(age|aged|salary|pay)\s*(?:is\s+)?)?"
+                r"(older than|younger than|greater than|more than|less than|at least|at most|equal to|above|below|over|under|>=|<=|!=|>|<|=)\s*"
+                r"(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(\s+years(?:\s+old)?)?",
+                clause,
+            )
+            if gender_match:
+                conditions.append({"column": "gender", "op": "eq", "value": gender_match.group(1)})
+            elif numeric_match:
+                column, comparison, amount, years = numeric_match.groups()
+                age_comparison = comparison in {"older than", "younger than"}
+                if column is None and not age_comparison:
+                    return None
+                column = "age" if column in {None, "age", "aged"} else "salary"
+                if column == "salary" and (age_comparison or years):
+                    return None
+                operators = {
+                    "older than": "gt", "greater than": "gt", "more than": "gt", "above": "gt", "over": "gt", ">": "gt",
+                    "younger than": "lt", "less than": "lt", "below": "lt", "under": "lt", "<": "lt",
+                    "at least": "gte", ">=": "gte", "at most": "lte", "<=": "lte",
+                    "equal to": "eq", "=": "eq", "!=": "ne",
+                }
+                value = float(amount.replace(",", ""))
+                if not math.isfinite(value):
+                    return None
+                conditions.append({"column": column, "op": operators[comparison], "value": value})
+            else:
                 return None
-            column = "age" if column in {None, "age", "aged"} else "salary"
-            if column == "salary" and (age_comparison or years):
+            if len(conditions) > 20:
                 return None
-            operators = {
-                "older than": "gt", "greater than": "gt", "more than": "gt", "above": "gt", "over": "gt", ">": "gt",
-                "younger than": "lt", "less than": "lt", "below": "lt", "under": "lt", "<": "lt",
-                "at least": "gte", ">=": "gte", "at most": "lte", "<=": "lte",
-                "equal to": "eq", "=": "eq", "!=": "ne",
-            }
-            value = float(amount.replace(",", ""))
-            if not math.isfinite(value):
-                return None
-            condition = {"column": column, "op": operators[comparison], "value": value}
-    if condition is None:
-        return None
     return compile_employee_plan({
         "understood": True, "unhandled_conditions": [], "columns": [],
-        "metrics": [{"function": "count", "column": "*"}], "filter": condition,
+        "metrics": [{"function": "count", "column": "*"}],
+        "filter": conditions[0] if len(conditions) == 1 else {"all": conditions},
     })
 
 
@@ -1186,6 +1197,10 @@ def compile_employee_plan(plan: dict[str, Any]) -> SqlRequest:
 
 
 def generate_employee_query(question: str) -> SqlRequest | None:
+    def unavailable(message: str, reason: str) -> SqlRequest:
+        logger.warning("Employee query planner unavailable: %s", reason)
+        return SqlRequest("", {}, message + " No employee query was run.", response_kind="query_clarification")
+
     plan_cache = st.session_state.setdefault("employee_query_plan_cache", {})
     cache_key = (os.getenv("AZURE_OPENAI_ENDPOINT"), os.getenv("AZURE_OPENAI_DEPLOYMENT_MINI"), question.strip())
     if cache_key in plan_cache:
@@ -1193,7 +1208,11 @@ def generate_employee_query(question: str) -> SqlRequest | None:
     client = get_azure_openai_client()
     deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT_MINI")
     if client is None or not deployment:
-        return None
+        return unavailable(
+            "This question needs AI interpretation, but AI queries are not enabled for this workspace. "
+            "The app owner needs to configure Azure OpenAI separately from voice.",
+            "not_configured",
+        )
 
     try:
         completion = client.chat.completions.create(
@@ -1236,9 +1255,26 @@ def generate_employee_query(question: str) -> SqlRequest | None:
                 {"role": "user", "content": question},
             ],
         )
-        if not completion.choices or completion.choices[0].finish_reason != "stop":
-            return None
+    except APITimeoutError:
+        return unavailable("AI query interpretation timed out. Please try again.", "timeout")
+    except (AuthenticationError, PermissionDeniedError):
+        return unavailable("The AI service denied access. Please ask the app owner to check its configuration.", "access_denied")
+    except RateLimitError:
+        return unavailable("The AI service is at its request or quota limit. Please try again later.", "rate_limit")
+    except NotFoundError:
+        return unavailable("The configured AI deployment could not be found. Please contact the app owner.", "deployment_not_found")
+    except BadRequestError:
+        return unavailable("The AI service rejected the query request. Please ask the app owner to check the deployment settings.", "request_rejected")
+    except (APIConnectionError, APIStatusError):
+        return unavailable("The AI service could not be reached or is temporarily unavailable. Please try again.", "service_unavailable")
+    if not completion.choices or completion.choices[0].finish_reason != "stop":
+        return unavailable("The AI service returned an incomplete interpretation. Please try again.", "incomplete_response")
+    try:
         plan = json.loads(completion.choices[0].message.content or "")
+        if isinstance(plan, dict) and (
+            plan.get("understood") is False or plan.get("unhandled_conditions")
+        ):
+            return None
         if (
             isinstance(plan, dict)
             and plan.get("metrics") == [{"function": "count", "column": "*"}]
@@ -1248,12 +1284,12 @@ def generate_employee_query(question: str) -> SqlRequest | None:
         ):
             return None
         request = compile_employee_plan(plan)
-        if len(plan_cache) >= 64:
-            plan_cache.pop(next(iter(plan_cache)))
-        plan_cache[cache_key] = plan
-        return request
-    except Exception:
-        return None
+    except (ValueError, TypeError):
+        return unavailable("The AI service returned an invalid query plan. Please try again.", "invalid_plan")
+    if len(plan_cache) >= 64:
+        plan_cache.pop(next(iter(plan_cache)))
+    plan_cache[cache_key] = plan
+    return request
 
 
 def speech_is_configured() -> bool:

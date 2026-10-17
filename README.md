@@ -272,6 +272,8 @@ Show Name, Salary and Job Title for employee_id EMP015.
 Show joining_date for employee_id EMP015.
 How many Site engineers do we have?
 Count female employees aged over 35 with salary above 70000.
+How many female employees have a salary above 80000?
+Count female employees aged over 35 and salary above 70000.
 List employee ID, name and joining date for employees who joined in 2023.
 Show employees whose phone number is missing.
 Give the minimum and maximum salary by job title.
@@ -306,6 +308,11 @@ and date comparisons, text prefixes/suffixes/contains, missing values, AND/OR
 filters, grouped count/average/sum/minimum/maximum, sorting, and top-N per group.
 Row lists and grouped outputs are capped at 100 rows. General column questions
 require a working Azure deployment; recognized simple queries still work without it.
+Counts combining gender with age/salary comparisons, or joining these comparisons
+with `and`, are handled locally without Azure. For example, `How many female
+employees have a salary above 80000?` applies both filters with a strict `>` salary
+threshold. Unsupported extra conditions are never silently dropped; more complex
+questions, including OR conditions, still use the AI planner.
 New text questions appear before AI interpretation starts. Previous messages retain
 their database-result snapshots and report PDFs, so reruns do not execute their SQL
 or regenerate their PDFs. Submit a question again for fresh database values.
@@ -314,8 +321,12 @@ this skips repeated AI calls without caching new submissions' database results.
 New chat clears these interpretations. First-time AI questions still depend on
 Azure response time, and failed queries are not cached.
 Check the interpreted conditions. Ambiguous requests, unsupported calculations,
-unavailable columns, and service failures cannot be guaranteed an answer; the app
-asks for clarification rather than inventing one. Chart/report templates retain
+unavailable columns, and service failures cannot be guaranteed an answer. The app
+distinguishes missing AI configuration, access errors, quota limits, timeouts, and
+invalid service responses from requests that need clarification. Voice settings
+do not configure the separate Azure OpenAI query service. Failed interpretations
+never execute SQL, return a made-up count, or enter the successful-plan cache.
+Chart/report templates retain
 their existing supported dimensions and metrics.
 
 ### Demo Walkthrough
