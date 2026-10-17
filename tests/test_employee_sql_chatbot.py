@@ -1046,7 +1046,8 @@ class WorkforceTests(unittest.TestCase):
         with patch.object(self.chatbot.smtplib, "SMTP") as smtp:
             sent, status = self.chatbot.send_report_email("manager@example.com", report, b"%PDF-test")
             self.assertFalse(sent)
-            self.assertIn("not configured", status)
+            self.assertIn("Report email is not enabled", status)
+            self.assertIn("download the PDF", status)
             smtp.assert_not_called()
 
     def test_authentication_failure_is_reported_without_secrets(self):

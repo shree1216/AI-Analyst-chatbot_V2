@@ -416,6 +416,34 @@ For an anonymous public demo, leave SMTP credentials unset and avoid adding Azur
 credentials unless you accept visitor usage charges and have suitable controls.
 There is no authentication or per-user rate limit in this app.
 
+#### Enable all hosted integrations
+
+Local credentials are not uploaded during deployment. In the live app, open
+**Manage app > Settings > Secrets** and enter the following root-level settings
+with your own values, retaining `WORKFORCE_DATA_MODE = "demo"`:
+
+| Feature | Required settings |
+| --- | --- |
+| Voice input and spoken responses | `AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION` |
+| AI chat and flexible workforce queries | `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_API_VERSION`, `AZURE_OPENAI_DEPLOYMENT_MINI` |
+| Image analysis | The OpenAI settings above with a vision-capable deployment, or an additional `AZURE_OPENAI_DEPLOYMENT_VISION` |
+| Email PDF reports | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_APP_PASSWORD`, `SMTP_FROM_EMAIL` |
+
+Secrets use TOML syntax, for example `AZURE_SPEECH_REGION = "eastus"` (use the
+actual region of your resource). Save, allow the app to restart, then reload.
+Never paste credentials into the chatbot, issue reports, or source code.
+Microphone access must also be allowed in the visitor's browser.
+Keep the recorder disabled until Speech settings are present; showing an enabled
+recorder alone does not verify that the Speech service works.
+
+Verify each integration after configuration: record a short question, enable
+**Read responses aloud**, ask a general question, analyze a harmless sample image,
+and send a PDF to an inbox you control. Confirm actual email receipt.
+Public access allows visitors to consume Azure quotas and send reports through
+the configured sender account; only enable these services if that is intended.
+The sidebar omits deployment labels and credential-setup instructions; dataset
+provenance remains in report data notes and this documentation.
+
 To test demo mode locally:
 
 ```powershell

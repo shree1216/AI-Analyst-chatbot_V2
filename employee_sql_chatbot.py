@@ -2148,7 +2148,7 @@ def send_report_email(recipient: str, report: BusinessReport, pdf_report: bytes)
     if not re.fullmatch(EMAIL_PATTERN, recipient, flags=re.IGNORECASE):
         return False, "Enter a valid recipient email address."
     if not smtp_is_configured():
-        return False, "SMTP is not configured. Add the Gmail SMTP values to the .env file."
+        return False, "Report email is not enabled for this workspace. You can download the PDF instead."
 
     message = EmailMessage()
     message["Subject"] = report.title
@@ -2252,7 +2252,7 @@ def answer_general_question(
     client = get_azure_openai_client()
     deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT_MINI")
     if client is None or not deployment:
-        return "General answers are unavailable because the Azure OpenAI service is not configured."
+        return "AI chat is not enabled for this workspace. You can still ask supported workforce questions and create reports."
 
     try:
         completion = client.chat.completions.create(
@@ -2293,7 +2293,7 @@ def analyze_uploaded_image(
     client = get_azure_openai_client()
     deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT_VISION") or os.getenv("AZURE_OPENAI_DEPLOYMENT_MINI")
     if client is None or not deployment:
-        raise ImageAnalysisError("Image analysis is not configured. Check the Azure OpenAI endpoint, key, API version, and deployment settings.")
+        raise ImageAnalysisError("Image analysis is not enabled for this workspace. Please contact the app owner.")
 
     image_data = base64.b64encode(image_bytes).decode("ascii")
     prompt = (question or "").strip() or "Analyze this uploaded image."
@@ -3288,8 +3288,6 @@ def render_recent_chats(placeholder: Any) -> None:
 # Sidebar navigation
 with st.sidebar:
     st.markdown('<div class="sidebar-brand">Workforce Compass</div>', unsafe_allow_html=True)
-    if DATA_MODE == "demo":
-        st.caption("Public portfolio demo - synthetic employee data only.")
     if st.button("New chat", key="new_chat", use_container_width=True):
         history.clear()
         st.session_state.pop("employee_query_plan_cache", None)
@@ -3312,7 +3310,7 @@ with st.sidebar:
         disabled=not voice_enabled,
     )
     if not voice_enabled:
-        st.caption("Add Azure Speech credentials to enable voice features.")
+        st.caption("Voice is not enabled for this workspace. Please type your question.")
     st.markdown(
         '<div class="sidebar-credit"><strong>Created by Vijayashree</strong><br>All rights reserved 2026</div>',
         unsafe_allow_html=True,

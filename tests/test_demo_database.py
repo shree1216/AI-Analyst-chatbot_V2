@@ -169,10 +169,22 @@ class DemoDatabaseTests(unittest.TestCase):
     def test_cloud_demo_ui_answers_without_sql_server_or_azure(self):
         app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
         self.assertEqual(len(app.exception), 0)
-        self.assertTrue(any("synthetic employee data" in caption.value for caption in app.caption))
+        self.assertFalse(any("portfolio demo" in caption.value.lower() for caption in app.caption))
+        self.assertFalse(any("credentials" in caption.value.lower() for caption in app.caption))
+        self.assertTrue(app.get("audio_input")[0].disabled)
+        self.assertTrue(app.toggle[0].disabled)
+        self.assertTrue(any("Voice is not enabled" in caption.value for caption in app.caption))
         app.chat_input[0].set_value("How many employees do we have?").run(timeout=30)
         self.assertEqual(len(app.exception), 0)
         self.assertIn(f"{len(self.employees)} employees", app.session_state["chat_history"][0]["answer"])
+
+    def test_cloud_voice_controls_enable_when_speech_settings_are_present(self):
+        with patch.dict(os.environ, {"AZURE_SPEECH_KEY": "test-key", "AZURE_SPEECH_REGION": "eastus"}):
+            app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+        self.assertEqual(len(app.exception), 0)
+        self.assertFalse(app.get("audio_input")[0].disabled)
+        self.assertFalse(app.toggle[0].disabled)
+        self.assertFalse(any("Voice is not enabled" in caption.value for caption in app.caption))
 
 
 if __name__ == "__main__":
