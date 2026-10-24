@@ -4,6 +4,7 @@ from numbers import Real
 from typing import Any
 
 import pandas as pd
+from backend_diagnostics import BackendTrace
 
 
 MAX_STEPS = 20
@@ -392,7 +393,9 @@ def _join(frame: pd.DataFrame, step: dict[str, Any], sheets: dict[str, pd.DataFr
     return output.drop(columns=temporary_keys)
 
 
-def execute_workbook_plan(plan: Any, sheets: dict[str, pd.DataFrame]) -> pd.DataFrame:
+def execute_workbook_plan(
+    plan: Any, sheets: dict[str, pd.DataFrame], *, trace: BackendTrace | None = None,
+) -> pd.DataFrame:
     _require(isinstance(plan, dict) and set(plan) == {"understood", "unhandled_conditions", "sheet", "steps"},
              "The workbook interpretation is invalid. Please specify the columns and calculation.")
     _require(plan["understood"] is True and plan["unhandled_conditions"] == [],
@@ -402,10 +405,16 @@ def execute_workbook_plan(plan: Any, sheets: dict[str, pd.DataFrame]) -> pd.Data
     steps = plan["steps"]
     _require(isinstance(steps, list) and 1 <= len(steps) <= MAX_STEPS,
              "A workbook question must contain between 1 and 20 calculation steps.")
+    if trace:
+        trace.record("source_selected", sheet=sheet, rows=len(sheets[sheet]), columns=len(sheets[sheet].columns))
     frame = _bounded(sheets[sheet].copy(deep=True))
-    for step in steps:
+    for step_number, step in enumerate(steps, start=1):
         _require(isinstance(step, dict) and isinstance(step.get("op"), str), "A workbook calculation step is invalid.")
         operation = step["op"]
+        _require(operation in {"filter", "calculate", "aggregate", "join", "lookup", "select", "sort", "limit", "rank", "pivot"},
+                 "That workbook operation is not supported. No calculation was performed.")
+        if trace:
+            trace.record("step_started", step=step_number, operation=operation, rows=len(frame), columns=len(frame.columns))
         if operation == "filter":
             _keys(step, {"where"}, {"where"})
             frame = frame.loc[_truth(evaluate_expression(step["where"], frame), frame)]
@@ -485,7 +494,7 @@ def execute_workbook_plan(plan: Any, sheets: dict[str, pd.DataFrame]) -> pd.Data
                 _require(not any(value in index for value in frame.columns),
                          "A pivot category collides with a row label. Rename the dimension first.")
                 frame = frame.reset_index()
-        else:
-            raise ValueError("That workbook operation is not supported. No calculation was performed.")
         frame = _bounded(frame)
+        if trace:
+            trace.record("step_completed", step=step_number, operation=operation, rows=len(frame), columns=len(frame.columns))
     return frame

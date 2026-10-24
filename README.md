@@ -122,6 +122,11 @@ present; you can choose any other worksheet. The selected sheet is the default
 source for new text and voice questions. Questions can explicitly name other
 worksheets in the same uploaded workbook; they never replace or write to the employee database.
 Each answer's source caption lists the worksheets actually used, including lookup/join sources.
+Questions automatically choose worksheets using the available columns, not just
+the preview selector. A broken preview does not block a question about another
+valid sheet. Generic `count rows`/`preview` questions still use the selected sheet;
+`count rows in products` targets the named sheet. Genuinely ambiguous matches
+ask for a worksheet name instead of guessing.
 Switch back to **Employee database** to resume workforce queries. Image
 attachments continue to use the separate image-analysis workflow.
 
@@ -171,6 +176,12 @@ the chatbot does not silently rename columns or modify your original workbook.
 
 Ask `count rows`, `preview`, a simple total-sales question, or
 `What are the total sales by region?` without Azure.
+Unambiguous `Total Revenue by year and month of Order Date` questions also run
+locally across the workbook. Header matching ignores spaces, underscores and case.
+Unique Sales/Revenue and Date/Order Date transaction fields can be mapped, with
+the actual columns shown in the answer caption. Joining dates are not substituted
+for order dates. Multiple matching sheets or multiple candidate fields need
+clarification; additional filters are not silently discarded.
 For example, with numeric **Sales** (or **Revenue**, **Sales Amount**, or
 **Total Sales**) and **Region** columns in the Sales sheet:
 
@@ -270,6 +281,32 @@ Typed formulas, approximate/wildcard lookups, external-workbook links, arbitrary
 macros/code, free-form data edits, and narrative/PDF reports for arbitrary sheets
 are unsupported. Questions that cannot be fully interpreted request clarification
 instead of silently ignoring conditions or switching to employee data.
+Planner rejections include specific reasons and available column names, rather
+than only a generic interpretation failure.
+
+#### Backend log file
+
+Open **Backend diagnostics** in the sidebar after asking an Excel question, then
+select **Download backend log**. This downloads JSON-lines text as
+`chatbot_backend.log` for this chat only. Each answer shows a request ID to match
+against UTC timestamps, elapsed milliseconds, worksheet schemas/unavailable
+sheets, automatic routing, planner status, calculation steps, row/column counts,
+export events and failures. Cached answers do not rerun or duplicate their traces.
+
+The app also writes a server-side `logs/backend.log`, with 2 MB rotation and
+three backups (up to approximately 8 MB total). When running locally, this folder
+is beside the application. On Streamlit Cloud it is on the hosting server, not
+your computer; use the sidebar download there. Server logs contain metadata from
+all users and must remain administrator-only; the app never exposes that shared
+file as a download. Question text, data-cell values, filter/query literals, SQL,
+credentials and raw exception details are excluded. Sheet/column names are
+included, so still treat logs as private.
+
+Downloads retain the latest 1,000 events, with at most 200 events per request.
+**New chat** clears its downloadable traces, but does not delete the rotating
+server log. Hosting storage may be ephemeral; save diagnostics before restarting
+or closing the session. A server log-write failure produces a visible warning
+without discarding the calculation or downloadable in-memory trace.
 
 Calculations and downloaded results are read-only: calculated columns, pivots,
 and joins do not add or edit uploaded sheets. Only the separate, explicitly
@@ -373,6 +410,7 @@ the new **Data source** controls appear; local tests alone do not update it.
 | `employee_sql_chatbot.py` | Main Streamlit application |
 | `excel_support.py` | Bounded Excel parsing, worksheet schema inference, and literal-safe workbook exports |
 | `workbook_operations.py` | Bounded, read-only workbook calculations, expressions, lookups, joins, rankings, and pivots |
+| `backend_diagnostics.py` | Privacy-safe request traces, rotating server log files, and session log downloads |
 | `employee_dataset.xlsx` | Synthetic 150-employee sample dataset |
 | `generate_employee_dataset.py` | Recreates the sample Excel dataset |
 | `import_employees_data.py` | Creates `EmployeeDB` and imports `dbo.Employees` |
@@ -383,6 +421,7 @@ the new **Data source** controls appear; local tests alone do not update it.
 | `tests/test_demo_database.py` | Real SQLite demo queries and cloud-mode UI regression tests |
 | `tests/test_excel_support.py` | Workbook validation, arbitrary-column queries, Excel exports, and source-selection regression tests |
 | `tests/test_workbook_operations.py` | Calculation semantics, cross-sheet operations, invalid plans, and expansion limits |
+| `tests/test_backend_diagnostics.py` | Log rotation, isolation, metadata restrictions, failure handling, and step traces |
 | `.github/workflows/tests.yml` | Windows and Linux / Python 3.14 CI workflow |
 | `docs/` | Screenshots and a sample PDF report |
 

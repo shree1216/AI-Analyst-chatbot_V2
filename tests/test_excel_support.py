@@ -510,6 +510,113 @@ class ExcelChatTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "20 worksheets"):
                 self.workbook_ask("Median Revenue", valid)
 
+    def test_exact_monthly_question_selects_sales_with_wrong_or_invalid_preview_without_ai(self):
+        content = workbook_bytes({
+            "products": [("Product ID", " product id "), (1, 2)],
+            "Sales": [("Region", "Sales", "Date"),
+                      ("PRIVATE_REGION", 100, "2025-01-15"), ("South", 200, "2025-02-10"),
+                      ("North", 50, "2025-02-12")],
+            "staff": [("Name", "Joining Date"), ("PRIVATE_PERSON", "2020-01-01")],
+        })
+        for selected, frame in (("products", None), ("staff", read_excel_sheet(content, "staff"))):
+            with self.subTest(selected=selected), patch.object(self.chatbot, "get_azure_openai_client", return_value=None):
+                result = self.chatbot.query_excel_workbook(
+                    "Total Revenue by year and month of Order Date.", frame, content, selected,
+                )
+                self.assertEqual(result.to_dict("list"), {"Year": [2025, 2025], "Month": [1, 2], "Total Sales": [100, 250]})
+                self.assertEqual(result.attrs["source_sheets"], ["Sales"])
+                self.assertIn("'Date'", result.attrs["interpretation"])
+        self.client.chat.completions.create.assert_not_called()
+
+    def test_monthly_summary_rejects_ambiguity_and_does_not_discard_conditions(self):
+        schemas = {
+            "Sales": {"Revenue": "number", "Order Date": "date"},
+            "Archive": {"Revenue": "number", "Order Date": "date"},
+        }
+        with self.assertRaisesRegex(ValueError, "More than one worksheet"):
+            self.chatbot.monthly_workbook_plan("Total Revenue by year and month of Order Date.", schemas)
+        plan, _ = self.chatbot.monthly_workbook_plan("Total Revenue by year and month of Order Date in Archive", schemas)
+        self.assertEqual(plan["sheet"], "Archive")
+        self.assertIsNone(self.chatbot.monthly_workbook_plan(
+            "Total Revenue by year and month of Order Date where Region is North", schemas,
+        ))
+        self.assertIsNone(self.chatbot.monthly_workbook_plan(
+            "Total Revenue by year and month of Order Date", {"staff": {"Revenue": "number", "Joining Date": "date"}},
+        ))
+
+    def test_named_row_count_and_sales_totals_route_away_from_preview(self):
+        content = workbook_bytes()
+        frame = read_excel_sheet(content, "Inventory")
+        with patch.object(self.chatbot, "get_azure_openai_client", return_value=None):
+            result = self.chatbot.query_excel_workbook("count rows in worksheet Sales", frame, content, "Inventory")
+            self.assertEqual(result.iloc[0, 0], 3)
+            self.assertEqual(result.attrs["source_sheets"], ["Sales"])
+            result = self.chatbot.query_excel_workbook("total revenue by region", frame, content, "Inventory")
+            self.assertEqual(result["Total Sales"].tolist(), [40, 20])
+            self.assertEqual(result.attrs["source_sheets"], ["Sales"])
+
+    def test_planner_rejection_explains_reason_and_available_columns(self):
+        with self.assertRaises(ValueError) as caught:
+            self.workbook_ask("Total Revenue by year and month of Shipment Date", {
+                "understood": False, "unhandled_conditions": ["Shipment Date is missing; use Date instead."],
+                "sheet": "Sales", "steps": [],
+            })
+        message = str(caught.exception)
+        self.assertIn("Shipment Date is missing", message)
+        self.assertIn("Sales: Region, Revenue, Date", message)
+        self.assertIn("Inventory: Product, Stock", message)
+
+    def test_planner_source_names_are_resolved_case_insensitively(self):
+        result = self.workbook_ask("Median stock in inventory", {
+            "understood": True, "unhandled_conditions": [], "sheet": "inventory", "steps": [
+                {"op": "aggregate", "metrics": [{"name": "Median Stock", "function": "median", "column": "Stock"}]},
+            ],
+        })
+        self.assertEqual(result.iloc[0, 0], 7)
+        self.assertEqual(result.attrs["source_sheets"], ["Inventory"])
+
+    def test_invalid_planner_response_is_diagnosed_without_logging_response_content(self):
+        self.client.chat.completions.create.return_value = SimpleNamespace(choices=[
+            SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content="PRIVATE_MODEL_RESPONSE"))
+        ])
+        events = []
+        with self.assertRaises(ValueError):
+            self.chatbot.query_excel_workbook(
+                "Median Revenue", self.frame, workbook_bytes(), "Sales", trace=self.chatbot.BackendTrace(events),
+            )
+        self.assertIn("planner_invalid_json", [entry["event"] for entry in events])
+        self.assertNotIn("PRIVATE_MODEL_RESPONSE", self.chatbot.diagnostic_log(events))
+
+    def test_ui_automatic_routing_from_invalid_preview_and_session_backend_log(self):
+        upload = BytesIO(workbook_bytes({
+            "products": [("ID", " id "), (1, 2)],
+            "Sales": [("Revenue", "Order Date", "Region"),
+                      (100, "2025-01-01", "PRIVATE_REGION"), (200, "2025-02-01", "PRIVATE_REGION")],
+        }))
+        upload.name = "private-workbook.xlsx"
+        with patch("streamlit.file_uploader", return_value=upload):
+            app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+            app.radio(key="data_source").set_value("Excel workbook").run(timeout=30)
+            app.selectbox[0].select("products").run(timeout=30)
+            app.chat_input[0].set_value("Total Revenue by year and month of Order Date.").run(timeout=30)
+            self.assertEqual(len(app.exception), 0)
+            message = app.session_state["chat_history"][0]
+            self.assertEqual(message["result"]["Total Revenue"].tolist(), [100, 200])
+            self.assertEqual(message["excel_source"], "private-workbook.xlsx / Sales")
+            events = message["backend_log"]
+            self.assertIn("sheet_unavailable", [entry["event"] for entry in events])
+            self.assertEqual(events[-1]["event"], "request_completed")
+            text = self.chatbot.diagnostic_log(events)
+            self.assertNotIn("PRIVATE_REGION", text)
+            self.assertNotIn("Total Revenue by year and month", text)
+            self.assertNotIn(upload.name, text)
+            self.assertTrue(any(button.label == "Download backend log" for button in app.get("download_button")))
+            count = len(events)
+            app.run(timeout=30)
+            self.assertEqual(len(app.session_state["chat_history"][0]["backend_log"]), count)
+            app.button(key="new_chat").click().run(timeout=30)
+            self.assertFalse(any(button.label == "Download backend log" for button in app.get("download_button")))
+
     def test_workbook_advanced_ui_caches_answer_and_discards_input_snapshots(self):
         self.chatbot.st.cache_resource.clear()
         self.addCleanup(self.chatbot.st.cache_resource.clear)
@@ -546,7 +653,7 @@ class ExcelChatTests(unittest.TestCase):
             self.assertEqual(len(app.exception), 0)
             self.assertEqual(app.session_state["chat_history"][0]["result"].iloc[0, 0], 7)
             self.client.chat.completions.create.assert_not_called()
-            self.assertEqual(len(app.get("download_button")), 1)
+            self.assertEqual(sum(button.label == "Download Excel" for button in app.get("download_button")), 1)
 
     def test_query_limits_and_unsupported_plans(self):
         self.frame = pd.concat([self.frame] * 40)
@@ -637,7 +744,7 @@ class ExcelChatTests(unittest.TestCase):
             self.assertIn("Sales", app.session_state["chat_history"][0]["excel_source"])
             app.radio(key="data_source").set_value("Employee database").run(timeout=30)
             self.assertEqual(len(app.exception), 0)
-            self.assertEqual(len(app.get("download_button")), 2)
+            self.assertEqual(sum(button.label == "Download Excel" for button in app.get("download_button")), 2)
             app.button(key="new_chat").click().run(timeout=30)
             self.assertEqual(len(app.session_state["chat_history"]), 0)
 
