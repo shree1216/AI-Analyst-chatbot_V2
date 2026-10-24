@@ -248,7 +248,7 @@ class DemoDatabaseTests(unittest.TestCase):
         self.assertIn(f"{len(self.employees)} employees", app.session_state["chat_history"][0]["answer"])
         first = app.session_state["chat_history"][0]
         first_events = list(first["backend_log"])
-        self.assertEqual(first_events[0]["backend"], "sqlite_demo")
+        self.assertEqual(first_events[0]["route"], "sqlite_demo")
         self.assertTrue(any(event["event"] == "query_completed" and event["rows"] == 1 for event in first_events))
         self.assertTrue(any(event["event"] == "export_completed" for event in first_events))
         app.chat_input[0].set_value("How many female employees have a salary above 80000?").run(timeout=30)
@@ -276,7 +276,7 @@ class DemoDatabaseTests(unittest.TestCase):
         app.button(key="test_employee_connection").click().run(timeout=30)
         self.assertEqual(len(app.exception), 0)
         self.assertTrue(any(f"{len(self.employees):,} employee rows" in status.value for status in app.success))
-        self.assertEqual(app.session_state["employee_connection_log"][0]["route"], "connection_check")
+        self.assertEqual(app.session_state["employee_connection_log"][0]["operation"], "connection_check")
         self.assertEqual(app.session_state["employee_connection_log"][-1]["event"], "request_completed")
         app.run(timeout=30)
         self.assertTrue(any("Verified SQLite demo" in status.value for status in app.success))
@@ -304,10 +304,19 @@ class DemoDatabaseTests(unittest.TestCase):
         self.assertEqual(read.call_count, 2)
         get_engine.clear.assert_called_once()
         self.assertEqual([event["event"] for event in events], ["query_started", "query_retry", "query_completed"])
-        self.assertEqual(events[0]["backend"], "sql_server")
+        self.assertEqual(events[0]["route"], "sql_server")
         log = diagnostic_log(events)
         for secret in ("PRIVATE_CONNECTION_STRING", "PRIVATE_RESULT", "PRIVATE_PARAMETER", "SELECT", "private_literal"):
             self.assertNotIn(secret, log)
+
+    def test_employee_trace_is_compatible_with_existing_logger_metadata_fields(self):
+        message = {"question": "How many employees?", "request": None, "pending_query": True}
+        with patch("backend_diagnostics.LOG_FIELDS", {
+            "route", "operation", "status", "rows", "columns", "error_type",
+        }):
+            self.assertIn("150 employees", self.chatbot.display_employee_message(message, "existing_log_schema"))
+        self.assertEqual(message["backend_log"][0]["route"], "sqlite_demo")
+        self.assertEqual(message["backend_log"][-1]["event"], "request_completed")
 
     def test_sql_failure_is_friendly_traced_and_context_is_reset(self):
         message = {"question": "How many employees?", "request": None, "pending_query": True}

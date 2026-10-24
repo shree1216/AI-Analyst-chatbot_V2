@@ -1106,7 +1106,7 @@ def get_demo_query_lock() -> Lock:
 def run_query(sql: str, parameters: dict[str, Any] | None = None) -> pd.DataFrame:
     trace = SQL_TRACE.get()
     if trace:
-        trace.record("query_started", backend="sqlite_demo" if DATA_MODE == "demo" else "sql_server", operation="read")
+        trace.record("query_started", route="sqlite_demo" if DATA_MODE == "demo" else "sql_server", operation="read")
     try:
         if DATA_MODE == "demo":
             # StaticPool shares one SQLite connection across all Streamlit sessions.
@@ -3282,7 +3282,8 @@ def display_employee_message(
     trace = BackendTrace(message.setdefault("backend_log", [])) if tracing else None
     if trace:
         message["request_id"] = trace.request_id
-        trace.record("request_started", route="employee", backend="sqlite_demo" if DATA_MODE == "demo" else "sql_server")
+        trace.record("request_started", route="sqlite_demo" if DATA_MODE == "demo" else "sql_server",
+                     operation="employee_question")
     token = SQL_TRACE.set(trace)
     completed = False
     try:
@@ -4052,8 +4053,8 @@ with st.sidebar:
             st.session_state["employee_connection_log"] = connection_trace.events
             st.session_state.pop("employee_connection_log_error", None)
             connection_trace.record(
-                "request_started", route="connection_check",
-                backend="sqlite_demo" if DATA_MODE == "demo" else "sql_server",
+                "request_started", route="sqlite_demo" if DATA_MODE == "demo" else "sql_server",
+                operation="connection_check",
             )
             connection_token = SQL_TRACE.set(connection_trace)
             connection_ok = False
