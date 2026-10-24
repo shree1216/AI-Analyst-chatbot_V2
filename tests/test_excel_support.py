@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
+from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import Mock, patch
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -66,7 +67,7 @@ class ExcelFileTests(unittest.TestCase):
         for content in (b"", b"not an excel file", b"x" * 10_000_001):
             with self.subTest(length=len(content)), self.assertRaises(ValueError):
                 excel_sheet_names(content)
-        with self.assertRaisesRegex(ValueError, "does not exist"):
+        with self.assertRaisesRegex(ValueError, "couldn't find the selected worksheet"):
             read_excel_sheet(workbook_bytes(), "Missing")
         expanded = BytesIO()
         with ZipFile(expanded, "w", compression=ZIP_DEFLATED) as archive:
@@ -159,6 +160,71 @@ class ExcelFileTests(unittest.TestCase):
                 with self.subTest(confirmed=confirmed), self.assertRaisesRegex(ValueError, "confirm"):
                     write_region_summary(workbook_bytes(), confirmed=confirmed)
             load.assert_not_called()
+
+    def test_workbook_paths_load_without_modifying_the_original(self):
+        content = workbook_bytes()
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "sales.xlsx"
+            path.write_bytes(content)
+            self.assertEqual(excel_sheet_names(path), ["Sales", "Inventory"])
+            self.assertEqual(read_excel_sheet(str(path), "Sales").shape, (3, 3))
+            backup, updated = write_region_summary(path, confirmed=True)
+            self.assertEqual(path.read_bytes(), content)
+            self.assertEqual(backup, content)
+            self.assertIn("Region_Summary", excel_sheet_names(updated))
+
+    def test_missing_invalid_and_directory_paths_have_friendly_messages(self):
+        with TemporaryDirectory() as directory:
+            missing = Path(directory) / "missing.xlsx"
+            for operation in (
+                lambda: excel_sheet_names(missing),
+                lambda: read_excel_sheet(missing, "Sales"),
+                lambda: write_region_summary(missing, confirmed=True),
+            ):
+                with self.subTest(operation=operation), self.assertRaisesRegex(ValueError, "Check the file path"):
+                    operation()
+            with self.assertRaisesRegex(ValueError, "points to a folder"):
+                excel_sheet_names(Path(directory))
+            with self.assertRaisesRegex(ValueError, "path isn't valid"):
+                excel_sheet_names("invalid\x00path.xlsx")
+
+    def test_locked_files_show_remedial_advice_without_exception_details(self):
+        for operation in (
+            lambda: excel_sheet_names(Path("locked.xlsx")),
+            lambda: read_excel_sheet(Path("locked.xlsx"), "Sales"),
+            lambda: write_region_summary(Path("locked.xlsx"), confirmed=True),
+        ):
+            with self.subTest(operation=operation), patch(
+                "pathlib.Path.open", side_effect=PermissionError("PRIVATE_PATH_AND_TECHNICAL_DETAILS"),
+            ):
+                with self.assertRaisesRegex(ValueError, "may be locked") as caught:
+                    operation()
+                self.assertIn("Close it in Excel", str(caught.exception))
+                self.assertNotIn("PRIVATE_PATH", str(caught.exception))
+        error = OSError("PRIVATE_LOCK_DETAILS")
+        error.winerror = 32
+        with patch("pathlib.Path.open", side_effect=error), self.assertRaisesRegex(ValueError, "may be locked"):
+            excel_sheet_names(Path("locked.xlsx"))
+
+    def test_workbook_load_and_save_access_errors_are_friendly(self):
+        content = workbook_bytes()
+        with patch("excel_support.load_workbook", side_effect=PermissionError("PRIVATE_DETAILS")):
+            with self.assertRaisesRegex(ValueError, "may be locked"):
+                excel_sheet_names(content)
+        with patch("openpyxl.workbook.workbook.Workbook.save", side_effect=PermissionError("PRIVATE_DETAILS")):
+            with self.assertRaisesRegex(ValueError, "Close it in Excel"):
+                write_region_summary(content, confirmed=True)
+        self.assertEqual(excel_sheet_names(content), ["Sales", "Inventory"])
+
+    def test_missing_sales_sheet_explains_how_to_fix_it(self):
+        content = workbook_bytes({"Inventory": [("Product",), ("Widget",)]})
+        for operation in (
+            lambda: read_excel_sheet(content, "Sales"),
+            lambda: write_region_summary(content, confirmed=True),
+        ):
+            with self.subTest(operation=operation), self.assertRaisesRegex(ValueError, "sheet named 'Sales'") as caught:
+                operation()
+            self.assertIn("save the file, and upload it again", str(caught.exception))
 
     def test_region_summary_backs_up_original_and_preserves_existing_sheets(self):
         content = workbook_bytes({
@@ -386,7 +452,8 @@ class ExcelChatTests(unittest.TestCase):
             app.radio(key="data_source").set_value("Excel workbook").run(timeout=30)
             app.chat_input[0].set_value("count rows").run(timeout=30)
             self.assertEqual(len(app.exception), 0)
-            self.assertEqual(len(app.session_state["chat_history"]), 0)
+            self.assertEqual(len(app.session_state["chat_history"]), 1)
+            self.assertIn("Upload a valid Excel", app.session_state["chat_history"][0]["error"])
             self.assertTrue(any("Upload a valid Excel" in warning.value for warning in app.warning))
         invalid = BytesIO(b"invalid")
         invalid.name = "invalid.xlsx"
@@ -441,6 +508,121 @@ class ExcelChatTests(unittest.TestCase):
             self.assertEqual(len(app.exception), 0)
             self.assertTrue(any("already exists" in error.value for error in app.error))
             self.assertNotIn("region_summary_output", app.session_state["excel_workbook"])
+
+    def test_missing_sales_and_access_errors_display_friendly_ui_messages(self):
+        upload = BytesIO(workbook_bytes({"Inventory": [("Product",), ("Widget",)]}))
+        upload.name = "inventory.xlsx"
+        with patch("streamlit.file_uploader", return_value=upload):
+            app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+            app.radio(key="data_source").set_value("Excel workbook").run(timeout=30)
+            self.assertEqual(len(app.exception), 0)
+            self.assertTrue(any("doesn't have a Sales sheet" in info.value for info in app.info))
+        locked = BytesIO(workbook_bytes())
+        locked.name = "locked.xlsx"
+        with patch("streamlit.file_uploader", return_value=locked), patch(
+            "excel_support.load_workbook", side_effect=PermissionError("PRIVATE_TECHNICAL_ERROR"),
+        ):
+            app.run(timeout=30)
+            self.assertEqual(len(app.exception), 0)
+            self.assertTrue(any("may be locked" in warning.value for warning in app.warning))
+            self.assertFalse(any("PRIVATE_TECHNICAL_ERROR" in warning.value for warning in app.warning))
+
+    def test_workbook_commands_open_and_close_controls_without_a_file(self):
+        with patch("streamlit.file_uploader", return_value=None):
+            app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+            app.chat_input[0].set_value("open Excel").run(timeout=30)
+            self.assertEqual(len(app.exception), 0)
+            self.assertEqual(app.radio(key="data_source").value, "Excel workbook")
+            self.assertIn("Upload your workbook", app.session_state["chat_history"][-1]["answer"])
+            app.chat_input[0].set_value("open Sales").run(timeout=30)
+            self.assertEqual(len(app.exception), 0)
+            self.assertIn("Upload an Excel workbook first", app.session_state["chat_history"][-1]["answer"])
+            app.chat_input[0].set_value("close Excel").run(timeout=30)
+            self.assertEqual(len(app.exception), 0)
+            self.assertEqual(app.radio(key="data_source").value, "Employee database")
+            self.assertNotIn("excel_workbook", app.session_state)
+            self.assertEqual(app.session_state["excel_uploader_version"], 1)
+
+    def test_prompt_sheet_selection_and_recall_survive_close_and_rerun(self):
+        upload = BytesIO(workbook_bytes())
+        upload.name = "sample.xlsx"
+        with patch("streamlit.file_uploader", return_value=upload):
+            app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+            app.chat_input[0].set_value("open Excel").run(timeout=30)
+            app.chat_input[0].set_value("open Inventory").run(timeout=30)
+            self.assertEqual(len(app.exception), 0)
+            self.assertEqual(app.selectbox[0].value, "Inventory")
+            app.chat_input[0].set_value("count rows").run(timeout=30)
+            self.assertEqual(app.session_state["chat_history"][-1]["result"].iloc[0, 0], 1)
+            app.chat_input[0].set_value("what's the last question?").run(timeout=30)
+            self.assertEqual(app.session_state["chat_history"][-1]["answer"],
+                             'Your previous question in this chat was: "count rows"')
+            app.chat_input[0].set_value("whats the last question?").run(timeout=30)
+            self.assertIn('"count rows"', app.session_state["chat_history"][-1]["answer"])
+            app.run(timeout=30)
+            self.assertEqual(len(app.exception), 0)
+            app.chat_input[0].set_value("close Excel").run(timeout=30)
+            self.assertNotIn("excel_workbook", app.session_state)
+            app.chat_input[0].set_value("what was my last question?").run(timeout=30)
+            self.assertIn('"count rows"', app.session_state["chat_history"][-1]["answer"])
+            self.assertEqual(len(app.exception), 0)
+        with patch("streamlit.file_uploader", return_value=None):
+            app.chat_input[0].set_value("open Excel").run(timeout=30)
+            self.assertNotIn("excel_workbook", app.session_state)
+            self.assertIn("Upload your workbook", app.session_state["chat_history"][-1]["answer"])
+
+    def test_open_sheet_restores_remembered_workbook_after_switching_sources(self):
+        upload = BytesIO(workbook_bytes())
+        upload.name = "remembered.xlsx"
+        with patch("streamlit.file_uploader", return_value=upload):
+            app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+            app.radio(key="data_source").set_value("Excel workbook").run(timeout=30)
+            app.radio(key="data_source").set_value("Employee database").run(timeout=30)
+        with patch("streamlit.file_uploader", return_value=None):
+            app.chat_input[0].set_value("open Inventory").run(timeout=30)
+            self.assertEqual(len(app.exception), 0)
+            self.assertEqual(app.radio(key="data_source").value, "Excel workbook")
+            self.assertEqual(app.selectbox[0].value, "Inventory")
+            self.assertEqual(app.session_state["excel_workbook"]["file_name"], "remembered.xlsx")
+            app.chat_input[0].set_value("open Missing").run(timeout=30)
+            self.assertIn("Available worksheets: Sales, Inventory", app.session_state["chat_history"][-1]["answer"])
+            self.assertEqual(app.selectbox[0].value, "Inventory")
+
+    def test_last_question_works_with_invalid_headers_and_without_a_workbook(self):
+        with patch("streamlit.file_uploader", return_value=None):
+            app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+            app.radio(key="data_source").set_value("Excel workbook").run(timeout=30)
+            app.chat_input[0].set_value("whats the last question?").run(timeout=30)
+            self.assertEqual(len(app.exception), 0)
+            self.assertIn("no earlier messages", app.session_state["chat_history"][-1]["answer"])
+        upload = BytesIO(workbook_bytes({"Sales": [("Region", "region"), ("North", 100)]}))
+        upload.name = "invalid-headers.xlsx"
+        with patch("streamlit.file_uploader", return_value=upload):
+            app.run(timeout=30)
+            self.assertTrue(any("headers must be unique" in warning.value for warning in app.warning))
+            question = "What are the total sales by region?"
+            app.chat_input[0].set_value(question).run(timeout=30)
+            self.assertIn("error", app.session_state["chat_history"][-1])
+            app.chat_input[0].set_value("what is the last question?").run(timeout=30)
+            self.assertEqual(len(app.exception), 0)
+            self.assertEqual(app.session_state["chat_history"][-1]["kind"], "recall")
+            self.assertIn(question, app.session_state["chat_history"][-1]["answer"])
+            app.button(key="new_chat").click().run(timeout=30)
+            app.chat_input[0].set_value("what's the last question?").run(timeout=30)
+            self.assertIn("no earlier messages", app.session_state["chat_history"][-1]["answer"])
+
+    def test_command_and_recall_parsers_do_not_need_azure(self):
+        self.assertEqual(self.chatbot.parse_workbook_command("please open Excel"), ("open", None))
+        self.assertEqual(self.chatbot.parse_workbook_command("close the workbook"), ("close", None))
+        self.assertEqual(self.chatbot.parse_workbook_command('open sheet "Sales"'), ("sheet", "Sales"))
+        self.assertIsNone(self.chatbot.parse_workbook_command("How many employees do we have?"))
+        for question in ("what's the last question?", "whats the last question?", "what is the last question?"):
+            with self.subTest(question=question):
+                self.assertTrue(self.chatbot.is_previous_question_request(question))
+        self.assertIn('"count rows"', self.chatbot.recall_previous_question([
+            {"question": "count rows"}, {"kind": "workbook_command", "question": "close Excel"},
+            {"kind": "recall", "question": "whats the last question?"},
+        ]))
 
 
 if __name__ == "__main__":

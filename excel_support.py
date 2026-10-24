@@ -2,6 +2,7 @@ from datetime import date, datetime
 from io import BytesIO
 import math
 from numbers import Real
+from pathlib import Path
 import re
 from zipfile import BadZipFile, ZipFile
 from xml.etree.ElementTree import ParseError
@@ -16,21 +17,58 @@ EXCEL_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 MAX_EXCEL_BYTES = 10_000_000
 MAX_EXCEL_ROWS = 50_000
 MAX_EXCEL_COLUMNS = 100
+SALES_SHEET_MISSING = (
+    "I couldn't find a sheet named 'Sales' in this workbook. "
+    "Add or rename the sales worksheet to 'Sales', save the file, and upload it again."
+)
 
 
-def open_excel_workbook(content: bytes) -> Workbook:
+def _excel_access_message(error: OSError) -> str:
+    if isinstance(error, FileNotFoundError):
+        return "I couldn't find the Excel file. Check the file path and try again."
+    if isinstance(error, IsADirectoryError):
+        return "That path points to a folder. Choose an .xlsx file instead."
+    if isinstance(error, PermissionError) or getattr(error, "winerror", None) in {32, 33}:
+        return (
+            "I couldn't access the Excel file. It may be locked or you may not have permission. "
+            "Close it in Excel or other apps, check your file permissions, and try again."
+        )
+    return "I couldn't access the Excel file. Check that it is available and try again."
+
+
+def _excel_content(source: bytes | str | Path) -> bytes:
+    if isinstance(source, bytes):
+        content = source
+    else:
+        try:
+            path = Path(source)
+            if path.is_dir():
+                raise IsADirectoryError()
+            with path.open("rb") as workbook_file:
+                content = workbook_file.read(MAX_EXCEL_BYTES + 1)
+        except OSError as error:
+            raise ValueError(_excel_access_message(error)) from error
+        except ValueError as error:
+            raise ValueError("That file path isn't valid. Choose an .xlsx file and try again.") from error
     if not content or len(content) > MAX_EXCEL_BYTES:
         raise ValueError("Upload an .xlsx workbook smaller than 10 MB.")
+    return content
+
+
+def open_excel_workbook(content: bytes | str | Path) -> Workbook:
+    content = _excel_content(content)
     try:
         with ZipFile(BytesIO(content)) as archive:
             if sum(item.file_size for item in archive.infolist()) > 50_000_000:
                 raise ValueError("The expanded workbook must be smaller than 50 MB.")
         return load_workbook(BytesIO(content), read_only=True, data_only=True)
-    except (BadZipFile, InvalidFileException, ParseError, KeyError, OSError) as error:
+    except OSError as error:
+        raise ValueError(_excel_access_message(error)) from error
+    except (BadZipFile, InvalidFileException, ParseError, KeyError) as error:
         raise ValueError("Could not read this workbook. Upload a valid, unencrypted .xlsx file.") from error
 
 
-def excel_sheet_names(content: bytes) -> list[str]:
+def excel_sheet_names(content: bytes | str | Path) -> list[str]:
     workbook = open_excel_workbook(content)
     try:
         names = [worksheet.title for worksheet in workbook.worksheets]
@@ -41,11 +79,14 @@ def excel_sheet_names(content: bytes) -> list[str]:
         workbook.close()
 
 
-def read_excel_sheet(content: bytes, sheet: str) -> pd.DataFrame:
+def read_excel_sheet(content: bytes | str | Path, sheet: str) -> pd.DataFrame:
     workbook = open_excel_workbook(content)
     try:
         if sheet not in [worksheet.title for worksheet in workbook.worksheets]:
-            raise ValueError("The selected worksheet does not exist.")
+            raise ValueError(
+                SALES_SHEET_MISSING if sheet.casefold() == "sales"
+                else "I couldn't find the selected worksheet. Choose another worksheet and try again."
+            )
         worksheet = workbook[sheet]
         worksheet.reset_dimensions()
         rows = worksheet.iter_rows(values_only=True)
@@ -68,6 +109,8 @@ def read_excel_sheet(content: bytes, sheet: str) -> pd.DataFrame:
         if frame.empty:
             raise ValueError("The selected worksheet has no data rows.")
         return frame
+    except OSError as error:
+        raise ValueError(_excel_access_message(error)) from error
     finally:
         workbook.close()
 
@@ -162,20 +205,25 @@ def query_sales_total(question: str, frame: pd.DataFrame) -> pd.DataFrame | None
     return result
 
 
-def write_region_summary(content: bytes, *, confirmed: bool = False) -> tuple[bytes, bytes]:
-    """Return an original backup and an updated copy; never change the uploaded bytes."""
+def write_region_summary(
+    content: bytes | str | Path, *, confirmed: bool = False,
+) -> tuple[bytes, bytes]:
+    """Return an original backup and an updated copy; never modify the source."""
     if confirmed is not True:
         raise ValueError("Please confirm before writing Region_Summary.")
-    backup = memoryview(content).tobytes()
+    backup = memoryview(_excel_content(content)).tobytes()
     names = excel_sheet_names(backup)
     if any(name.casefold() == "region_summary" for name in names):
         raise ValueError("Region_Summary already exists. No existing sheet will be overwritten.")
     source = next((name for name in names if name.casefold() == "sales"), None)
     if source is None:
-        raise ValueError("A Sales worksheet is required to create Region_Summary.")
+        raise ValueError(SALES_SHEET_MISSING)
     frame = read_excel_sheet(backup, source)
     summary = region_sales_totals(frame)
-    workbook = load_workbook(BytesIO(backup), data_only=False)
+    try:
+        workbook = load_workbook(BytesIO(backup), data_only=False)
+    except OSError as error:
+        raise ValueError(_excel_access_message(error)) from error
     try:
         if any(name.casefold() == "region_summary" for name in workbook.sheetnames):
             raise ValueError("Region_Summary already exists. No existing sheet will be overwritten.")
@@ -192,6 +240,8 @@ def write_region_summary(content: bytes, *, confirmed: bool = False) -> tuple[by
         output = BytesIO()
         workbook.save(output)
         return backup, output.getvalue()
+    except OSError as error:
+        raise ValueError(_excel_access_message(error)) from error
     finally:
         workbook.close()
 

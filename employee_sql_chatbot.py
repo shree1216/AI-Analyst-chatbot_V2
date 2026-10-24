@@ -2363,10 +2363,40 @@ def summarize_with_azure_openai(question: str, explanation: str, result_csv: str
 def is_previous_question_request(question: str) -> bool:
     return bool(re.search(
         r"\b(?:remember|recall)\b.*\b(?:asked|question|earlier|before)\b"
-        r"|\bwhat\s+(?:was|were)\s+my\s+(?:last|previous|earlier)\s+(?:question|message)\b"
+        r"|\bwhat(?:['\u2019]s|s|\s+(?:is|was|were))\s+(?:(?:my|the)\s+)?"
+        r"(?:last|previous|earlier)\s+(?:question|message)\b"
         r"|\bwhat\s+did\s+i\s+(?:ask|say)\b",
         question.lower(),
     ))
+
+
+def recall_previous_question(messages: list[dict[str, Any]]) -> str:
+    for message in reversed(messages):
+        question = message.get("question")
+        if (
+            isinstance(question, str) and question
+            and message.get("kind") != "workbook_command"
+            and not is_previous_question_request(question)
+        ):
+            return f'Your previous question in this chat was: "{question}"'
+    return "There are no earlier messages in this chat. I cannot recall conversations from other sessions."
+
+
+def parse_workbook_command(question: str) -> tuple[str, str | None] | None:
+    normalized = question.strip().rstrip("?.!").strip()
+    match = re.fullmatch(
+        r"(?:please\s+)?(?P<verb>open|show|load|close|unload)\s+(?:the\s+)?"
+        r"(?:excel(?:\s+(?:workbook|file))?|workbook)", normalized, re.IGNORECASE,
+    )
+    if match:
+        return ("close" if match["verb"].lower() in {"close", "unload"} else "open"), None
+    match = re.fullmatch(
+        r"(?:please\s+)?(?:open|select|switch to)\s+(?:the\s+)?"
+        r"(?:(?:sheet|worksheet)\s+)?(.+?)", normalized, re.IGNORECASE,
+    )
+    if match:
+        return "sheet", match[1].strip("\"'")
+    return None
 
 
 def conversation_context(messages: list[dict[str, Any]]) -> tuple[tuple[str, str], ...]:
@@ -3549,6 +3579,16 @@ def apply_theme() -> None:
 apply_theme()
 
 history = st.session_state.setdefault("chat_history", [])
+workbook_action = st.session_state.pop("pending_workbook_action", None)
+if workbook_action:
+    st.session_state["data_source"] = "Employee database" if workbook_action["action"] == "close" else "Excel workbook"
+    if workbook_action["action"] == "close":
+        st.session_state.pop("excel_workbook", None)
+        st.session_state["excel_uploader_version"] = st.session_state.get("excel_uploader_version", 0) + 1
+    elif workbook_action["action"] == "sheet":
+        workbook = st.session_state.get("excel_workbook")
+        if workbook is not None:
+            st.session_state[f"excel_sheet_{workbook['digest']}"] = workbook_action["sheet"]
 voice_recording = None
 voice_enabled = speech_is_configured()
 read_answers_aloud = False
@@ -3556,6 +3596,10 @@ voice_recorder_version = st.session_state.setdefault("voice_recorder_version", 0
 excel_frame = None
 excel_source = None
 excel_selected = False
+
+
+def clear_excel_workbook() -> None:
+    st.session_state.pop("excel_workbook", None)
 
 
 def render_recent_chats(placeholder: Any) -> None:
@@ -3581,6 +3625,7 @@ with st.sidebar:
         st.rerun()
 
     data_source = st.radio("Data source", ["Employee database", "Excel workbook"], key="data_source")
+    st.caption("Chat commands: open Excel, open Sales, close Excel. Ask \"what's the last question?\" to recall it.")
     excel_selected = data_source == "Excel workbook"
     if not excel_selected:
         backend = "SQLite demo (not SQL Server)" if DATA_MODE == "demo" else "SQL Server"
@@ -3612,31 +3657,43 @@ with st.sidebar:
                     f"(last checked {connection_status['checked_at']})."
                 )
     if excel_selected:
-        upload = st.file_uploader("Upload Excel workbook", type=["xlsx"], max_upload_size=10)
+        upload = st.file_uploader(
+            "Upload Excel workbook", type=["xlsx"], max_upload_size=10,
+            key=f"excel_upload_{st.session_state.get('excel_uploader_version', 0)}",
+            on_change=clear_excel_workbook,
+        )
         st.caption(
             "Choose one worksheet with unique text headers in row 1. "
             "Up to 50,000 rows and 100 columns. Formula cells use their saved values."
         )
-        if upload is not None:
-            content = upload.getvalue()
+        remembered_workbook = st.session_state.get("excel_workbook")
+        if upload is not None or (remembered_workbook and remembered_workbook.get("content") is not None):
+            content = upload.getvalue() if upload is not None else remembered_workbook["content"]
+            file_name = upload.name if upload is not None else remembered_workbook["file_name"]
             digest = sha256(content).hexdigest()
             try:
                 workbook_cache = st.session_state.get("excel_workbook")
                 if workbook_cache is None or workbook_cache["digest"] != digest:
-                    workbook_cache = {"digest": digest, "sheets": excel_sheet_names(content)}
+                    st.session_state.pop("excel_workbook", None)
+                    workbook_cache = {
+                        "digest": digest, "sheets": excel_sheet_names(content),
+                        "content": content, "file_name": file_name,
+                    }
                     st.session_state["excel_workbook"] = workbook_cache
                 sheet_names = workbook_cache["sheets"]
                 default_sheet = next(
                     (index for index, name in enumerate(sheet_names) if name.casefold() == "sales"), 0,
                 )
                 sheet = st.selectbox(
-                    "Worksheet", sheet_names, index=default_sheet, key=f"excel_sheet_{digest}",
+                    "Worksheet", sheet_names,
+                    index=default_sheet if f"excel_sheet_{digest}" not in st.session_state else None,
+                    key=f"excel_sheet_{digest}",
                 )
                 if workbook_cache.get("sheet") != sheet:
                     workbook_cache["frame"] = read_excel_sheet(content, sheet)
                     workbook_cache["sheet"] = sheet
                 excel_frame = workbook_cache["frame"]
-                excel_source = f"{upload.name} / {sheet}"
+                excel_source = f"{file_name} / {sheet}"
                 st.caption(f"Active source: Excel workbook | {excel_source}")
                 st.caption(f"{len(excel_frame):,} rows | {len(excel_frame.columns)} columns")
                 with st.expander("Worksheet preview"):
@@ -3655,7 +3712,7 @@ with st.sidebar:
                         )
                         if "backup" not in workbook_cache:
                             workbook_cache["backup"] = memoryview(content).tobytes()
-                        stem = Path(upload.name).stem
+                        stem = Path(file_name).stem
                         st.download_button(
                             "Download original backup", data=workbook_cache["backup"],
                             file_name=f"{stem}_backup.xlsx", mime=EXCEL_MIME,
@@ -3684,6 +3741,11 @@ with st.sidebar:
                                 file_name=f"{stem}_region_summary.xlsx", mime=EXCEL_MIME,
                                 key=f"region_summary_download_{digest}",
                             )
+                else:
+                    st.info(
+                        "This workbook doesn't have a Sales sheet. You can still query the selected "
+                        "worksheet. To create Region_Summary, add a Sales sheet and upload the file again."
+                    )
             except ValueError as error:
                 st.warning(str(error))
         else:
@@ -3756,9 +3818,54 @@ if image_uploads:
 
 submitted_question = None if image_uploads else question or voice_question
 if submitted_question:
-    if excel_selected:
+    command = parse_workbook_command(submitted_question)
+    if is_previous_question_request(submitted_question):
+        history.append({
+            "kind": "recall", "question": submitted_question,
+            "answer": recall_previous_question(history),
+        })
+    elif command:
+        action, target = command
+        cached_workbook = st.session_state.get("excel_workbook")
+        pending_action = {"action": action}
+        if action == "close":
+            command_answer = (
+                "The active Excel workbook is closed and unloaded. Employee database mode is active. "
+                "Previous answers remain in this chat; your original file was not changed."
+            )
+        elif action == "open":
+            command_answer = (
+                "Excel controls are open. Your current workbook is available in the sidebar."
+                if cached_workbook else "Excel controls are open. Upload your workbook in the sidebar to continue."
+            )
+        elif cached_workbook is None:
+            pending_action = {"action": "open"}
+            command_answer = "Upload an Excel workbook first, then ask me to open a worksheet."
+        else:
+            selected_sheet = next(
+                (name for name in cached_workbook["sheets"] if name.casefold() == (target or "").casefold()), None,
+            )
+            if selected_sheet is None:
+                pending_action = None
+                command_answer = (
+                    f"I couldn't find that worksheet. Available worksheets: {', '.join(cached_workbook['sheets'])}."
+                )
+            else:
+                pending_action["sheet"] = selected_sheet
+                command_answer = (
+                    f"Selected worksheet {selected_sheet}. Any loading problems are shown beside the workbook."
+                )
+        history.append({"kind": "workbook_command", "question": submitted_question, "answer": command_answer})
+        if pending_action is not None:
+            st.session_state["pending_workbook_action"] = pending_action
+            st.rerun()
+    elif excel_selected:
         if excel_frame is None:
-            st.warning("Upload a valid Excel workbook and choose a worksheet before asking a question.")
+            history.append({
+                "kind": "excel", "question": submitted_question,
+                "excel_source": "No valid worksheet loaded",
+                "error": "Upload a valid Excel workbook and choose a worksheet before asking a question.",
+            })
         else:
             history.append({
                 "kind": "excel", "question": submitted_question,
@@ -3791,7 +3898,10 @@ for index, message in enumerate(history):
             st.write(message["question"])
     with st.chat_message("assistant"):
         answer = None
-        if message.get("kind") == "excel":
+        if message.get("kind") in {"workbook_command", "recall"}:
+            answer = message["answer"]
+            st.write(answer)
+        elif message.get("kind") == "excel":
             with st.spinner("Querying your worksheet..."):
                 answer = display_excel_response(message, str(index))
             if answer:

@@ -123,6 +123,30 @@ and voice questions; it never replaces or writes to the employee database.
 Switch back to **Employee database** to resume workforce queries. Image
 attachments continue to use the separate image-analysis workflow.
 
+You can also control the workbook from the message box:
+
+| Prompt | Behavior |
+| --- | --- |
+| `open Excel` | Shows the Excel upload controls; upload a file if none is loaded |
+| `open Sales` | Selects the Sales worksheet in the uploaded workbook |
+| `open Inventory` | Selects another worksheet by its exact name, ignoring case |
+| `close Excel` | Unloads the active workbook and switches to employee database mode |
+| `what's the last question?` | Recalls the last non-command question in this chat |
+
+These prompts work without Azure, including when the selected workbook has
+invalid headers or no file is loaded. Opening a worksheet does not bypass workbook
+validation. Switching data sources retains the active upload so `open Sales` can
+restore it; explicitly closing Excel clears it and resets the uploader. Download
+backups and updated workbooks before closing. Earlier answer snapshots remain in
+the chat, and the original file on your computer is not modified. These commands
+control the chatbot's workbook session, not the Microsoft Excel desktop app.
+
+Recall also accepts `whats the last question?` and `what is the last question?`.
+It includes questions that failed because a workbook could not load, skips
+open/close commands and earlier recall requests, and works in both data-source
+modes. **New chat** clears recall history; it cannot recover another session's
+questions.
+
 Use unique, nonempty text column headers in the first row. Workbooks must be
 smaller than 10 MB (50 MB expanded), with at most 50,000 data rows and 100 columns
 per selected sheet. Empty sheets, missing/duplicate headers, encrypted files,
@@ -173,6 +197,15 @@ openpyxl; advanced Excel features unsupported by that library may not round-trip
 so retain the original backup. Formulas are not evaluated. Both backup and updated
 workbook are session-local downloads, not permanent server-side backups: save them
 before closing the session.
+
+Workbook helpers also accept a local `str` or `Path` instead of uploaded bytes.
+They read the file without changing it; the summary function still returns backup
+and updated-copy bytes, not an in-place disk edit. Missing or invalid paths explain
+how to choose the file, and access/lock failures ask you to close Excel or other
+apps and check permissions. A missing Sales worksheet explains how to add or
+rename it and reupload. The chatbot shows these messages without technical error
+details. An upload has already been copied into memory, so it does not need access
+to the original local file after uploading.
 
 Grouped sales totals use the same full-sheet aggregation as **Region_Summary**;
 only the displayed query output is capped at 100 regions. Queries with additional
