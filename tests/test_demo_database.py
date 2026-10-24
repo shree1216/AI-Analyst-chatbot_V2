@@ -256,6 +256,21 @@ class DemoDatabaseTests(unittest.TestCase):
         self.assertFalse(any("join date" in caption.value or "gender =" in caption.value for caption in app.caption))
         self.assertEqual(len(app.code), 0)
 
+    def test_backend_status_and_connection_check_show_real_demo_count(self):
+        app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+        self.assertTrue(any("SQLite demo (not SQL Server)" in caption.value for caption in app.caption))
+        app.button(key="test_employee_connection").click().run(timeout=30)
+        self.assertEqual(len(app.exception), 0)
+        self.assertTrue(any(f"{len(self.employees):,} employee rows" in status.value for status in app.success))
+        app.run(timeout=30)
+        self.assertTrue(any("Verified SQLite demo" in status.value for status in app.success))
+        with patch("pandas.read_sql", side_effect=SQLAlchemyError("private connection details")):
+            app.button(key="test_employee_connection").click().run(timeout=30)
+        self.assertEqual(len(app.exception), 0)
+        self.assertTrue(any("Could not connect" in status.value for status in app.error))
+        self.assertFalse(any("private connection details" in status.value for status in app.error))
+        self.assertFalse(any("Verified" in status.value for status in app.success))
+
     def test_cloud_voice_controls_enable_when_speech_settings_are_present(self):
         with patch.dict(os.environ, {"AZURE_SPEECH_KEY": "test-key", "AZURE_SPEECH_REGION": "eastus"}):
             app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)

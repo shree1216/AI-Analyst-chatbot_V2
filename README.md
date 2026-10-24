@@ -93,6 +93,8 @@ are not a replacement for database permissions or access controls.
 - Create business reports with key metrics, applied scope, factual findings, and
     relevant analyst notes.
 - Download reports as PDF files.
+- Upload `.xlsx` workbooks with arbitrary columns and select a worksheet to query.
+- Download query results and report summaries, breakdowns, and source data as Excel workbooks.
 - Look up employee details such as department, city, email, and phone number.
 - Azure OpenAI support for structured column queries; results are rendered directly
     from the database without displaying SQL or internal filter expressions.
@@ -112,6 +114,131 @@ Image analysis allows 60 seconds and up to 2,000 completion tokens per request.
 Images must be smaller than 4 MB; high-detail vision
 is used for readability, but extracted text and numbers should still be checked.
 
+### Excel workbooks
+
+In the sidebar, choose **Data source > Excel workbook**, upload an `.xlsx` file,
+and select a **Worksheet**. A sheet named **Sales** is selected by default when
+present; you can choose any other worksheet. The selected sheet becomes the source for new text
+and voice questions; it never replaces or writes to the employee database.
+Switch back to **Employee database** to resume workforce queries. Image
+attachments continue to use the separate image-analysis workflow.
+
+Use unique, nonempty text column headers in the first row. Workbooks must be
+smaller than 10 MB (50 MB expanded), with at most 50,000 data rows and 100 columns
+per selected sheet. Empty sheets, missing/duplicate headers, encrypted files,
+and legacy `.xls` files are not supported. Formulas are not executed: only values
+last saved by Excel are read, so recalculate and save the workbook first if needed.
+Dates stored as Excel dates support date comparisons; text dates remain text.
+
+Ask `count rows`, `preview`, a simple total-sales question, or
+`What are the total sales by region?` without Azure.
+For example, with numeric **Sales** (or **Revenue**, **Sales Amount**, or
+**Total Sales**) and **Region** columns in the Sales sheet:
+
+```text
+What are the total sales for the North region?
+```
+
+The chatbot sums only North rows, ignoring blank sales cells, and responds in
+plain language, such as **"The total sales for the North region is 1,500.75."**
+That number is an illustration, not a value from your workbook. Region matching
+ignores case and surrounding spaces. Missing numeric values are not reported as
+zero, and no currency is inferred. Additional conditions outside this simple
+grammar still use the validated AI planner; they are never silently ignored.
+
+#### Create a Region_Summary worksheet
+
+With a workbook containing a **Sales** worksheet uploaded, open **Create region
+summary** in the sidebar:
+
+1. Download **original backup**. The application retains an exact original-byte
+   backup in the current session before creating an updated workbook.
+2. Check **I confirm: add Region_Summary to a copy of this workbook**.
+3. Select **Create Region_Summary**, then download the updated workbook.
+
+The `write_region_summary(content, confirmed=True)` function in `excel_support.py`
+returns `(backup_bytes, updated_workbook_bytes)`. Without explicit confirmation it
+raises an error before opening or writing a workbook. It never writes to the
+original uploaded file. The updated copy adds exactly **Region_Summary**, with
+**Region** and **Total Sales** columns. If that name already exists (ignoring case),
+the operation is refused rather than replacing or renaming any sheet.
+
+The summary uses every row of the Sales worksheet, not the 100-row query preview.
+It shares the existing sales-column selection and numeric validation rules.
+Region names ignore surrounding spaces and case; blank regions are grouped
+together with a blank label. Blank sales are ignored, but an entirely missing
+regional total stays blank rather than becoming zero. Negative sales are retained.
+Existing sheets, formula expressions, and supported formatting are retained using
+openpyxl; advanced Excel features unsupported by that library may not round-trip,
+so retain the original backup. Formulas are not evaluated. Both backup and updated
+workbook are session-local downloads, not permanent server-side backups: save them
+before closing the session.
+
+Grouped sales totals use the same full-sheet aggregation as **Region_Summary**;
+only the displayed query output is capped at 100 regions. Queries with additional
+filters or ordering outside this local grammar still use the AI planner.
+
+For more complex questions, configure the existing Azure OpenAI settings and name
+your sheet's columns, for example:
+
+```text
+What is the total Revenue by Region?
+Show Product and Stock where Stock is less than 10.
+What is the average Revenue where Date is after 2025-01-01?
+Show the top 3 Revenue records per Region.
+```
+
+The planner receives column headers/types and the question, not worksheet rows.
+Validated plans support selected columns, filters, counts, distinct counts,
+sum/average/minimum/maximum, grouping, ordering, and top-N per group. Queries run
+against a temporary in-memory SQLite database using internal column IDs and bound
+filter values, never AI-written SQL or Python. Cross-sheet joins, spreadsheet
+formulas, free-form data edits, and narrative/PDF reports for arbitrary sheets are not
+supported. Unsupported questions display a clarification rather than using the
+employee database. Results and grouped outputs are capped at 100 rows; aggregates
+use all matching rows in the selected sheet.
+
+Worksheet answers use plain-language sentences or labeled result lists, rather
+than raw CSV or SQL. **Supporting data** contains the exact result table, and
+each successful answer offers **Download Excel**. Workforce report downloads
+include a summary sheet, detailed breakdown sheets, and the report's source data;
+the existing PDF download and email controls remain available. Numeric/date
+cells keep their types and text beginning with `=` remains literal text, not an
+executable formula. Excel downloads contain the displayed query result snapshot,
+not an uncapped workbook export. Uploaded data and answer snapshots are local to
+the current Streamlit session, not imported into SQL Server or shared via a global
+cache. **New chat** clears answers but leaves the current data-source selection
+in place. Prior spreadsheet result cells are excluded from general AI chat context.
+
+#### Verify which data source is active
+
+- **Employee database** shows **Active backend: SQL Server** or **SQLite demo
+  (not SQL Server)**, plus the actual configured employee source. Select **Test
+  employee data connection** to run a read-only row count. A successful check
+  displays the count and check time; failures are shown explicitly.
+- **Excel workbook** shows the uploaded filename, selected worksheet, row/column
+  counts, and preview. Ask `count rows`, then compare a known region's total
+  against the worksheet. This does not import the workbook into SQL Server.
+- In employee mode, sales/revenue questions ask you to upload the Sales workbook
+  rather than sending the calculation to general AI chat.
+- General AI chat has a 2,000-token completion budget. If that budget is exhausted,
+  the app explicitly reports the incomplete response; it does not present a
+  partial answer as a completed calculation.
+
+For local SQL Server verification, run this read-only query in SSMS against
+`EmployeeDB` and compare its count with the connection check and chatbot:
+
+```sql
+SELECT @@SERVERNAME AS server_name, DB_NAME() AS database_name,
+       (SELECT COUNT_BIG(*) FROM dbo.Employees) AS employee_count;
+```
+
+The hosted demo intentionally uses SQLite, not a connection to your laptop's
+SQL Server. Cloud and local databases can therefore contain different data.
+After local changes, commit and push all application files (including
+`excel_support.py`) to the deployed branch. The hosted app must redeploy before
+the new **Data source** controls appear; local tests alone do not update it.
+
 ## Technology
 
 - Python
@@ -127,6 +254,7 @@ is used for readability, but extracted text and numbers should still be checked.
 | Path | Purpose |
 | --- | --- |
 | `employee_sql_chatbot.py` | Main Streamlit application |
+| `excel_support.py` | Bounded Excel parsing, worksheet schema inference, and literal-safe workbook exports |
 | `employee_dataset.xlsx` | Synthetic 150-employee sample dataset |
 | `generate_employee_dataset.py` | Recreates the sample Excel dataset |
 | `import_employees_data.py` | Creates `EmployeeDB` and imports `dbo.Employees` |
@@ -135,6 +263,7 @@ is used for readability, but extracted text and numbers should still be checked.
 | `tests/test_employee_sql_chatbot.py` | Isolated routing, report, PDF, UI, and SMTP regression tests |
 | `packages.txt` | Linux native libraries for Streamlit Community Cloud |
 | `tests/test_demo_database.py` | Real SQLite demo queries and cloud-mode UI regression tests |
+| `tests/test_excel_support.py` | Workbook validation, arbitrary-column queries, Excel exports, and source-selection regression tests |
 | `.github/workflows/tests.yml` | Windows and Linux / Python 3.14 CI workflow |
 | `docs/` | Screenshots and a sample PDF report |
 

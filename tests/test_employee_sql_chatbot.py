@@ -66,6 +66,21 @@ class WorkforceTests(unittest.TestCase):
         self.assertEqual(request.response_kind, "chart_employee_count")
         self.assertIn("GROUP BY [department]", request.sql)
 
+    def test_sales_questions_require_excel_instead_of_general_chat(self):
+        for question in (
+            "What are the total sales by region?",
+            "What are the total sales for the North region?",
+            "Show a chart of total revenue by region",
+            "What is the average sales by city?",
+        ):
+            with self.subTest(question=question), patch.object(self.chatbot, "generate_employee_query") as planner:
+                request = self.chatbot.translate_question(question)
+                self.assertEqual(request.response_kind, "query_clarification")
+                self.assertIn("Excel workbook", request.explanation)
+                self.assertFalse(request.sql)
+                planner.assert_not_called()
+        self.assertEqual(self.chatbot.translate_question("Average salary of Sales").response_kind, "column_query")
+
     def test_pasted_numbered_and_bulleted_questions_use_existing_local_routes(self):
         cases = (
             ("How many employees do we have?", "employee_count", {}),
@@ -1133,6 +1148,7 @@ class WorkforceTests(unittest.TestCase):
             choice.finish_reason = "stop"
             self.assertEqual(self.chatbot.answer_general_question("Why is that useful?", turns), "A useful metric.")
         messages = client.return_value.chat.completions.create.call_args.kwargs["messages"]
+        self.assertEqual(client.return_value.chat.completions.create.call_args.kwargs["max_completion_tokens"], 2000)
         self.assertEqual(messages[1:], [
             {"role": "user", "content": "Explain headcount"},
             {"role": "assistant", "content": "It counts employees."},
@@ -1218,7 +1234,18 @@ class WorkforceTests(unittest.TestCase):
                 app.chat_input[0].set_value(PAY_QUESTION).run(timeout=30)
                 self.assertEqual(len(app.exception), 0)
             self.assertEqual(len(app.get("plotly_chart")), 2)
-            self.assertEqual(len(app.get("download_button")), 2)
+            downloads = app.get("download_button")
+            self.assertEqual(len(downloads), 4)
+            self.assertEqual(sum(button.label == "Download Excel" for button in downloads), 2)
+            self.assertEqual(len({button.key for button in downloads}), 4)
+            exported = pd.read_excel(
+                BytesIO(app.session_state["chat_history"][0]["excel_download"]), sheet_name=None,
+            )
+            self.assertIn("Summary", exported)
+            self.assertIn("Source data", exported)
+            self.assertIn("Executive summary", exported["Summary"]["Item"].tolist())
+            pd.testing.assert_frame_equal(exported["Source data"], self.result)
+            self.assertGreater(len(exported), 2)
             self.assertEqual(len(app.text_input), 2)
             self.assertNotEqual(app.text_input[0].key, app.text_input[1].key)
             app.text_input[0].set_value("manager@example.com").run(timeout=30)
