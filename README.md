@@ -118,8 +118,9 @@ is used for readability, but extracted text and numbers should still be checked.
 
 In the sidebar, choose **Data source > Excel workbook**, upload an `.xlsx` file,
 and select a **Worksheet**. A sheet named **Sales** is selected by default when
-present; you can choose any other worksheet. The selected sheet becomes the source for new text
-and voice questions; it never replaces or writes to the employee database.
+present; you can choose any other worksheet. The selected sheet is the default
+source for new text and voice questions. Questions can explicitly name other
+worksheets in the same uploaded workbook; they never replace or write to the employee database.
 Switch back to **Employee database** to resume workforce queries. Image
 attachments continue to use the separate image-analysis workflow.
 
@@ -159,7 +160,7 @@ smaller than 10 MB (50 MB expanded), with at most 50,000 data rows and 100 colum
 per selected sheet. Empty sheets, missing/duplicate headers, encrypted files,
 and legacy `.xls` files are not supported. Formulas are not executed: only values
 last saved by Excel are read, so recalculate and save the workbook first if needed.
-Dates stored as Excel dates support date comparisons; text dates remain text.
+Use Excel date cells or unambiguous ISO text such as `2025-01-31` for date operations.
 
 Ask `count rows`, `preview`, a simple total-sales question, or
 `What are the total sales by region?` without Azure.
@@ -226,17 +227,78 @@ What is the total Revenue by Region?
 Show Product and Stock where Stock is less than 10.
 What is the average Revenue where Date is after 2025-01-01?
 Show the top 3 Revenue records per Region.
+What is the median Revenue by Region?
+Count rows where Region is North and Revenue exceeds 500.
+What percentage of total Revenue does each Region contribute?
+Show Revenue divided by Cost, or zero when Cost is zero.
+Look up each Product ID in Products and show its Product Name.
+Join Sales to Products on Product ID and total Revenue by Category.
+Pivot total Revenue with Region as rows and Product as columns.
+Show the first 3 characters of Product Code and trim Product Name.
+Total Revenue by year and month of Date.
+How many completed months are between Order Date and Delivery Date?
 ```
 
-The planner receives column headers/types and the question, not worksheet rows.
-Validated plans support selected columns, filters, counts, distinct counts,
-sum/average/minimum/maximum, grouping, ordering, and top-N per group. Queries run
-against a temporary in-memory SQLite database using internal column IDs and bound
-filter values, never AI-written SQL or Python. Cross-sheet joins, spreadsheet
-formulas, free-form data edits, and narrative/PDF reports for arbitrary sheets are not
-supported. Unsupported questions display a clarification rather than using the
-employee database. Results and grouped outputs are capped at 100 rows; aggregates
-use all matching rows in the selected sheet.
+Replace the example headers with those actually present in your workbook.
+The planner receives worksheet names, column headers/types, unavailable-sheet
+messages, and your question, **not worksheet rows or calculated results**.
+It returns a validated declarative plan executed locally using pandas, never
+AI-written SQL, Python, or `eval`. Existing selected-sheet helper callers retain
+their validated in-memory SQLite query path; new workbook chat questions use
+the workbook engine.
+
+| Operation family | Natural-language calculation support |
+| --- | --- |
+| Math and aggregation | Sum, average, minimum, maximum, numeric/date count, nonempty count, row count, distinct count, median, arithmetic, percentages |
+| Conditional aggregation | SUMIF(S), COUNTIF(S), AVERAGEIF(S)-style questions using one or several filters |
+| Logic and filtering | IF with nested conditions, AND, OR, NOT, comparisons, blank checks, membership and literal text matching |
+| Lookups and joins | Exact VLOOKUP/XLOOKUP/INDEX-MATCH-style lookups; first or last duplicate match; left, inner, right and outer joins, with up to five keys |
+| Summaries | Grouping, pivots, numeric ranking with explicit tie rules, global or per-group top/bottom N |
+| Text | LEFT, RIGHT, CONCAT, TRIM, case conversion, length; LEFT/RIGHT require a constant nonnegative character count |
+| Dates | YEAR, MONTH, DAY, date construction/comparison, UTC today, completed day/month/year differences, monthly/yearly summaries |
+
+These are **natural-language operations**, not a complete Excel formula interpreter.
+Typed formulas, approximate/wildcard lookups, external-workbook links, arbitrary
+macros/code, free-form data edits, and narrative/PDF reports for arbitrary sheets
+are unsupported. Questions that cannot be fully interpreted request clarification
+instead of silently ignoring conditions or switching to employee data.
+
+Calculations and downloaded results are read-only: calculated columns, pivots,
+and joins do not add or edit uploaded sheets. Only the separate, explicitly
+confirmed **Region_Summary** workflow creates an updated workbook copy.
+Excel formula cells still use their saved cached values; the engine does not
+recalculate existing workbook formulas.
+
+Important calculation semantics:
+
+- Numeric arithmetic/aggregations use floating-point precision; numeric text can
+  be converted for calculations. COUNT counts numeric/date cells, not numeric text
+  or booleans; conditional row counts use all matching rows. COUNTA counts non-null
+  cells. Blank checks also recognize empty/whitespace text.
+- No-match sums and counts are zero. All-missing sums and empty
+  averages/minima/maxima/medians remain unknown. Missing comparison operands do
+  not match; request a blank check to include them.
+- IF evaluates arithmetic only for the chosen rows, so it can guard division by
+  zero. Aggregate expressions inside IF still see the entire current table.
+- Text comparisons and join keys ignore case and surrounding spaces; group labels
+  retain their original text. Joins also match null keys. Duplicate join keys can
+  multiply rows; exact lookups return only the first match unless the last is requested.
+- TRIM collapses repeated ASCII spaces. Date text must be ISO-formatted, not
+  ambiguous day/month text or numeric serials. Date differences require end >= start
+  and count completed units. Timezone-aware dates are normalized to UTC.
+
+Advanced questions support at most 20 worksheets, 100,000 total input rows, and
+5 million total input cells, in addition to the per-sheet upload limits.
+Invalid unrelated sheets are identified to the planner rather than blocking
+valid-sheet calculations. Plans allow at most 20 steps, with bounded expression
+complexity. Each intermediate result is limited to 50,000 rows, 200 columns,
+and 5 million cells; joins and pivots check expansion before materialization.
+Concatenations are limited to 32,767 characters per cell and 10 million total
+output characters per operation. Oversized calculations return an actionable message,
+not truncated inputs or partial answers.
+
+Only the final displayed/downloaded output is capped at 100 rows; calculations
+use every matching source row before that cap.
 
 Worksheet answers use plain-language sentences or labeled result lists, rather
 than raw CSV or SQL. **Supporting data** contains the exact result table, and
@@ -295,6 +357,7 @@ the new **Data source** controls appear; local tests alone do not update it.
 | --- | --- |
 | `employee_sql_chatbot.py` | Main Streamlit application |
 | `excel_support.py` | Bounded Excel parsing, worksheet schema inference, and literal-safe workbook exports |
+| `workbook_operations.py` | Bounded, read-only workbook calculations, expressions, lookups, joins, rankings, and pivots |
 | `employee_dataset.xlsx` | Synthetic 150-employee sample dataset |
 | `generate_employee_dataset.py` | Recreates the sample Excel dataset |
 | `import_employees_data.py` | Creates `EmployeeDB` and imports `dbo.Employees` |
@@ -304,6 +367,7 @@ the new **Data source** controls appear; local tests alone do not update it.
 | `packages.txt` | Linux native libraries for Streamlit Community Cloud |
 | `tests/test_demo_database.py` | Real SQLite demo queries and cloud-mode UI regression tests |
 | `tests/test_excel_support.py` | Workbook validation, arbitrary-column queries, Excel exports, and source-selection regression tests |
+| `tests/test_workbook_operations.py` | Calculation semantics, cross-sheet operations, invalid plans, and expansion limits |
 | `.github/workflows/tests.yml` | Windows and Linux / Python 3.14 CI workflow |
 | `docs/` | Screenshots and a sample PDF report |
 

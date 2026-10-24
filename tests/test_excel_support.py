@@ -351,6 +351,106 @@ class ExcelChatTests(unittest.TestCase):
         result = self.ask("Show first column", plan(columns=["c0"], metrics=[]))
         self.assertEqual(result.iloc[:, 0].tolist(), ["West", "East", "West"])
 
+    def workbook_ask(self, question, query_plan, content=None):
+        self.client.chat.completions.create.return_value = SimpleNamespace(choices=[
+            SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=json.dumps(query_plan)))
+        ])
+        return self.chatbot.query_excel_workbook(question, self.frame, content or workbook_bytes(), "Sales")
+
+    def test_workbook_planner_cross_sheet_lookup_schema_only_and_plain_answer(self):
+        query = {"understood": True, "unhandled_conditions": [], "sheet": "Sales", "steps": [
+            {"op": "lookup", "sheet": "Inventory", "left_on": ["Region"], "right_on": ["Product"],
+             "columns": [{"column": "Stock", "name": "Available Stock"}]},
+            {"op": "aggregate", "metrics": [{"name": "Median Revenue", "function": "median", "column": "Revenue"}]},
+        ]}
+        with patch.object(self.chatbot, "get_engine", side_effect=AssertionError("Employee DB accessed")):
+            result = self.workbook_ask("What is the median revenue after looking up inventory?", query)
+        self.assertEqual(result.iloc[0, 0], 20)
+        self.assertIn("20", spreadsheet_answer(result))
+        prompt = self.client.chat.completions.create.call_args.kwargs["messages"][0]["content"]
+        self.assertIn("Inventory", prompt)
+        self.assertIn("Stock", prompt)
+        self.assertIn("median", prompt)
+        self.assertNotIn("Widget", prompt)
+        self.assertNotIn("West", prompt)
+        self.assertNotIn("2025-01-01", prompt)
+
+    def test_workbook_display_cap_is_after_calculation_and_unrelated_invalid_sheet_is_reported(self):
+        content = workbook_bytes({
+            "Sales": [("Region", "Revenue"), *[("North", 1) for _ in range(150)]],
+            "Bad": [("Duplicate", " duplicate "), (1, 2)],
+        })
+        self.frame = read_excel_sheet(content, "Sales")
+        result = self.workbook_ask("Sum the Revenue column", {
+            "understood": True, "unhandled_conditions": [], "sheet": "Sales",
+            "steps": [{"op": "aggregate", "metrics": [{"name": "Total", "function": "sum", "column": "Revenue"}]}],
+        }, content)
+        self.assertEqual(result.iloc[0, 0], 150)
+        prompt = self.client.chat.completions.create.call_args.kwargs["messages"][0]["content"]
+        self.assertIn('Unavailable sheets: {"Bad":', prompt)
+        result = self.workbook_ask("List Revenue", {
+            "understood": True, "unhandled_conditions": [], "sheet": "Sales",
+            "steps": [{"op": "select", "columns": ["Revenue"]}],
+        }, content)
+        self.assertEqual(len(result), 100)
+
+    def test_workbook_plan_errors_missing_configuration_and_bounds(self):
+        valid = {"understood": True, "unhandled_conditions": [], "sheet": "Sales",
+                 "steps": [{"op": "select", "columns": ["Revenue"]}]}
+        with patch.object(self.chatbot, "get_azure_openai_client", return_value=None):
+            with self.assertRaisesRegex(ValueError, "Azure OpenAI"):
+                self.chatbot.query_excel_workbook("Median Revenue", self.frame, workbook_bytes(), "Sales")
+            self.assertEqual(self.chatbot.query_excel_workbook("count rows", self.frame, workbook_bytes(), "Sales").iloc[0, 0], 3)
+        for invalid in ({}, {**valid, "unhandled_conditions": ["unsupported"]}, {**valid, "sheet": "Missing"}):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                self.workbook_ask("Unsupported workbook question", invalid)
+        for content, finish in (("not JSON", "stop"), ("{}", "length")):
+            self.client.chat.completions.create.return_value = SimpleNamespace(choices=[
+                SimpleNamespace(finish_reason=finish, message=SimpleNamespace(content=content))
+            ])
+            with self.assertRaises(ValueError):
+                self.chatbot.query_excel_workbook("Median Revenue", self.frame, workbook_bytes(), "Sales")
+        with patch.object(self.chatbot, "MAX_SHEETS", 1):
+            with self.assertRaisesRegex(ValueError, "20 worksheets"):
+                self.workbook_ask("Median Revenue", valid)
+
+    def test_workbook_advanced_ui_caches_answer_and_discards_input_snapshots(self):
+        self.chatbot.st.cache_resource.clear()
+        self.addCleanup(self.chatbot.st.cache_resource.clear)
+        upload = BytesIO(workbook_bytes())
+        upload.name = "advanced.xlsx"
+        self.client.chat.completions.create.return_value = SimpleNamespace(choices=[
+            SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=json.dumps({
+                "understood": True, "unhandled_conditions": [], "sheet": "Inventory", "steps": [
+                    {"op": "aggregate", "metrics": [{"name": "Median Stock", "function": "median", "column": "Stock"}]},
+                ],
+            })))
+        ])
+        with patch("streamlit.file_uploader", return_value=upload), patch(
+            "openai.AzureOpenAI", return_value=self.client,
+        ), patch.dict(os.environ, {
+            "AZURE_OPENAI_ENDPOINT": "https://example.test", "AZURE_OPENAI_API_KEY": "test",
+            "AZURE_OPENAI_API_VERSION": "2024-10-21",
+        }), patch.object(self.chatbot, "get_engine", side_effect=AssertionError("Employee DB accessed")):
+            app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+            app.radio(key="data_source").set_value("Excel workbook").run(timeout=30)
+            app.chat_input[0].set_value("What is the median Stock in Inventory?").run(timeout=30)
+            self.assertEqual(len(app.exception), 0)
+            self.client.chat.completions.create.assert_called_once()
+            message = app.session_state["chat_history"][0]
+            self.assertIn("result", message, message.get("error"))
+            self.assertEqual(message["result"].iloc[0, 0], 7)
+            self.assertNotIn("excel_frame", message)
+            self.assertNotIn("excel_content", message)
+            self.assertNotIn("excel_sheet", message)
+            self.assertIn("7", message["answer"])
+            self.client.chat.completions.create.reset_mock()
+            app.radio(key="data_source").set_value("Employee database").run(timeout=30)
+            self.assertEqual(len(app.exception), 0)
+            self.assertEqual(app.session_state["chat_history"][0]["result"].iloc[0, 0], 7)
+            self.client.chat.completions.create.assert_not_called()
+            self.assertEqual(len(app.get("download_button")), 1)
+
     def test_query_limits_and_unsupported_plans(self):
         self.frame = pd.concat([self.frame] * 40)
         self.assertEqual(len(self.ask("List revenue", plan(columns=["c1"], metrics=[]))), 100)
