@@ -2696,6 +2696,7 @@ def query_excel_workbook(
 ) -> pd.DataFrame:
     local = local_excel_result(question, frame)
     if local is not None:
+        local.attrs["source_sheets"] = [selected_sheet]
         return local
     client = get_azure_openai_client()
     deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT_MINI")
@@ -2789,11 +2790,14 @@ def query_excel_workbook(
     except (ValueError, TypeError) as error:
         logger.warning("Invalid workbook JSON: %s", type(error).__name__)
         raise ValueError("I couldn't interpret this workbook question. Please specify the sheets, columns, and calculation.") from error
-    return execute_workbook_plan(plan, sheets).head(MAX_ROWS).copy()
+    result = execute_workbook_plan(plan, sheets).head(MAX_ROWS).copy()
+    result.attrs["source_sheets"] = list(dict.fromkeys([
+        plan["sheet"], *[step["sheet"] for step in plan["steps"] if step["op"] in {"join", "lookup"}],
+    ]))
+    return result
 
 
 def display_excel_response(message: dict[str, Any], render_key: str) -> str | None:
-    st.caption(f"Excel source: {message['excel_source']}. Results are limited to 100 rows.")
     if "result" not in message and not message.get("error"):
         try:
             if "excel_content" in message:
@@ -2809,6 +2813,11 @@ def display_excel_response(message: dict[str, Any], render_key: str) -> str | No
             message.pop("excel_frame", None)
             message.pop("excel_content", None)
             message.pop("excel_sheet", None)
+    result = message.get("result")
+    if result is not None and result.attrs.get("source_sheets"):
+        workbook_name = message["excel_source"].rsplit(" / ", 1)[0]
+        message["excel_source"] = f"{workbook_name} / {', '.join(result.attrs['source_sheets'])}"
+    st.caption(f"Excel source: {message['excel_source']}. Results are limited to 100 rows.")
     if message.get("error"):
         st.warning(message["error"])
         return None

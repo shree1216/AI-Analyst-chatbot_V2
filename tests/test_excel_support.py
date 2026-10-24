@@ -366,6 +366,7 @@ class ExcelChatTests(unittest.TestCase):
         with patch.object(self.chatbot, "get_engine", side_effect=AssertionError("Employee DB accessed")):
             result = self.workbook_ask("What is the median revenue after looking up inventory?", query)
         self.assertEqual(result.iloc[0, 0], 20)
+        self.assertEqual(result.attrs["source_sheets"], ["Sales", "Inventory"])
         self.assertIn("20", spreadsheet_answer(result))
         prompt = self.client.chat.completions.create.call_args.kwargs["messages"][0]["content"]
         self.assertIn("Inventory", prompt)
@@ -440,6 +441,7 @@ class ExcelChatTests(unittest.TestCase):
             message = app.session_state["chat_history"][0]
             self.assertIn("result", message, message.get("error"))
             self.assertEqual(message["result"].iloc[0, 0], 7)
+            self.assertEqual(message["excel_source"], "advanced.xlsx / Inventory")
             self.assertNotIn("excel_frame", message)
             self.assertNotIn("excel_content", message)
             self.assertNotIn("excel_sheet", message)

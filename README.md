@@ -121,6 +121,7 @@ and select a **Worksheet**. A sheet named **Sales** is selected by default when
 present; you can choose any other worksheet. The selected sheet is the default
 source for new text and voice questions. Questions can explicitly name other
 worksheets in the same uploaded workbook; they never replace or write to the employee database.
+Each answer's source caption lists the worksheets actually used, including lookup/join sources.
 Switch back to **Employee database** to resume workforce queries. Image
 attachments continue to use the separate image-analysis workflow.
 
