@@ -286,12 +286,20 @@ than only a generic interpretation failure.
 
 #### Backend log file
 
-Open **Backend diagnostics** in the sidebar after asking an Excel question, then
+Open **Backend diagnostics** in the sidebar after asking an employee database or Excel question, then
 select **Download backend log**. This downloads JSON-lines text as
 `chatbot_backend.log` for this chat only. Each answer shows a request ID to match
 against UTC timestamps, elapsed milliseconds, worksheet schemas/unavailable
 sheets, automatic routing, planner status, calculation steps, row/column counts,
 export events and failures. Cached answers do not rerun or duplicate their traces.
+For SQL Server and the hosted SQLite demo, the same log records the backend,
+local planning, Azure planner requests/validation or plan-cache hits, read-query
+start/completion/failure, SQL Server reconnect retries, result dimensions, and
+Excel/PDF generation. Elapsed timestamps show where time is spent. Queries made
+during employee-name resolution are included in the same request. The connection
+test button also logs its latest check. Preparing an export is not proof that a
+user downloaded it. General conversation is identified separately and does not
+produce a database query event.
 
 The app also writes a server-side `logs/backend.log`, with 2 MB rotation and
 three backups (up to approximately 8 MB total). When running locally, this folder
@@ -307,6 +315,22 @@ Downloads retain the latest 1,000 events, with at most 200 events per request.
 server log. Hosting storage may be ephemeral; save diagnostics before restarting
 or closing the session. A server log-write failure produces a visible warning
 without discarding the calculation or downloadable in-memory trace.
+
+#### Choosing a source for automatic workbook refresh
+
+Manual browser uploads are snapshots: editing the original file does not update
+an already uploaded workbook. For a hosted app, keep the intended workbook in
+OneDrive or SharePoint and configure authenticated server access before enabling
+automatic refresh. Work/school Microsoft 365 and personal OneDrive use different
+authentication setups; do not make a private workbook publicly accessible or put
+access tokens/passwords in chat or source control. Store integration secrets in
+the hosting platform's secret settings.
+
+A laptop path, including a locally synced OneDrive path, is not accessible to
+Streamlit Cloud. It only works for an app running on that computer or a separately
+configured synchronization service. Automatic loading/refresh is not enabled by
+the logging changes; selecting the storage/account type and configuring access
+are still required. Manual upload remains available.
 
 Calculations and downloaded results are read-only: calculated columns, pivots,
 and joins do not add or edit uploaded sheets. Only the separate, explicitly

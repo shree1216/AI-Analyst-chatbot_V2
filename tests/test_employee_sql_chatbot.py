@@ -1223,6 +1223,8 @@ class WorkforceTests(unittest.TestCase):
             app.run(timeout=30)
             self.assertEqual(app.session_state["chat_history"][-1]["answer"], answer)
             app.button(key="new_chat").click().run(timeout=30)
+            self.assertEqual(len(app.code), 0)
+            self.assertFalse(app.session_state.get("employee_connection_log"))
             app.chat_input[0].set_value("do you remember what i asked you before").run(timeout=30)
             self.assertEqual(len(app.exception), 0)
             self.assertIn("no earlier messages", app.session_state["chat_history"][-1]["answer"])
@@ -1234,7 +1236,7 @@ class WorkforceTests(unittest.TestCase):
                 app.chat_input[0].set_value(PAY_QUESTION).run(timeout=30)
                 self.assertEqual(len(app.exception), 0)
             self.assertEqual(len(app.get("plotly_chart")), 2)
-            downloads = app.get("download_button")
+            downloads = [button for button in app.get("download_button") if button.label != "Download backend log"]
             self.assertEqual(len(downloads), 4)
             self.assertEqual(sum(button.label == "Download Excel" for button in downloads), 2)
             self.assertEqual(len({button.key for button in downloads}), 4)
@@ -1246,6 +1248,9 @@ class WorkforceTests(unittest.TestCase):
             self.assertIn("Executive summary", exported["Summary"]["Item"].tolist())
             pd.testing.assert_frame_equal(exported["Source data"], self.result)
             self.assertGreater(len(exported), 2)
+            events = app.session_state["chat_history"][0]["backend_log"]
+            self.assertTrue(any(event["event"] == "report_completed" for event in events))
+            self.assertTrue(any(event["event"] == "export_completed" and event.get("operation") == "pdf" for event in events))
             self.assertEqual(len(app.text_input), 2)
             self.assertNotEqual(app.text_input[0].key, app.text_input[1].key)
             app.text_input[0].set_value("manager@example.com").run(timeout=30)

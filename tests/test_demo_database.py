@@ -1,13 +1,15 @@
 import importlib
+import json
 import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pandas as pd
 from sqlalchemy.exc import SQLAlchemyError
 from streamlit.testing.v1 import AppTest
+from backend_diagnostics import BackendTrace, diagnostic_log
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -112,7 +114,8 @@ class DemoDatabaseTests(unittest.TestCase):
         app.chat_input[0].set_value("avrage salry of enginering").run(timeout=30)
         self.assertEqual(len(app.exception), 0)
         self.assertIn("couldn't identify", app.session_state["chat_history"][-1]["answer"])
-        self.assertEqual(len(app.code), 0)
+        self.assertEqual(len(app.code), 1)
+        self.assertNotIn("filter_", app.code[0].value)
         self.assertFalse(any("filter_" in caption.value or "department =" in caption.value for caption in app.caption))
 
     def test_compound_salary_count_excludes_boundary_males_and_missing_values(self):
@@ -243,6 +246,11 @@ class DemoDatabaseTests(unittest.TestCase):
         app.chat_input[0].set_value("How many employees do we have?").run(timeout=30)
         self.assertEqual(len(app.exception), 0)
         self.assertIn(f"{len(self.employees)} employees", app.session_state["chat_history"][0]["answer"])
+        first = app.session_state["chat_history"][0]
+        first_events = list(first["backend_log"])
+        self.assertEqual(first_events[0]["backend"], "sqlite_demo")
+        self.assertTrue(any(event["event"] == "query_completed" and event["rows"] == 1 for event in first_events))
+        self.assertTrue(any(event["event"] == "export_completed" for event in first_events))
         app.chat_input[0].set_value("How many female employees have a salary above 80000?").run(timeout=30)
         expected = ((self.employees["Gender"].str.lower() == "female") & (self.employees["Salary"] > 80000)).sum()
         self.assertEqual(len(app.exception), 0)
@@ -254,7 +262,13 @@ class DemoDatabaseTests(unittest.TestCase):
         expected = (pd.to_datetime(self.employees["Joining Date"]).dt.year == 2023).sum()
         self.assertEqual(app.session_state["chat_history"][2]["answer"], f"Employee count: {expected}.")
         self.assertFalse(any("join date" in caption.value or "gender =" in caption.value for caption in app.caption))
-        self.assertEqual(len(app.code), 0)
+        self.assertEqual(len(app.code), 1)
+        self.assertEqual(app.session_state["chat_history"][0]["backend_log"], first_events)
+        events = [json.loads(line) for line in app.code[0].value.splitlines()]
+        self.assertEqual(len({event["request_id"] for event in events}), 3)
+        self.assertNotIn("80000", app.code[0].value)
+        self.assertNotIn("SELECT", app.code[0].value)
+        self.assertTrue(any(button.label == "Download backend log" for button in app.get("download_button")))
 
     def test_backend_status_and_connection_check_show_real_demo_count(self):
         app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
@@ -262,6 +276,8 @@ class DemoDatabaseTests(unittest.TestCase):
         app.button(key="test_employee_connection").click().run(timeout=30)
         self.assertEqual(len(app.exception), 0)
         self.assertTrue(any(f"{len(self.employees):,} employee rows" in status.value for status in app.success))
+        self.assertEqual(app.session_state["employee_connection_log"][0]["route"], "connection_check")
+        self.assertEqual(app.session_state["employee_connection_log"][-1]["event"], "request_completed")
         app.run(timeout=30)
         self.assertTrue(any("Verified SQLite demo" in status.value for status in app.success))
         with patch("pandas.read_sql", side_effect=SQLAlchemyError("private connection details")):
@@ -270,6 +286,75 @@ class DemoDatabaseTests(unittest.TestCase):
         self.assertTrue(any("Could not connect" in status.value for status in app.error))
         self.assertFalse(any("private connection details" in status.value for status in app.error))
         self.assertFalse(any("Verified" in status.value for status in app.success))
+        self.assertTrue(any(event["event"] == "query_failed" for event in app.session_state["employee_connection_log"]))
+        self.assertNotIn("private connection details", app.code[0].value)
+
+    def test_sql_server_trace_retries_without_logging_sql_parameters_or_cells(self):
+        events = []
+        token = self.chatbot.SQL_TRACE.set(BackendTrace(events))
+        self.addCleanup(self.chatbot.SQL_TRACE.reset, token)
+        with patch.object(self.chatbot, "DATA_MODE", "sqlserver"), patch.object(
+            self.chatbot, "get_engine", return_value=self.engine,
+        ) as get_engine, patch("pandas.read_sql", side_effect=[
+            SQLAlchemyError("PRIVATE_CONNECTION_STRING"),
+            pd.DataFrame({"private_column": ["PRIVATE_RESULT"]}),
+        ]) as read:
+            result = self.chatbot.run_query("SELECT :private_literal", {"private_literal": "PRIVATE_PARAMETER"})
+        self.assertEqual(result.iloc[0, 0], "PRIVATE_RESULT")
+        self.assertEqual(read.call_count, 2)
+        get_engine.clear.assert_called_once()
+        self.assertEqual([event["event"] for event in events], ["query_started", "query_retry", "query_completed"])
+        self.assertEqual(events[0]["backend"], "sql_server")
+        log = diagnostic_log(events)
+        for secret in ("PRIVATE_CONNECTION_STRING", "PRIVATE_RESULT", "PRIVATE_PARAMETER", "SELECT", "private_literal"):
+            self.assertNotIn(secret, log)
+
+    def test_sql_failure_is_friendly_traced_and_context_is_reset(self):
+        message = {"question": "How many employees?", "request": None, "pending_query": True}
+        with patch("pandas.read_sql", side_effect=SQLAlchemyError("PRIVATE_CONNECTION_STRING")), patch.object(
+            self.chatbot, "get_employee_names", return_value=(),
+        ):
+            self.assertIsNone(self.chatbot.display_employee_message(message, "failed"))
+        self.assertIsNone(self.chatbot.SQL_TRACE.get())
+        self.assertTrue(any(event["event"] == "query_failed" for event in message["backend_log"]))
+        self.assertEqual(message["backend_log"][-1]["event"], "request_failed")
+        self.assertNotIn("PRIVATE_CONNECTION_STRING", diagnostic_log(message["backend_log"]))
+
+    def test_sql_ai_plan_cache_rejection_and_logging_failure_are_explicit(self):
+        events = []
+        trace = BackendTrace(events)
+        token = self.chatbot.SQL_TRACE.set(trace)
+        self.addCleanup(self.chatbot.SQL_TRACE.reset, token)
+        self.chatbot.st.session_state["employee_query_plan_cache"] = {}
+        plan = {
+            "understood": True, "unhandled_conditions": [], "columns": [],
+            "metrics": [{"function": "count", "column": "*"}],
+            "filter": {"column": "name", "op": "eq", "value": "PRIVATE_NAME"},
+            "group_by": [], "order_by": [], "limit": 100,
+        }
+        choice = Mock(finish_reason="stop")
+        choice.message.content = json.dumps(plan)
+        client = Mock()
+        client.chat.completions.create.return_value.choices = [choice]
+        with patch.dict(os.environ, {"AZURE_OPENAI_DEPLOYMENT_MINI": "test"}), patch.object(
+            self.chatbot, "get_azure_openai_client", return_value=client,
+        ):
+            for _ in range(2):
+                self.assertTrue(self.chatbot.generate_employee_query("How many employees named PRIVATE_NAME?").sql)
+            self.assertEqual(client.chat.completions.create.call_count, 1)
+            choice.message.content = '{"understood": false, "unhandled_conditions": ["PRIVATE_REASON"]}'
+            self.assertIsNone(self.chatbot.generate_employee_query("Unsupported PRIVATE_QUESTION"))
+        self.assertEqual([event["event"] for event in events], [
+            "planner_requested", "planner_completed", "cache_hit", "planner_requested", "planner_rejected",
+        ])
+        for secret in ("PRIVATE_NAME", "PRIVATE_REASON", "PRIVATE_QUESTION"):
+            self.assertNotIn(secret, diagnostic_log(events))
+        message = {"question": "How many employees?", "request": None, "pending_query": True}
+        with patch("backend_diagnostics.backend_logger", side_effect=OSError("PRIVATE_PATH")):
+            self.assertIsNotNone(self.chatbot.display_employee_message(message, "log_failure"))
+        self.assertIn("could not be saved", message["backend_log_error"])
+        self.assertEqual(message["backend_log"][-1]["event"], "request_completed")
+        self.assertNotIn("PRIVATE_PATH", diagnostic_log(message["backend_log"]))
 
     def test_cloud_voice_controls_enable_when_speech_settings_are_present(self):
         with patch.dict(os.environ, {"AZURE_SPEECH_KEY": "test-key", "AZURE_SPEECH_REGION": "eastus"}):

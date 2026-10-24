@@ -15,7 +15,7 @@ LOGGER_LOCK = Lock()
 LOG_FIELDS = {
     "route", "sheet", "source_sheets", "unavailable_sheets", "rows", "columns",
     "schemas", "operation", "step", "status", "error_type", "reason_count",
-    "workbook_id", "preview_rows",
+    "workbook_id", "preview_rows", "backend",
 }
 
 

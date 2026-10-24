@@ -1,4 +1,5 @@
 import base64
+from contextvars import ContextVar
 from datetime import datetime
 from email.message import EmailMessage
 from io import BytesIO
@@ -50,6 +51,7 @@ from backend_diagnostics import BackendTrace, diagnostic_log
 
 
 logger = logging.getLogger(__name__)
+SQL_TRACE: ContextVar[BackendTrace | None] = ContextVar("employee_backend_trace", default=None)
 load_dotenv(Path(__file__).with_name(".env"), override=False)
 
 DATA_MODE = os.getenv("WORKFORCE_DATA_MODE", "sqlserver").strip().lower()
@@ -1102,18 +1104,32 @@ def get_demo_query_lock() -> Lock:
 
 
 def run_query(sql: str, parameters: dict[str, Any] | None = None) -> pd.DataFrame:
-    if DATA_MODE == "demo":
-        # StaticPool shares one SQLite connection across all Streamlit sessions.
-        with get_demo_query_lock():
-            with get_engine().connect() as connection:
-                return pd.read_sql(text(sql), connection, params=parameters or {})
+    trace = SQL_TRACE.get()
+    if trace:
+        trace.record("query_started", backend="sqlite_demo" if DATA_MODE == "demo" else "sql_server", operation="read")
     try:
-        with get_engine().connect() as connection:
-            return pd.read_sql(text(sql), connection, params=parameters or {})
-    except SQLAlchemyError:
-        get_engine.clear()
-        with get_engine().connect() as connection:
-            return pd.read_sql(text(sql), connection, params=parameters or {})
+        if DATA_MODE == "demo":
+            # StaticPool shares one SQLite connection across all Streamlit sessions.
+            with get_demo_query_lock():
+                with get_engine().connect() as connection:
+                    result = pd.read_sql(text(sql), connection, params=parameters or {})
+        else:
+            try:
+                with get_engine().connect() as connection:
+                    result = pd.read_sql(text(sql), connection, params=parameters or {})
+            except SQLAlchemyError as error:
+                if trace:
+                    trace.record("query_retry", error_type=type(error).__name__, status="reconnecting")
+                get_engine.clear()
+                with get_engine().connect() as connection:
+                    result = pd.read_sql(text(sql), connection, params=parameters or {})
+    except SQLAlchemyError as error:
+        if trace:
+            trace.record("query_failed", error_type=type(error).__name__, status="failed")
+        raise
+    if trace:
+        trace.record("query_completed", rows=len(result), columns=len(result.columns), status="success")
+    return result
 
 
 @st.cache_resource
@@ -1311,14 +1327,22 @@ def ai_service_error_message(error: APIConnectionError | APIStatusError) -> str:
 
 
 def generate_employee_query(question: str) -> SqlRequest | None:
+    trace = SQL_TRACE.get()
+
     def unavailable(message: str, reason: str) -> SqlRequest:
         logger.warning("Employee query planner unavailable: %s", reason)
+        if trace:
+            trace.record("planner_failed", route="azure_employee", status=reason)
         return SqlRequest("", {}, message + " No employee query was run.", response_kind="query_clarification")
 
     plan_cache = st.session_state.setdefault("employee_query_plan_cache", {})
     cache_key = (os.getenv("AZURE_OPENAI_ENDPOINT"), os.getenv("AZURE_OPENAI_DEPLOYMENT_MINI"), question.strip())
     if cache_key in plan_cache:
+        if trace:
+            trace.record("cache_hit", route="azure_employee", status="validated_plan")
         return compile_employee_plan(plan_cache[cache_key])
+    if trace:
+        trace.record("planner_requested", route="azure_employee")
     client = get_azure_openai_client()
     deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT_MINI")
     if client is None or not deployment:
@@ -1378,6 +1402,8 @@ def generate_employee_query(question: str) -> SqlRequest | None:
         if isinstance(plan, dict) and (
             plan.get("understood") is False or plan.get("unhandled_conditions")
         ):
+            if trace:
+                trace.record("planner_rejected", route="azure_employee", status="unsupported_conditions")
             return None
         if (
             isinstance(plan, dict)
@@ -1386,6 +1412,8 @@ def generate_employee_query(question: str) -> SqlRequest | None:
             and re.search(r"\bcount\b|\bnumber of\b|\bhow many\b", question.lower())
             and not is_simple_employee_count(question.lower())
         ):
+            if trace:
+                trace.record("planner_rejected", route="azure_employee", status="missing_count_conditions")
             return None
         request = compile_employee_plan(plan)
     except (ValueError, TypeError):
@@ -1393,6 +1421,8 @@ def generate_employee_query(question: str) -> SqlRequest | None:
     if len(plan_cache) >= 64:
         plan_cache.pop(next(iter(plan_cache)))
     plan_cache[cache_key] = plan
+    if trace:
+        trace.record("planner_completed", route="azure_employee", status="validated")
     return request
 
 
@@ -3018,7 +3048,12 @@ def display_excel_download(
     tables: list[tuple[str, pd.DataFrame]], render_key: str, cache: dict[str, Any],
 ) -> None:
     if "excel_download" not in cache:
+        trace = SQL_TRACE.get()
+        if trace:
+            trace.record("export_started", operation="excel", rows=sum(len(table) for _, table in tables))
         cache["excel_download"] = generate_excel_download(tables)
+        if trace:
+            trace.record("export_completed", operation="excel", rows=sum(len(table) for _, table in tables))
     st.download_button(
         "Download Excel", data=cache["excel_download"], file_name="workforce_results.xlsx",
         mime=EXCEL_MIME, key=f"download_excel_{render_key}", icon=":material/download:",
@@ -3053,7 +3088,12 @@ def display_business_report(
         cache.pop("pdf_report", None)
         cache["report_layout_version"] = 4
     if "business_report" not in cache:
+        trace = SQL_TRACE.get()
+        if trace:
+            trace.record("report_started", operation="business_report", rows=len(result))
         cache["business_report"] = build_business_report(question, result)
+        if trace:
+            trace.record("report_completed", operation="business_report")
     report = cache["business_report"]
     chart = create_report_chart(report)
     st.markdown(
@@ -3112,7 +3152,12 @@ def display_business_report(
         (question + result.to_csv(index=False, lineterminator="\n")).encode("utf-8")
     ).hexdigest()[:12]
     if "pdf_report" not in cache:
+        trace = SQL_TRACE.get()
+        if trace:
+            trace.record("export_started", operation="pdf")
         cache["pdf_report"] = generate_business_report_pdf(question, report, chart)
+        if trace:
+            trace.record("export_completed", operation="pdf")
     pdf_report = cache["pdf_report"]
     st.download_button(
         "Download PDF report",
@@ -3169,6 +3214,8 @@ def display_response(
         except SQLAlchemyError:
             st.error("Employee data is temporarily unavailable. Please try again in a moment.")
             return None
+    elif (trace := SQL_TRACE.get()) is not None:
+        trace.record("cache_hit", status="previous_result")
     result = cache["result"]
     if request.response_kind == "business_report":
         return display_business_report(question or "Workforce business report", result, render_key, cache)
@@ -3226,6 +3273,52 @@ def display_chat_response(
         st.write(answer)
         return answer
     return display_response(request, question, render_key, response_cache)
+
+
+def display_employee_message(
+    message: dict[str, Any], render_key: str, prior_turns: tuple[tuple[str, str], ...] = (),
+) -> str | None:
+    tracing = not message.get("backend_log") or not message.get("answer") or message.get("pending_query", False)
+    trace = BackendTrace(message.setdefault("backend_log", [])) if tracing else None
+    if trace:
+        message["request_id"] = trace.request_id
+        trace.record("request_started", route="employee", backend="sqlite_demo" if DATA_MODE == "demo" else "sql_server")
+    token = SQL_TRACE.set(trace)
+    completed = False
+    try:
+        if message.pop("pending_query", False):
+            if trace:
+                trace.record("planning_started", route="local_employee")
+            message["request"] = translate_question(message["question"])
+            if trace:
+                request = message["request"]
+                trace.record("planning_completed", status=(
+                    "read_query" if request and request.sql else
+                    request.response_kind if request else "general_conversation"
+                ))
+        if message["request"] is None and message.get("answer"):
+            if trace:
+                trace.record("cache_hit", status="previous_answer")
+            answer = message["answer"]
+            st.write(answer)
+        else:
+            answer = display_chat_response(
+                message["request"], message["question"], render_key, prior_turns, response_cache=message,
+            )
+        if answer:
+            message["answer"] = answer
+        completed = answer is not None
+        return answer
+    finally:
+        SQL_TRACE.reset(token)
+        if trace:
+            trace.record("request_completed" if completed else "request_failed",
+                         status="success" if completed else "failed")
+            if trace.file_error:
+                message["backend_log_error"] = trace.file_error
+        st.caption(f"Backend request ID: {message['request_id']}. Download the backend log from the sidebar.")
+        if message.get("backend_log_error"):
+            st.warning(message["backend_log_error"])
 
 
 st.set_page_config(
@@ -3943,6 +4036,8 @@ with st.sidebar:
     if st.button("New chat", key="new_chat", use_container_width=True):
         history.clear()
         st.session_state.pop("employee_query_plan_cache", None)
+        st.session_state.pop("employee_connection_log", None)
+        st.session_state.pop("employee_connection_log_error", None)
         st.rerun()
 
     data_source = st.radio("Data source", ["Employee database", "Excel workbook"], key="data_source")
@@ -3953,6 +4048,15 @@ with st.sidebar:
         st.caption(f"Active backend: {backend}")
         st.caption(f"Employee source: {SOURCE_LABEL}")
         if st.button("Test employee data connection", key="test_employee_connection"):
+            connection_trace = BackendTrace([])
+            st.session_state["employee_connection_log"] = connection_trace.events
+            st.session_state.pop("employee_connection_log_error", None)
+            connection_trace.record(
+                "request_started", route="connection_check",
+                backend="sqlite_demo" if DATA_MODE == "demo" else "sql_server",
+            )
+            connection_token = SQL_TRACE.set(connection_trace)
+            connection_ok = False
             try:
                 check = run_query(f"SELECT COUNT(*) AS employee_count FROM {TABLE}")
             except SQLAlchemyError as error:
@@ -3968,6 +4072,17 @@ with st.sidebar:
                     "mode": DATA_MODE, "count": int(check.iloc[0, 0]),
                     "checked_at": datetime.now().strftime("%H:%M:%S"),
                 }
+                connection_ok = True
+            finally:
+                SQL_TRACE.reset(connection_token)
+                connection_trace.record(
+                    "request_completed" if connection_ok else "request_failed",
+                    status="success" if connection_ok else "failed",
+                )
+                if connection_trace.file_error:
+                    st.session_state["employee_connection_log_error"] = connection_trace.file_error
+        if st.session_state.get("employee_connection_log_error"):
+            st.warning(st.session_state["employee_connection_log_error"])
         connection_status = st.session_state.get("employee_connection_status")
         if connection_status and connection_status["mode"] == DATA_MODE:
             if connection_status.get("error"):
@@ -4249,19 +4364,7 @@ for index, message in enumerate(history):
                 st.markdown(answer)
         else:
             with st.spinner("Thinking..."):
-                if message.pop("pending_query", False):
-                    message["request"] = translate_question(message["question"])
-                if message["request"] is None and message.get("answer"):
-                    answer = message["answer"]
-                    st.write(answer)
-                else:
-                    answer = display_chat_response(
-                        message["request"], message["question"], str(index),
-                        conversation_context(history[:index]),
-                        response_cache=message,
-                    )
-                if answer:
-                    message["answer"] = answer
+                answer = display_employee_message(message, str(index), conversation_context(history[:index]))
         if read_answers_aloud and answer:
             audio_response = synthesize_speech(answer)
             if audio_response:
@@ -4272,12 +4375,17 @@ for index, message in enumerate(history):
         ):
             render_copy_response(answer, str(index))
 
-backend_events = [event for message in history for event in message.get("backend_log", [])][-1000:]
+backend_events = sorted(
+    [event for message in history for event in message.get("backend_log", [])]
+    + st.session_state.get("employee_connection_log", []),
+    key=lambda event: event["timestamp"],
+)[-1000:]
 with st.sidebar.expander("Backend diagnostics"):
     if backend_events:
         st.caption(
-            "Excel routing, worksheet schemas, processing steps, row counts and failures. "
-            "No question text, cell values, query literals or credentials are recorded. "
+            "SQL Server / SQLite planning, queries and exports; Excel routing, worksheet schemas, "
+            "processing steps, row counts and failures. "
+            "Question text, cell values, raw SQL, query literals and connection secrets are excluded. "
             "The server also writes rotating logs to logs/backend.log."
         )
         session_log = diagnostic_log(backend_events)
@@ -4287,4 +4395,4 @@ with st.sidebar.expander("Backend diagnostics"):
         )
         st.code(session_log, language="json")
     else:
-        st.caption("Ask a worksheet question to create a diagnostic trace.")
+        st.caption("Ask an employee database or worksheet question to create a diagnostic trace.")
