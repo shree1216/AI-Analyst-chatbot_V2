@@ -2399,6 +2399,16 @@ def parse_workbook_command(question: str) -> tuple[str, str | None] | None:
     return None
 
 
+def resolve_workbook_sheet(target: str, sheet_names: list[str]) -> str | None:
+    literal = target.strip().strip("\"'")
+    without_suffix = re.sub(r"\s+(?:worksheet|sheet)$", "", literal, flags=re.IGNORECASE).strip().strip("\"'")
+    for candidate in (literal, without_suffix):
+        match = next((name for name in sheet_names if name.casefold() == candidate.casefold()), None)
+        if match is not None:
+            return match
+    return None
+
+
 def conversation_context(messages: list[dict[str, Any]]) -> tuple[tuple[str, str], ...]:
     turns = []
     for message in messages[-6:]:
@@ -3845,9 +3855,7 @@ if submitted_question:
             pending_action = {"action": "open"}
             command_answer = "Upload an Excel workbook first, then ask me to open a worksheet."
         else:
-            selected_sheet = next(
-                (name for name in cached_workbook["sheets"] if name.casefold() == (target or "").casefold()), None,
-            )
+            selected_sheet = resolve_workbook_sheet(target or "", cached_workbook["sheets"])
             if selected_sheet is None:
                 pending_action = None
                 command_answer = (

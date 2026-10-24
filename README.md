@@ -133,6 +133,13 @@ You can also control the workbook from the message box:
 | `close Excel` | Unloads the active workbook and switches to employee database mode |
 | `what's the last question?` | Recalls the last non-command question in this chat |
 
+Worksheet commands accept both word orders: `open worksheet products`,
+`open products worksheet`, and `open products sheet` all select **products**.
+Quotes and case differences are accepted. A literal sheet name is matched first,
+so a worksheet actually named **products worksheet** remains selectable without
+being confused with **products**. Unknown names list the available worksheets
+without changing the current selection.
+
 These prompts work without Azure, including when the selected workbook has
 invalid headers or no file is loaded. Opening a worksheet does not bypass workbook
 validation. Switching data sources retains the active upload so `open Sales` can

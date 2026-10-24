@@ -625,6 +625,40 @@ class ExcelChatTests(unittest.TestCase):
             {"kind": "recall", "question": "whats the last question?"},
         ]))
 
+    def test_open_products_worksheet_accepts_suffix_and_prefix_forms(self):
+        upload = BytesIO(workbook_bytes({
+            "products": [("Product", "Stock"), ("Widget", 7)],
+            "Sales": [("Region", "Sales"), ("North", 100)],
+            "staff": [("Name", "Role"), ("Asha", "Analyst")],
+        }))
+        upload.name = "command-forms.xlsx"
+        with patch("streamlit.file_uploader", return_value=upload):
+            app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+            app.chat_input[0].set_value("open Excel").run(timeout=30)
+            for question, expected in (
+                ("open worksheet staff", "staff"),
+                ("open products worksheet", "products"),
+                ("open Sales sheet", "Sales"),
+                ('please open the "products" worksheet', "products"),
+                ("switch to STAFF worksheet", "staff"),
+            ):
+                with self.subTest(question=question):
+                    app.chat_input[0].set_value(question).run(timeout=30)
+                    self.assertEqual(len(app.exception), 0)
+                    self.assertEqual(app.selectbox[0].value, expected)
+                    self.assertIn(f"Selected worksheet {expected}", app.session_state["chat_history"][-1]["answer"])
+            app.chat_input[0].set_value("open Missing worksheet").run(timeout=30)
+            self.assertIn("Available worksheets: products, Sales, staff", app.session_state["chat_history"][-1]["answer"])
+            self.assertEqual(app.selectbox[0].value, "staff")
+
+    def test_sheet_resolution_prefers_literal_names_before_optional_suffixes(self):
+        resolve = self.chatbot.resolve_workbook_sheet
+        self.assertEqual(resolve("products worksheet", ["products", "products worksheet"]), "products worksheet")
+        self.assertEqual(resolve("Products WORKSHEET", ["products"]), "products")
+        self.assertEqual(resolve('products" worksheet', ["products"]), "products")
+        self.assertEqual(resolve("Sales sheet", ["Sales"]), "Sales")
+        self.assertIsNone(resolve("Missing worksheet", ["products", "Sales", "staff"]))
+
 
 if __name__ == "__main__":
     unittest.main()
