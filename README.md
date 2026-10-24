@@ -162,6 +162,12 @@ per selected sheet. Empty sheets, missing/duplicate headers, encrypted files,
 and legacy `.xls` files are not supported. Formulas are not executed: only values
 last saved by Excel are read, so recalculate and save the workbook first if needed.
 Use Excel date cells or unambiguous ISO text such as `2025-01-31` for date operations.
+Empty trailing header cells created only by formatting are ignored; populated
+cells without headers are still rejected. Loading errors identify the worksheet
+and affected cells (for example `A1` and `B1` for repeated headers). The same
+specific error appears in chat, not a generic request to upload an already
+uploaded file. Correct genuine header problems in Excel, save, and upload again;
+the chatbot does not silently rename columns or modify your original workbook.
 
 Ask `count rows`, `preview`, a simple total-sales question, or
 `What are the total sales by region?` without Azure.
@@ -217,7 +223,8 @@ details. An upload has already been copied into memory, so it does not need acce
 to the original local file after uploading.
 
 Grouped sales totals use the same full-sheet aggregation as **Region_Summary**;
-only the displayed query output is capped at 100 regions. Queries with additional
+only the chat/table preview is capped at 100 regions; downloads include every result
+region. Queries with additional
 filters or ordering outside this local grammar still use the AI planner.
 
 For more complex questions, configure the existing Azure OpenAI settings and name
@@ -298,17 +305,24 @@ Concatenations are limited to 32,767 characters per cell and 10 million total
 output characters per operation. Oversized calculations return an actionable message,
 not truncated inputs or partial answers.
 
-Only the final displayed/downloaded output is capped at 100 rows; calculations
-use every matching source row before that cap.
+Only the chat answer and supporting-data preview are capped at 100 rows.
+**Download Excel includes all matching result rows**, up to the existing
+50,000-row result safety limit, including rows beyond the preview. If the question
+requests top/bottom N or a specific row limit, that requested limit still applies.
+The caption shows preview and total result counts; calculations use every
+matching source row. Downloads use streaming workbook generation to avoid keeping
+a second full workbook cell grid in memory. Previously cached answers retain
+their original snapshots; ask the question again to generate a complete new download.
 
 Worksheet answers use plain-language sentences or labeled result lists, rather
-than raw CSV or SQL. **Supporting data** contains the exact result table, and
+than raw CSV or SQL. **Supporting data** contains the first 100 result rows, and
 each successful answer offers **Download Excel**. Workforce report downloads
 include a summary sheet, detailed breakdown sheets, and the report's source data;
 the existing PDF download and email controls remain available. Numeric/date
 cells keep their types and text beginning with `=` remains literal text, not an
-executable formula. Excel downloads contain the displayed query result snapshot,
-not an uncapped workbook export. Uploaded data and answer snapshots are local to
+executable formula. Workbook-question downloads contain the full calculated result
+snapshot, not just the displayed preview or a copy of every source worksheet.
+Employee database query limits are unchanged. Uploaded data and answer snapshots are local to
 the current Streamlit session, not imported into SQL Server or shared via a global
 cache. **New chat** clears answers but leaves the current data-source selection
 in place. Prior spreadsheet result cells are excluded from general AI chat context.

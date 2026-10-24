@@ -96,6 +96,31 @@ class ExcelFileTests(unittest.TestCase):
         ]})
         self.assertEqual(read_excel_sheet(content, "Data").shape, (1, 100))
 
+    def test_trailing_empty_formatted_header_cells_do_not_invalidate_data(self):
+        content = workbook_bytes({"products": [
+            ("Product ID", "Product Name"), (1, "Widget"), (2, "Service"),
+        ]})
+        workbook = load_workbook(BytesIO(content))
+        workbook["products"]["Z1"].font = Font(bold=True)
+        output = BytesIO()
+        workbook.save(output)
+        workbook.close()
+        frame = read_excel_sheet(output.getvalue(), "products")
+        self.assertEqual(frame.to_dict("list"), {"Product ID": [1, 2], "Product Name": ["Widget", "Service"]})
+
+    def test_header_errors_identify_cells_without_renaming_or_discarding_data(self):
+        for rows, cells in (
+            ([(None, "Revenue"), ("North", 1)], ["A1"]),
+            ([("ID", " id "), (1, 2)], ["A1", "B1"]),
+            ([("ID",), (1, "unlabelled")], ["B2"]),
+        ):
+            with self.subTest(rows=rows):
+                with self.assertRaises(ValueError) as caught:
+                    read_excel_sheet(workbook_bytes({"products": rows}), "products")
+                for cell in cells:
+                    self.assertIn(cell, str(caught.exception))
+                self.assertIn("products", str(caught.exception))
+
     def test_exports_preserve_numbers_dates_and_literal_formulas(self):
         frame = pd.DataFrame({
             "=Header": ["=1+1", "+cmd", "-cmd", "@SUM(A1)", "https://example.com", "00123"],
@@ -117,6 +142,24 @@ class ExcelFileTests(unittest.TestCase):
         self.assertEqual(load_workbook(BytesIO(exported)).active["C2"].value.year, 2025)
         workbook.close()
 
+    def test_full_size_export_preserves_last_row_and_timezone_dates(self):
+        frame = pd.DataFrame({"ID": range(1, 50_001), "Label": ["=1+1"] * 50_000})
+        content = generate_excel_download([("Complete results", frame)])
+        workbook = load_workbook(BytesIO(content), read_only=True)
+        rows = workbook.active.iter_rows(values_only=True)
+        self.assertEqual(next(rows), ("ID", "Label"))
+        count = 0
+        last = None
+        for last in rows:
+            count += 1
+        self.assertEqual(count, 50_000)
+        self.assertEqual(last, (50_000, "=1+1"))
+        workbook.close()
+        dates = pd.DataFrame({"Date": pd.to_datetime(["2025-01-01T10:30:00Z", None])})
+        workbook = load_workbook(BytesIO(generate_excel_download([("Dates", dates)])))
+        self.assertEqual(workbook.active["A2"].value, pd.Timestamp("2025-01-01T10:30:00").to_pydatetime())
+        self.assertIsNone(workbook.active["A3"].value)
+        workbook.close()
     def test_sales_totals_variants_preserve_filters_and_missing_values(self):
         frame = pd.DataFrame({"Region": ["North", "North", "South"], "Revenue": [10.125, -2, None]})
         for question in (
@@ -393,7 +436,59 @@ class ExcelChatTests(unittest.TestCase):
             "understood": True, "unhandled_conditions": [], "sheet": "Sales",
             "steps": [{"op": "select", "columns": ["Revenue"]}],
         }, content)
-        self.assertEqual(len(result), 100)
+        self.assertEqual(len(result), 150)
+
+    def test_workbook_local_results_are_complete_while_legacy_preview_stays_capped(self):
+        frame = pd.DataFrame({"Region": [f"Region {index}" for index in range(151)], "Sales": [1] * 151})
+        for question in ("show all data", "total sales by region"):
+            with self.subTest(question=question):
+                result = self.chatbot.query_excel_workbook(question, frame, workbook_bytes(), "Sales")
+                self.assertEqual(len(result), 151)
+                self.assertEqual(len(self.chatbot.query_excel_sheet(question, frame)), 100)
+        self.client.chat.completions.create.assert_not_called()
+
+    def test_ui_full_excel_download_keeps_chat_and_table_at_100_rows(self):
+        upload = BytesIO(workbook_bytes({"products": [
+            ("Product ID", "Product Name"), *[(index, f"Product {index}") for index in range(1, 152)],
+        ]}))
+        upload.name = "complete.xlsx"
+        with patch("streamlit.file_uploader", return_value=upload):
+            app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+            app.radio(key="data_source").set_value("Excel workbook").run(timeout=30)
+            app.chat_input[0].set_value("show all data").run(timeout=30)
+            self.assertEqual(len(app.exception), 0)
+            message = app.session_state["chat_history"][0]
+            self.assertEqual(len(message["result"]), 151)
+            self.assertEqual(sorted(len(item.value) for item in app.dataframe), [10, 100])
+            exported = pd.read_excel(BytesIO(message["excel_download"]))
+            self.assertEqual(len(exported), 151)
+            self.assertEqual(exported["Product ID"].iloc[-1], 151)
+            self.assertIn("first 100 of 151", message["answer"])
+            self.assertNotIn("Product Name: Product 101", message["answer"])
+            app.run(timeout=30)
+            self.assertEqual(app.session_state["chat_history"][0]["excel_download"], message["excel_download"])
+
+    def test_ui_chat_preserves_actual_worksheet_loading_error_and_recovers_on_valid_sheet(self):
+        upload = BytesIO(workbook_bytes({
+            "products": [("Product ID", " product id "), (1, 2)],
+            "Valid": [("Product ID", "Product Name"), (1, "Widget")],
+        }))
+        upload.name = "headers.xlsx"
+        with patch("streamlit.file_uploader", return_value=upload):
+            app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+            app.radio(key="data_source").set_value("Excel workbook").run(timeout=30)
+            app.chat_input[0].set_value("count rows").run(timeout=30)
+            self.assertEqual(len(app.exception), 0)
+            message = app.session_state["chat_history"][0]
+            self.assertIn("headers must be unique", message["error"])
+            self.assertIn("A1", message["error"])
+            self.assertIn("B1", message["error"])
+            self.assertEqual(message["excel_source"], "headers.xlsx / products")
+            self.assertFalse(any("Results are limited to 100 rows" in item.value for item in app.caption))
+            app.selectbox[0].select("Valid").run(timeout=30)
+            app.chat_input[0].set_value("count rows").run(timeout=30)
+            self.assertEqual(len(app.exception), 0)
+            self.assertEqual(app.session_state["chat_history"][1]["result"].iloc[0, 0], 1)
 
     def test_workbook_plan_errors_missing_configuration_and_bounds(self):
         valid = {"understood": True, "unhandled_conditions": [], "sheet": "Sales",

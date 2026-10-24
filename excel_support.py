@@ -1,3 +1,4 @@
+from collections import Counter
 from datetime import date, datetime
 from io import BytesIO
 import math
@@ -8,6 +9,9 @@ from zipfile import BadZipFile, ZipFile
 from xml.etree.ElementTree import ParseError
 
 from openpyxl import Workbook, load_workbook
+from openpyxl.cell import WriteOnlyCell
+from openpyxl.styles import Font
+from openpyxl.utils.cell import get_column_letter
 from openpyxl.utils.exceptions import InvalidFileException
 from openpyxl.worksheet.worksheet import Worksheet
 import pandas as pd
@@ -90,18 +94,35 @@ def read_excel_sheet(content: bytes | str | Path, sheet: str) -> pd.DataFrame:
         worksheet = workbook[sheet]
         worksheet.reset_dimensions()
         rows = worksheet.iter_rows(values_only=True)
-        header = next(rows, ())
+        header = list(next(rows, ()))
+        while header and header[-1] is None:
+            header.pop()
         if not header or len(header) > MAX_EXCEL_COLUMNS:
-            raise ValueError("Use a header row with 1 to 100 columns.")
+            raise ValueError(f"Worksheet '{sheet}': use a header row with 1 to 100 columns in row 1.")
         if any(not isinstance(value, str) or not value.strip() for value in header):
-            raise ValueError("Every column needs a nonempty text header in the first row.")
+            cells = [f"{get_column_letter(index + 1)}1" for index, value in enumerate(header)
+                     if not isinstance(value, str) or not value.strip()]
+            raise ValueError(
+                f"Worksheet '{sheet}': every column needs a nonempty text header in the first row. "
+                f"Check {', '.join(cells)}. Put the actual column headings in row 1, save, and upload again."
+            )
         columns = [value.strip() for value in header]
-        if len({value.casefold() for value in columns}) != len(columns):
-            raise ValueError("Column headers must be unique (ignoring case and surrounding spaces).")
+        counts = Counter(value.casefold() for value in columns)
+        if len(counts) != len(columns):
+            cells = [f"{get_column_letter(index + 1)}1" for index, value in enumerate(columns)
+                     if counts[value.casefold()] > 1]
+            raise ValueError(
+                f"Worksheet '{sheet}': column headers must be unique (ignoring case and surrounding spaces). "
+                f"Repeated headers are at {', '.join(cells)}. Give them distinct names, save, and upload again."
+            )
         values = []
-        for row in rows:
+        for row_number, row in enumerate(rows, start=2):
             if len(row) > len(columns) and any(value is not None for value in row[len(columns):]):
-                raise ValueError("Some cells have no column header.")
+                column = next(index for index, value in enumerate(row, start=1) if index > len(columns) and value is not None)
+                raise ValueError(
+                    f"Worksheet '{sheet}': some cells have no column header, for example "
+                    f"{get_column_letter(column)}{row_number}. Add a distinct text header in row 1, save, and upload again."
+                )
             if len(values) >= MAX_EXCEL_ROWS:
                 raise ValueError("A worksheet can contain at most 50,000 data rows.")
             values.append(tuple(row[:len(columns)]) + (None,) * max(0, len(columns) - len(row)))
@@ -298,7 +319,8 @@ def spreadsheet_answer(result: pd.DataFrame) -> str:
 def generate_excel_download(tables: list[tuple[str, pd.DataFrame]]) -> bytes:
     output = BytesIO()
     used_names = set()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+    workbook = Workbook(write_only=True)
+    try:
         for title, table in tables:
             base = re.sub(r"[\[\]:*?/\\]", "_", title).strip("'")[:31] or "Sheet"
             name = base
@@ -308,13 +330,35 @@ def generate_excel_download(tables: list[tuple[str, pd.DataFrame]]) -> bytes:
                 name = base[:31 - len(tail)] + tail
                 suffix += 1
             used_names.add(name.casefold())
-            exported = table.copy()
-            for column in exported:
-                if isinstance(exported[column].dtype, pd.DatetimeTZDtype):
-                    exported[column] = exported[column].dt.tz_localize(None)
-            exported.to_excel(writer, sheet_name=name, index=False)
-            worksheet = writer.sheets[name]
+            worksheet = workbook.create_sheet(name)
             worksheet.freeze_panes = "A2"
-            worksheet.auto_filter.ref = worksheet.dimensions
-            _literal_excel_text(worksheet)
+            worksheet.auto_filter.ref = f"A1:{get_column_letter(max(1, len(table.columns)))}{len(table) + 1}"
+            headers = []
+            for column in table.columns:
+                cell = WriteOnlyCell(worksheet, value=str(column))
+                cell.data_type = "s"
+                cell.font = Font(bold=True)
+                headers.append(cell)
+            worksheet.append(headers)
+            for row in table.itertuples(index=False, name=None):
+                cells = []
+                for value in row:
+                    if isinstance(value, (list, dict)):
+                        value = str(value)
+                    if pd.isna(value):
+                        value = None
+                    elif isinstance(value, datetime) and value.tzinfo is not None:
+                        value = value.replace(tzinfo=None)
+                    elif isinstance(value, Real) and not math.isfinite(value):
+                        value = str(value)
+                    cell = WriteOnlyCell(worksheet, value=value)
+                    if isinstance(value, str):
+                        cell.data_type = "s"
+                    cells.append(cell)
+                worksheet.append(cells)
+        if not tables:
+            raise ValueError("Choose at least one result table to download.")
+        workbook.save(output)
+    finally:
+        workbook.close()
     return output.getvalue()

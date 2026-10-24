@@ -2616,17 +2616,17 @@ def local_excel_result(question: str, frame: pd.DataFrame) -> pd.DataFrame | Non
     if normalized in {"how many rows", "how many rows are there", "count rows", "row count"}:
         return pd.DataFrame({"row_count": [len(frame)]})
     if normalized in {"preview", "show data", "show all data", "show rows"}:
-        return frame.head(MAX_ROWS).copy()
+        return frame.copy()
     sales_total = query_sales_total(question, frame)
     if sales_total is not None:
-        return sales_total.head(MAX_ROWS).copy()
+        return sales_total.copy()
     return None
 
 
 def query_excel_sheet(question: str, frame: pd.DataFrame) -> pd.DataFrame:
     local = local_excel_result(question, frame)
     if local is not None:
-        return local
+        return local.head(MAX_ROWS).copy()
     data, schema, names = spreadsheet_schema(frame)
     client = get_azure_openai_client()
     deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT_MINI")
@@ -2770,7 +2770,9 @@ def query_excel_workbook(
         "Percentages use multiply(divide(value,sum(column)),100), calculated BEFORE limiting/sorting if appropriate. "
         "Monthly/yearly summaries: calculate year/month columns, then aggregate. Top/bottom N per group: "
         "rank method first within group, filter rank<=N, then sort. Global top/bottom: sort then limit. "
-        "Select only requested output columns after calculations. All source rows participate before final display cap of 100. "
+        "Select only requested output columns after calculations. All matching result rows are retained for download "
+        "(up to 50,000); only the chat/table preview shows 100. Never add a limit just for display: "
+        "use limit only when the question explicitly requests a row count or top/bottom N. "
         "No-match sums/counts are zero; all-missing sums and empty averages/min/max/medians are unknown/null. "
         "Group labels retain their original text. Numeric calculations use floating-point Excel-style precision."
     )
@@ -2790,7 +2792,7 @@ def query_excel_workbook(
     except (ValueError, TypeError) as error:
         logger.warning("Invalid workbook JSON: %s", type(error).__name__)
         raise ValueError("I couldn't interpret this workbook question. Please specify the sheets, columns, and calculation.") from error
-    result = execute_workbook_plan(plan, sheets).head(MAX_ROWS).copy()
+    result = execute_workbook_plan(plan, sheets)
     result.attrs["source_sheets"] = list(dict.fromkeys([
         plan["sheet"], *[step["sheet"] for step in plan["steps"] if step["op"] in {"join", "lookup"}],
     ]))
@@ -2817,15 +2819,25 @@ def display_excel_response(message: dict[str, Any], render_key: str) -> str | No
     if result is not None and result.attrs.get("source_sheets"):
         workbook_name = message["excel_source"].rsplit(" / ", 1)[0]
         message["excel_source"] = f"{workbook_name} / {', '.join(result.attrs['source_sheets'])}"
-    st.caption(f"Excel source: {message['excel_source']}. Results are limited to 100 rows.")
+    st.caption(f"Excel source: {message['excel_source']}.")
     if message.get("error"):
         st.warning(message["error"])
         return None
     result = message["result"]
-    answer = spreadsheet_answer(result)
+    preview = result.head(MAX_ROWS)
+    st.caption(
+        f"Showing {len(preview):,} of {len(result):,} result rows. "
+        "Download Excel includes all result rows. Calculations use all matching source rows."
+    )
+    answer = spreadsheet_answer(preview)
+    if len(result) > MAX_ROWS:
+        answer += (
+            f"\n\nShowing the first {MAX_ROWS:,} of {len(result):,} result rows. "
+            f"Download Excel includes all {len(result):,} rows."
+        )
     st.write(answer)
     with st.expander("Supporting data"):
-        st.dataframe(result, hide_index=True, width="stretch")
+        st.dataframe(preview, hide_index=True, width="stretch")
     display_excel_download([("Results", result)], render_key, message)
     return answer
 
@@ -3732,6 +3744,7 @@ voice_recorder_version = st.session_state.setdefault("voice_recorder_version", 0
 excel_frame = None
 excel_source = None
 excel_selected = False
+excel_load_error = "Upload a valid Excel workbook and choose a worksheet before asking a question."
 
 
 def clear_excel_workbook() -> None:
@@ -3806,6 +3819,7 @@ with st.sidebar:
         if upload is not None or (remembered_workbook and remembered_workbook.get("content") is not None):
             content = upload.getvalue() if upload is not None else remembered_workbook["content"]
             file_name = upload.name if upload is not None else remembered_workbook["file_name"]
+            excel_source = file_name
             digest = sha256(content).hexdigest()
             try:
                 workbook_cache = st.session_state.get("excel_workbook")
@@ -3827,6 +3841,7 @@ with st.sidebar:
                     "Worksheet", sheet_names, index=default_sheet,
                     key=f"excel_sheet_{digest}_{workbook_cache.get('sheet_widget_version', 0)}",
                 )
+                excel_source = f"{file_name} / {sheet}"
                 if workbook_cache.get("sheet") != sheet:
                     workbook_cache["frame"] = read_excel_sheet(content, sheet)
                     workbook_cache["sheet"] = sheet
@@ -3885,6 +3900,7 @@ with st.sidebar:
                         "worksheet. To create Region_Summary, add a Sales sheet and upload the file again."
                     )
             except ValueError as error:
+                excel_load_error = str(error)
                 st.warning(str(error))
         else:
             st.session_state.pop("excel_workbook", None)
@@ -3999,8 +4015,8 @@ if submitted_question:
         if excel_frame is None:
             history.append({
                 "kind": "excel", "question": submitted_question,
-                "excel_source": "No valid worksheet loaded",
-                "error": "Upload a valid Excel workbook and choose a worksheet before asking a question.",
+                "excel_source": excel_source or "No workbook uploaded",
+                "error": excel_load_error,
             })
         else:
             history.append({
