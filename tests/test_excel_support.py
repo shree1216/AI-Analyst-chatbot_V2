@@ -552,6 +552,7 @@ class ExcelChatTests(unittest.TestCase):
             app.chat_input[0].set_value("open Inventory").run(timeout=30)
             self.assertEqual(len(app.exception), 0)
             self.assertEqual(app.selectbox[0].value, "Inventory")
+            self.assertEqual(app.selectbox[0].proto.default, 1)
             app.chat_input[0].set_value("count rows").run(timeout=30)
             self.assertEqual(app.session_state["chat_history"][-1]["result"].iloc[0, 0], 1)
             app.chat_input[0].set_value("what's the last question?").run(timeout=30)

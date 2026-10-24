@@ -3588,7 +3588,8 @@ if workbook_action:
     elif workbook_action["action"] == "sheet":
         workbook = st.session_state.get("excel_workbook")
         if workbook is not None:
-            st.session_state[f"excel_sheet_{workbook['digest']}"] = workbook_action["sheet"]
+            workbook["requested_sheet"] = workbook_action["sheet"]
+            workbook["sheet_widget_version"] = workbook.get("sheet_widget_version", 0) + 1
 voice_recording = None
 voice_enabled = speech_is_configured()
 read_answers_aloud = False
@@ -3684,10 +3685,12 @@ with st.sidebar:
                 default_sheet = next(
                     (index for index, name in enumerate(sheet_names) if name.casefold() == "sales"), 0,
                 )
+                requested_sheet = workbook_cache.pop("requested_sheet", workbook_cache.get("sheet"))
+                if requested_sheet in sheet_names:
+                    default_sheet = sheet_names.index(requested_sheet)
                 sheet = st.selectbox(
-                    "Worksheet", sheet_names,
-                    index=default_sheet if f"excel_sheet_{digest}" not in st.session_state else None,
-                    key=f"excel_sheet_{digest}",
+                    "Worksheet", sheet_names, index=default_sheet,
+                    key=f"excel_sheet_{digest}_{workbook_cache.get('sheet_widget_version', 0)}",
                 )
                 if workbook_cache.get("sheet") != sheet:
                     workbook_cache["frame"] = read_excel_sheet(content, sheet)
