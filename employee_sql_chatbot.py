@@ -3396,6 +3396,9 @@ def display_employee_message(
 def display_automatic_message(
     message: dict[str, Any], render_key: str, prior_turns: tuple[tuple[str, str], ...] = (),
 ) -> str | None:
+    if message.get("employee_report"):
+        return display_employee_message(message, render_key, prior_turns)
+    sql_only = message.get("sql_only", False)
     if "answer" not in message and "error" not in message:
         trace = BackendTrace(message.setdefault("backend_log", []))
         message["request_id"] = trace.request_id
@@ -3413,6 +3416,13 @@ def display_automatic_message(
             sources = {}
             unavailable = []
             requested_kinds = requested_source_kinds(message["question"])
+            if sql_only:
+                if "excel" in requested_kinds:
+                    raise ValueError(
+                        "Employee database mode uses SQL tables only. "
+                        "Choose Automatic (SQL + Excel) to combine SQL and Excel, or Excel workbook for Excel only."
+                    )
+                requested_kinds = {"sql"}
             if requested_kinds != {"excel"}:
                 try:
                     with get_demo_query_lock() if DATA_MODE == "demo" else nullcontext():
@@ -3423,11 +3433,11 @@ def display_automatic_message(
                     trace.record("schema_discovery_failed", route="sql", error_type=type(error).__name__, status="unavailable")
                     unavailable.append("SQL is unavailable. SQL actual values cannot be queried or compared.")
             content = message.get("workbook_content")
-            if content is not None and requested_kinds != {"sql"}:
+            if content is not None and not sql_only and requested_kinds != {"sql"}:
                 excel_sources, excel_unavailable = discover_excel_sources(content, trace)
                 sources.update(excel_sources)
                 unavailable.extend(excel_unavailable)
-            elif content is None:
+            elif content is None and not sql_only:
                 unavailable.append("No Excel workbook is uploaded. Excel targets, budgets and lookups are unavailable.")
             message["source_warnings"] = [
                 item for item in unavailable if not item.startswith("No Excel workbook")
@@ -3440,7 +3450,11 @@ def display_automatic_message(
                     messages=[
                         {"role": "system", "content": source_planner_prompt(sources, unavailable)
                          + (f" The user explicitly requested these source kinds: {sorted(requested_kinds)}."
-                            if requested_kinds else "")},
+                            if requested_kinds else "")
+                         + (" Employee database mode covers every discovered SQL table, not only Employees. "
+                            "Use a data plan for questions about these tables or their columns; "
+                            "do not substitute SQL instructions or a general conversation answer."
+                            if sql_only else "")},
                         {"role": "user", "content": message["question"]},
                     ],
                 )
@@ -3465,6 +3479,21 @@ def display_automatic_message(
                                      else "Specify the SQL table, Excel worksheet, and matching keys needed for this question.")
                 message["answer"] = answer_general_question(message["question"], prior_turns)
             else:
+                selected_sql = plan["sql"]
+                if sql_only and isinstance(selected_sql, list) and len(selected_sql) == 1 and plan["excel"] == []:
+                    selection = selected_sql[0]
+                    source_id = selection.get("source") if isinstance(selection, dict) else None
+                    source = sources.get(source_id) if isinstance(source_id, str) else None
+                    if source is not None and source.label.casefold() in {"dbo.employees", "main.employees"}:
+                        report_request = translate_known_question(message["question"])
+                        if report_request is not None and report_request.response_kind in {
+                            "business_report", "chart_employee_count", "chart_average_salary",
+                            "chart_salary_distribution",
+                        }:
+                            message["employee_report"] = True
+                            message["request"] = report_request
+                            message.pop("pending_query", None)
+                            return display_employee_message(message, render_key, prior_turns)
                 result, labels = execute_source_plan(
                     plan, sources,
                     lambda query, schema, table: compile_data_plan(
@@ -3520,7 +3549,7 @@ def display_automatic_message(
         ):
             for key in ("error", "answer", "result", "excel_download", "source_labels", "source_warnings"):
                 message.pop(key, None)
-            workbook = st.session_state.get("excel_workbook")
+            workbook = None if sql_only else st.session_state.get("excel_workbook")
             message["workbook_content"] = workbook.get("content") if workbook else None
             st.rerun()
         return None
@@ -4513,7 +4542,8 @@ if submitted_question:
             })
     else:
         history.append(
-            {"question": submitted_question, "request": None, "pending_query": True}
+            {"kind": "database", "sql_only": True, "question": submitted_question,
+             "request": None, "pending_query": True}
         )
 
 if image_uploads or submitted_question:
@@ -4541,9 +4571,22 @@ for index, message in enumerate(history):
                 answer = display_excel_response(message, str(index))
             if answer:
                 message["answer"] = answer
-        elif message.get("kind") == "automatic":
+        elif message.get("kind") in {"automatic", "database"}:
             with st.spinner("Selecting sources and calculating..."):
-                answer = display_automatic_message(message, str(index), conversation_context(history[:index]))
+                if message.get("kind") == "database" and (
+                    message.get("legacy_employee") or (
+                        "answer" not in message and "error" not in message and (
+                            not all(os.getenv(setting) for setting in (
+                                "AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_API_KEY",
+                                "AZURE_OPENAI_API_VERSION", "AZURE_OPENAI_DEPLOYMENT_MINI",
+                            ))
+                        )
+                    )
+                ):
+                    message["legacy_employee"] = True
+                    answer = display_employee_message(message, str(index), conversation_context(history[:index]))
+                else:
+                    answer = display_automatic_message(message, str(index), conversation_context(history[:index]))
         elif message.get("kind") == "image":
             answer = message.get("answer")
             if message.get("error"):

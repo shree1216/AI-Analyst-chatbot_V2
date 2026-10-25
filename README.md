@@ -183,8 +183,18 @@ mixing a new query planner with a cached older diagnostics schema, which previou
 caused valid questions to fail with a backend-log field restriction message.
 Unchanged reruns keep the same modules; schema privacy checks are not disabled.
 
-The existing **Employee database** and **Excel workbook** modes remain available
-for explicit single-source workflows, including supported questions without AI.
+**Employee database** uses the configured SQL database, including **all visible
+user tables**, not only `dbo.Employees`. With Azure OpenAI configured, it discovers
+the live schemas and safely plans SQL-only queries, so questions such as
+`What is the average price in sql_products?` and
+`How many distinct products exist in sql_products?` query that table directly.
+Uploaded Excel data is not inspected or used in this mode; choose **Automatic
+(SQL + Excel)** for cross-source comparisons. Employee reports and charts retain
+their existing rendering and downloads. Without AI configuration, the existing
+supported employee-only questions remain available locally.
+
+**Excel workbook** remains the explicit Excel-only workflow, including supported
+questions without AI.
 Workbook `open`/`close` commands retain Automatic mode when it is active.
 
 ### Excel workbooks

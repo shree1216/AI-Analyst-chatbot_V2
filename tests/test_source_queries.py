@@ -11,6 +11,7 @@ import pandas as pd
 from sqlalchemy import Numeric, String, create_engine, text
 from sqlalchemy.dialects.mssql import MONEY, SMALLMONEY, dialect
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.pool import StaticPool
 from streamlit.testing.v1 import AppTest
 
 from backend_diagnostics import BackendTrace, diagnostic_log
@@ -464,6 +465,94 @@ class SourceQueryTests(unittest.TestCase):
         self.assertEqual(len(message["result"]), 4)
         self.assertEqual(message["source_labels"], ["EXCEL: Targets"])
         self.assertTrue(message["source_warnings"])
+
+    def test_database_mode_queries_both_tables_without_using_uploaded_excel(self):
+        engine = create_engine(
+            "sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False},
+        )
+        self.addCleanup(engine.dispose)
+        with engine.begin() as connection:
+            pd.DataFrame({
+                "code": ["A", "B", "C", "D"], "product": ["One", "Two", "Three", "Four"],
+                "price": [10, 20, 30, 40],
+            }).to_sql("sql_products", connection, index=False)
+        plans = [
+            data_plan(sql=[{"source": "sql_1", "query": query(
+                columns=[], metrics=[{"function": "avg", "column": "price"}],
+            )}]),
+            data_plan(sql=[{"source": "sql_1", "query": query(
+                columns=[], metrics=[{"function": "count_distinct", "column": "product"}],
+            )}]),
+            data_plan(sql=[{"source": "sql_0", "query": query(
+                columns=[], metrics=[{"function": "count", "column": "*"}],
+            )}]),
+            data_plan(sql=[{"source": "sql_0", "query": query(columns=["Department", "Salary"])}]),
+        ]
+        client = Mock()
+        client.chat.completions.create.side_effect = [
+            SimpleNamespace(choices=[
+                SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=json.dumps(plan))),
+            ]) for plan in plans
+        ]
+        environment = {
+            "AZURE_OPENAI_ENDPOINT": "https://unit-test.invalid", "AZURE_OPENAI_API_KEY": "test-only",
+            "AZURE_OPENAI_API_VERSION": "2024-02-01", "AZURE_OPENAI_DEPLOYMENT_MINI": "test",
+            "WORKFORCE_DATA_MODE": "demo",
+        }
+        self.chatbot.st.cache_resource.clear()
+        self.addCleanup(self.chatbot.st.cache_resource.clear)
+        with patch.dict(os.environ, environment), patch("openai.AzureOpenAI", return_value=client), patch(
+            "sqlalchemy.create_engine", return_value=engine,
+        ), patch("source_queries.discover_excel_sources", side_effect=AssertionError("Unexpected Excel discovery")), patch(
+            "streamlit.file_uploader", return_value=None,
+        ):
+            app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+            app.radio(key="data_source").set_value("Employee database").run(timeout=30)
+            app.session_state["excel_workbook"] = {"content": workbook_bytes()}
+            for question, expected, source in (
+                ("What is the average price in sql_products?", 25, "sql_products"),
+                ("How many distinct products exist in sql_products?", 4, "sql_products"),
+                ("How many employees?", 150, "Employees"),
+            ):
+                app.chat_input[0].set_value(question).run(timeout=30)
+                self.assertEqual(len(app.exception), 0)
+                message = app.session_state["chat_history"][-1]
+                self.assertEqual(message["kind"], "database")
+                self.assertNotIn("error", message)
+                self.assertEqual(message["result"].iloc[0, 0], expected)
+                self.assertEqual(message["source_labels"], [f"SQL: main.{source}"])
+                self.assertNotIn("EXCEL", " ".join(message["source_labels"]))
+                self.assertTrue(any(event["event"] == "query_completed" for event in message["backend_log"]))
+                self.assertIn("excel_download", message)
+            app.chat_input[0].set_value("Create a PDF report comparing department pay").run(timeout=30)
+            self.assertEqual(len(app.exception), 0)
+            report_message = app.session_state["chat_history"][-1]
+            self.assertTrue(report_message["employee_report"])
+            self.assertEqual(report_message["request"].response_kind, "business_report")
+            self.assertIn("business_report", report_message)
+            app.run(timeout=30)
+            self.assertEqual(client.chat.completions.create.call_count, 4)
+
+    def test_database_mode_rejects_excel_plans_without_reading_either_source(self):
+        client = Mock()
+        client.chat.completions.create.return_value = SimpleNamespace(choices=[
+            SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=json.dumps(
+                data_plan(excel=["excel_0"]),
+            ))),
+        ])
+        with patch.dict(os.environ, {"AZURE_OPENAI_DEPLOYMENT_MINI": "test"}), patch.object(
+            self.chatbot, "get_azure_openai_client", return_value=client,
+        ), patch.object(self.chatbot, "get_engine", return_value=self.engine), patch.object(
+            self.chatbot, "discover_excel_sources", side_effect=AssertionError("Unexpected Excel discovery"),
+        ), patch.object(self.chatbot, "run_query", side_effect=AssertionError("Unexpected SQL read")):
+            message = {
+                "kind": "database", "sql_only": True, "question": "Show the targets",
+                "workbook_content": workbook_bytes(),
+            }
+            self.chatbot.display_automatic_message(message, "database_wrong_source")
+        self.assertIn("error", message)
+        self.assertNotIn("answer", message)
+        self.assertEqual(message["backend_log"][-1]["event"], "request_failed")
 
     def test_ambiguous_question_and_sql_outage_do_not_run_a_substitute_query(self):
         client = Mock()
