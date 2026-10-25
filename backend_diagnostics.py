@@ -36,6 +36,7 @@ PLAN_FIELDS = {
     "all", "any", "group_by", "order_by", "limit", "per_group", "limit_per_group",
     "where", "function", "args", "column", "name", "expression", "by", "direction",
     "left_on", "right_on", "how", "keep", "count", "method", "index", "values",
+    "mode", "sql", "excel", "calculation", "query", "source",
 }
 
 

@@ -3441,7 +3441,7 @@ def display_automatic_message(
                 raise ValueError("The AI returned an invalid source-selection plan. Please try again.") from error
             if not isinstance(plan, dict) or set(plan) != {"mode", "message", "sql", "excel", "calculation"}:
                 raise ValueError("The source-selection plan has unexpected fields. Please rephrase the question.")
-            trace.record("planner_received", route="automatic", status="validating")
+            trace.record("planner_received", route="automatic", status="validating", plan=plan)
             if plan["mode"] in {"conversation", "clarification"}:
                 if plan["sql"] != [] or plan["excel"] != [] or plan["calculation"] is not None:
                     raise ValueError("A conversation or clarification must not select or query data sources.")
