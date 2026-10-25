@@ -210,6 +210,25 @@ source(s) from the question and available schemas.
 Requests such as **using both sources**, **all data sources**, or **combine the
 sources** explicitly require SQL and Excel, even if neither technology is named.
 Explicit exclusions still apply; **both SQL sources** means SQL tables only.
+Explicit input-source requests override an incompatible sidebar mode: a request
+for **both sources** from Excel workbook mode still uses the shared SQL + Excel
+planner. Existing messages routed to the wrong restricted mode are retried using
+the uploaded workbook. Selecting Excel as an export format does not request Excel
+as an input source.
+
+Recorded transaction amounts are the default for sales totals. The planner does
+not ask users to choose between `amount`, quantity-times-price, and catalog prices
+when a recorded amount is available. Repeated summary/rank columns are not summed
+as transactions. For regional sales using both sources, a relevant SQL product
+catalog can enrich/validate Excel sales on code; catalog keys must be unique at
+the join grain so transactions are neither multiplied nor silently dropped.
+Staff/employee questions use available staff columns and verified IDs or exact
+normalized names; different ID namespaces are not assumed to identify the same person.
+
+If the planner asks a routine clarification despite available sources, one internal
+recheck applies these defaults before requesting user input. This shares the same
+two-plan budget as validation repair, not an additional retry loop. Genuine missing
+fields, unavailable sources, and absent relationships remain explicit errors.
 
 Cross-source joins now verify actual key overlap, not just compatible column
 names. Shared IDs/codes are preferred; exact text keys ignore case and outer

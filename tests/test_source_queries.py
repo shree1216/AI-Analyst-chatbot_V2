@@ -157,6 +157,23 @@ class SourceQueryTests(unittest.TestCase):
             with self.subTest(question=question):
                 self.assertEqual(requested_source_kinds(question), expected)
 
+    def test_explicit_sources_override_incompatible_sidebar_modes(self):
+        for question, selected, expected in (
+            ("Give total sales by region by using both sources", "excel", "automatic"),
+            ("Join SQL products with Excel sales", "sql", "automatic"),
+            ("Get products from SQL only", "excel", "automatic"),
+            ("Get staff from Excel only", "sql", "automatic"),
+            ("Use both workbook sources", "excel", "excel"),
+            ("Use both SQL sources", "sql", "sql"),
+            ("Total sales by region", "excel", "excel"),
+            ("Count staff", "automatic", "automatic"),
+            ("Export employee details to Excel", "sql", "sql"),
+            ("Create an Excel report for SQL employees", "sql", "sql"),
+            ("Export sales from Excel to Excel", "sql", "automatic"),
+        ):
+            with self.subTest(question=question, selected=selected):
+                self.assertEqual(self.chatbot.source_mode_for_question(question, selected), expected)
+
     def test_explicit_sql_excel_or_both_cannot_be_silently_replaced_with_other_sources(self):
         for plan, required in (
             (data_plan(excel=["excel_0"]), {"sql"}),
@@ -406,6 +423,75 @@ class SourceQueryTests(unittest.TestCase):
         self.assertEqual(
             next(event for event in self.events if event["event"] == "sources_selected")["route"], "combined",
         )
+
+    def test_sales_products_and_staff_combine_without_duplicate_sales_or_guessed_ids(self):
+        with self.engine.begin() as connection:
+            pd.DataFrame({"code": ["A", "A", "B"], "product": ["One", "One", "Two"]}).to_sql(
+                "sql_products", connection, index=False,
+            )
+            pd.DataFrame({"Employee ID": ["E1", "E2"], "Name": ["Asha", "Ben"],
+                          "Department": ["Sales", "Operations"]}).to_sql("StaffDirectory", connection, index=False)
+        sql_sources, _ = discover_sql_sources(self.engine, self.trace)
+        catalog = next(key for key, source in sql_sources.items() if source.label.endswith(".sql_products"))
+        directory = next(key for key, source in sql_sources.items() if source.label.endswith(".StaffDirectory"))
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            pd.DataFrame({"code": ["A", "B", "X"], "product": ["One", "Two", "Other"], "price": [50, 60, 70]}).to_excel(
+                writer, sheet_name="products", index=False,
+            )
+            pd.DataFrame({
+                "Code": ["A", "A", "B", "X"], "Region": ["North", "North", "South", "West"],
+                "Salesperson": [" ASHA ", "Asha", "BEN", "Ben"], "amount": [10, 20, 5, 8],
+                "Quantity": [100, 100, 100, 100], "price": [50, 50, 60, 70], "Total Sales": [9999] * 4,
+            }).to_excel(writer, sheet_name="Sales", index=False)
+            pd.DataFrame({"Name": ["Asha", "Ben"], "Staff ID": ["S1", "S2"]}).to_excel(
+                writer, sheet_name="staff", index=False,
+            )
+        excel_sources, _ = discover_excel_sources(output.getvalue(), self.trace)
+        sources = {**sql_sources, **excel_sources}
+        proposed = data_plan(
+            sql=[{"source": catalog, "query": query(
+                columns=["code"], group_by=["code"], metrics=[{"function": "min", "column": "product", "name": "Product"}],
+            )}], excel=["excel_1"],
+            calculation={"understood": True, "unhandled_conditions": [], "sheet": "excel_1", "steps": [
+                {"op": "join", "sheet": catalog, "left_on": ["Code"], "right_on": ["code"], "how": "left",
+                 "columns": [{"column": "code", "name": "SQL Code"}, {"column": "Product", "name": "SQL Product"}]},
+                {"op": "aggregate", "group_by": ["Region"], "metrics": [
+                    {"name": "Total Sales", "function": "sum", "column": "amount"},
+                ]},
+            ]},
+        )
+        result, labels = execute_source_plan(
+            proposed, sources, self.compiler, self.read, self.trace, required_kinds={"sql", "excel"},
+        )
+        self.assertEqual(result.to_dict("list"), {
+            "Region": ["North", "South", "West"], "Total Sales": [30, 5, 8],
+        })
+        self.assertEqual(result.attrs["source_matches"][0]["unmatched_rows"], 1)
+        self.assertEqual(len(labels), 2)
+        proposed["sql"] = [{"source": directory, "query": query(columns=["Employee ID", "Name", "Department"])}]
+        proposed["excel"] = ["excel_1", "excel_2"]
+        proposed["calculation"]["steps"] = [
+            {"op": "join", "sheet": "excel_2", "left_on": ["Salesperson"], "right_on": ["Name"], "how": "left",
+             "columns": [{"column": "Staff ID", "name": "Staff ID"}, {"column": "Name", "name": "Staff Name"}]},
+            {"op": "join", "sheet": directory, "left_on": ["Staff Name"], "right_on": ["Name"], "how": "left",
+             "columns": [{"column": "Employee ID", "name": "Employee ID"}, {"column": "Department", "name": "Department"}]},
+            {"op": "aggregate", "group_by": ["Staff Name", "Staff ID", "Employee ID", "Department"], "metrics": [
+                {"name": "Total Sales", "function": "sum", "column": "amount"},
+            ]},
+        ]
+        result, labels = execute_source_plan(
+            proposed, sources, self.compiler, self.read, self.trace, required_kinds={"sql", "excel"},
+        )
+        self.assertEqual(result.to_dict("list"), {
+            "Staff Name": ["Asha", "Ben"], "Staff ID": ["S1", "S2"], "Employee ID": ["E1", "E2"],
+            "Department": ["Sales", "Operations"], "Total Sales": [30, 13],
+        })
+        self.assertEqual(len(labels), 3)
+        prompt = source_planner_prompt(sources, [])
+        self.assertIn("recorded row-level amount", prompt)
+        self.assertIn("different ID namespaces", prompt)
+        self.assertIn("one row per code", prompt)
 
     def test_sql_table_joins_grouping_text_metrics_and_having(self):
         with self.engine.begin() as connection:
@@ -778,6 +864,60 @@ class SourceQueryTests(unittest.TestCase):
             self.assertNotIn("excel_workbook", app.session_state)
             self.assertEqual(client.chat.completions.create.call_count, 1)
 
+    def test_explicit_both_sources_works_from_excel_database_and_previous_failed_messages(self):
+        employees = pd.read_excel(ROOT / "employee_dataset.xlsx")
+        budgets = employees.groupby("Department")["Salary"].sum().reset_index(name="Budget")
+        budgets["Budget"] += 1000
+        output = BytesIO()
+        budgets.to_excel(output, sheet_name="Targets", index=False)
+        proposed = self.combined_plan()
+        proposed["sql"][0]["source"] = "sql_0"
+        proposed["sql"][0]["query"]["metrics"] = [{"function": "sum", "column": "Salary"}]
+        proposed["calculation"]["sheet"] = "sql_0"
+        proposed["calculation"]["steps"][1]["columns"][0]["expression"]["args"][0]["column"] = "sum_Salary"
+        environment = {
+            "AZURE_OPENAI_ENDPOINT": "https://unit-test.invalid", "AZURE_OPENAI_API_KEY": "test-only",
+            "AZURE_OPENAI_API_VERSION": "2024-02-01", "AZURE_OPENAI_DEPLOYMENT_MINI": "test",
+            "WORKFORCE_DATA_MODE": "demo",
+        }
+        for selected_mode, previous_failure in (
+            ("Excel workbook", False), ("Employee database", False), ("Excel workbook", True),
+        ):
+            client = Mock()
+            client.chat.completions.create.return_value = SimpleNamespace(choices=[
+                SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=json.dumps(proposed))),
+            ])
+            upload = BytesIO(output.getvalue())
+            upload.name = "targets.xlsx"
+            self.chatbot.st.cache_resource.clear()
+            self.addCleanup(self.chatbot.st.cache_resource.clear)
+            with self.subTest(mode=selected_mode, old_error=previous_failure), patch.dict(
+                os.environ, environment,
+            ), patch("openai.AzureOpenAI", return_value=client), patch(
+                "streamlit.file_uploader",
+                side_effect=lambda *args, **kwargs: upload if kwargs.get("key") == "excel_upload_0" else None,
+            ):
+                app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+                app.radio(key="data_source").set_value(selected_mode).run(timeout=30)
+                question = "Compare SQL salaries against Excel budgets using both sources"
+                if previous_failure:
+                    app.session_state["chat_history"] = [{
+                        "kind": "excel", "question": question, "excel_source": "targets.xlsx / Targets",
+                        "error": "Choose A, B or C",
+                    }]
+                    app.run(timeout=30)
+                else:
+                    app.chat_input[0].set_value(question).run(timeout=30)
+                self.assertEqual(len(app.exception), 0)
+                message = app.session_state["chat_history"][-1]
+                self.assertEqual(message["kind"], "automatic")
+                self.assertNotIn("error", message)
+                self.assertEqual(message["result"]["Variance"].tolist(), [-1000] * len(budgets))
+                self.assertTrue(any("SQL: main.Employees; EXCEL: Targets" in caption.value for caption in app.caption))
+                self.assertEqual(client.chat.completions.create.call_count, 1)
+                app.run(timeout=30)
+                self.assertEqual(client.chat.completions.create.call_count, 1)
+
     def test_invalid_model_plan_is_repaired_automatically_once_and_result_is_cached(self):
         invalid = data_plan(excel=["excel_0"], calculation={
             "understood": True, "unhandled_conditions": [], "sheet": "excel_0",
@@ -817,6 +957,36 @@ class SourceQueryTests(unittest.TestCase):
                     self.assertIn("error", message)
                     self.assertNotIn("answer", message)
                     self.assertEqual(message["backend_log"][-1]["event"], "request_failed")
+
+    def test_routine_clarification_is_reconsidered_without_asking_the_user(self):
+        clarification = {"mode": "clarification", "message": "Which sources should I use? Choose A, B or C.",
+                         "sql": [], "excel": [], "calculation": None}
+        invalid = self.combined_plan()
+        invalid["calculation"]["steps"].append({"op": "execute_python"})
+        for corrected in (self.combined_plan(), clarification, invalid):
+            client = Mock()
+            client.chat.completions.create.side_effect = [
+                SimpleNamespace(choices=[
+                    SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=json.dumps(proposed))),
+                ]) for proposed in (clarification, corrected)
+            ]
+            with self.subTest(mode=corrected["mode"]), patch.dict(
+                os.environ, {"AZURE_OPENAI_DEPLOYMENT_MINI": "test"},
+            ), patch.object(self.chatbot, "get_azure_openai_client", return_value=client), patch.object(
+                self.chatbot, "get_engine", return_value=self.engine,
+            ):
+                message = {"question": "Compare actual amounts with budgets using both sources",
+                           "workbook_content": workbook_bytes()}
+                self.chatbot.display_automatic_message(message, "clarification_repair")
+                self.assertEqual(client.chat.completions.create.call_count, 2)
+                feedback = client.chat.completions.create.call_args.kwargs["messages"][-1]["content"]
+                self.assertIn("automatic defaults", feedback)
+                if corrected == self.combined_plan():
+                    self.assertNotIn("error", message)
+                    self.assertEqual(message["result"]["Variance"].tolist(), [-50, 5])
+                else:
+                    self.assertIn("error", message)
+                    self.assertNotIn("answer", message)
 
     def test_excel_only_can_answer_when_sql_is_unavailable_with_an_explicit_warning(self):
         client = Mock()

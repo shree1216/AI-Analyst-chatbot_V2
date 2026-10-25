@@ -56,8 +56,8 @@ from excel_support import (
 from workbook_operations import MAX_SHEETS, execute_workbook_plan
 from backend_diagnostics import BackendTrace, diagnostic_log, execution_code_log
 from source_queries import (
-    SourceMatchError, allows_unmatched_sources, discover_excel_sources, discover_sql_sources, execute_source_plan,
-    requested_source_kinds, source_planner_prompt,
+    SALES_PLANNING_RULES, SourceMatchError, allows_unmatched_sources, discover_excel_sources, discover_sql_sources, execute_source_plan,
+    requested_source_kinds, source_mode_for_question, source_planner_prompt,
 )
 
 
@@ -2988,6 +2988,7 @@ def query_excel_workbook(
         "whitespace and exclude blanks, then count distinct. Prefer shared stable IDs/codes unless names are requested. "
         "Only ask one essential question when materially different interpretations remain after inspecting schemas; "
         "do not ask for routine sheet/key/case/blank confirmations. "
+        f"{SALES_PLANNING_RULES}"
         "Top-level fields EXACTLY: understood:boolean, unhandled_conditions:array, sheet:string, steps:array. "
         "Include EVERY requested condition. Reject ambiguity, unavailable columns, edits, unsupported operations, "
         "external workbooks, typed Excel formulas, and narrative/report/chart requests with understood:false and reasons. "
@@ -3096,7 +3097,7 @@ def query_excel_workbook(
                     source["sheet"] = resolved
     result = execute_workbook_plan(plan, sheets, trace=trace)
     result.attrs["source_sheets"] = list(dict.fromkeys([
-        plan["sheet"], *[step["sheet"] for step in plan["steps"] if step["op"] in {"join", "lookup"}],
+        plan["sheet"], *[step["sheet"] for step in plan["steps"] if step["op"] in {"join", "lookup", "append"}],
     ]))
     return result
 
@@ -3562,6 +3563,26 @@ def display_automatic_message(
             plan = generate_source_plan(
                 client, deployment, system_prompt, message["question"], trace, prior_turns=prior_turns,
             )
+            planning_repaired = False
+            if (
+                plan["mode"] == "clarification" and plan["sql"] == [] and plan["excel"] == []
+                and plan["calculation"] is None and sources and not message["source_warnings"]
+                and requested_kinds <= {source.kind for source in sources.values()}
+            ):
+                trace.record("planner_repair_requested", route="automatic", operation="resolve_clarification",
+                             status="retrying")
+                plan = generate_source_plan(
+                    client, deployment, system_prompt, message["question"], trace, previous_plan=plan,
+                    validation_error=(
+                        "Recheck this clarification against the automatic defaults and available columns. "
+                        "Choose routine source/key/measure details yourself. Use recorded transaction amounts "
+                        "for sales totals; never offer an A/B/C source or pricing menu when the defaults apply. "
+                        "Return a data plan if the requested result is supported, or one essential missing-data "
+                        "detail if it truly cannot be computed. Do not invent relationships or values"
+                    ),
+                    prior_turns=prior_turns,
+                )
+                planning_repaired = True
             if plan["mode"] in {"conversation", "clarification"}:
                 if plan["sql"] != [] or plan["excel"] != [] or plan["calculation"] is not None:
                     raise ValueError("A conversation or clarification must not select or query data sources.")
@@ -3569,6 +3590,8 @@ def display_automatic_message(
                     detail = plan["message"]
                     raise ValueError(detail[:1500] if isinstance(detail, str) and detail.strip()
                                      else "Specify the SQL table, Excel worksheet, and matching keys needed for this question.")
+                if planning_repaired:
+                    raise ValueError("No valid data calculation could be planned from the available sources.")
                 message["answer"] = answer_general_question(message["question"], prior_turns)
             else:
                 selected_sql = plan["sql"]
@@ -3605,6 +3628,8 @@ def display_automatic_message(
                 try:
                     result, labels = execute_plan(plan)
                 except ValueError as error:
+                    if planning_repaired:
+                        raise
                     trace.record("planner_repair_requested", route="automatic",
                                  error_type=type(error).__name__, status="retrying")
                     repaired = generate_source_plan(
@@ -4641,7 +4666,9 @@ if submitted_question:
         if pending_action is not None:
             st.session_state["pending_workbook_action"] = pending_action
             st.rerun()
-    elif automatic_selected:
+    elif source_mode_for_question(
+        submitted_question, "automatic" if automatic_selected else "excel" if excel_selected else "sql",
+    ) == "automatic":
         available_workbook = st.session_state.get("excel_workbook")
         history.append({
             "kind": "automatic", "question": submitted_question,
@@ -4674,6 +4701,18 @@ if image_uploads or submitted_question:
 # Conversation thread
 chat_scroll_component(data={"message_count": len(history)}, key="chat_auto_scroll")
 for index, message in enumerate(history):
+    kind = message.get("kind")
+    if kind in {"excel", "database"} and source_mode_for_question(
+        message["question"], "excel" if kind == "excel" else "sql",
+    ) == "automatic":
+        workbook = st.session_state.get("excel_workbook")
+        content = message.get("excel_content") or (workbook.get("content") if workbook else None)
+        for key in (
+            "answer", "error", "result", "excel_download", "source_labels", "source_warnings", "sql_only",
+            "request", "pending_query", "legacy_employee", "employee_report", "excel_frame", "excel_content", "excel_sheet",
+        ):
+            message.pop(key, None)
+        message.update(kind="automatic", workbook_content=content)
     with st.chat_message("user"):
         if message.get("kind") == "image":
             st.write(f"Uploaded image: {message['image_name']}")
