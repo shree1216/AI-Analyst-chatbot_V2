@@ -134,15 +134,30 @@ For each question the planner chooses the smallest necessary source set:
 | `What is the total budget in the Targets worksheet?` | Relevant Excel worksheet(s) only |
 | `Compare SQL actual amounts against the Excel department budgets and show the variance.` | SQL actuals and Excel budgets, joined by the specified matching keys |
 | `Use the Excel lookup to label the SQL results.` | Relevant SQL table and Excel lookup |
+| `How many distinct products are in EmployeeDB and Excel?` | SQL product table and Excel product catalog, with one deduplicated combined count |
 
 Only selected SQL queries execute, and only selected Excel worksheets are loaded
 in full. SQL plans are validated against the discovered columns and compiled to
 read-only, parameterized SELECT statements; model-written SQL/code is never
 executed. SQL data can be filtered/grouped before matching to Excel. Combined
-results use the existing bounded pandas join, lookup and calculation engine.
+results use the bounded pandas join, lookup, append and calculation engine.
 Targets must be matched at the correct grain (for example, department and month).
-Ambiguous source names, keys, periods or missing sources request clarification
-instead of inventing a join or silently substituting Excel targets for SQL actuals.
+The planner selects sources directly from column coverage, types and semantic fit;
+a database name refers to the whole database, not only its employee table. It
+prefers entity master/catalog sheets for entity counts and catalog prices, and
+transaction sheets for sales/quantity/region questions. It does not ask users to
+confirm routine table, worksheet, shared-key, case or blank-handling choices.
+
+Combined distinct-entity questions default to a deduplicated union across the
+best relevant sources, not a sum of counts or an intersection. Product codes
+are preferred when both sources have them unless names are explicitly requested.
+Text identity keys ignore case and outer whitespace, and blank/null keys are
+excluded. Explicit requests for separate/per-source results produce labeled
+counts instead. Append maps incoming columns to the existing result columns,
+optionally adding scalar source labels; its 50,000-row/5-million-cell limits are
+checked before concatenation. Only genuinely missing essential data or
+unresolved materially different metrics/periods/relationships need one targeted
+clarification. The planner must not invent joins or substitute targets for actuals.
 Each answer names the actual sources used and offers an Excel export. The interface
 keeps only **Sources used** captions; request IDs, timing, preview counts and
 technical routing details remain in backend diagnostics rather than faded helper text.

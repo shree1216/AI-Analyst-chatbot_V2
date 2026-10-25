@@ -155,6 +155,78 @@ class WorkbookOperationTests(unittest.TestCase):
             self.run_plan({**self.lookup(), "op": "join"})
         self.assertEqual(len(self.run_plan(self.lookup())), 225)
 
+    def test_append_counts_combined_distinct_entities_without_join_multiplication(self):
+        original = self.products.copy(deep=True)
+        result = self.run_plan(
+            {"op": "select", "columns": ["Product"]},
+            {"op": "append", "sheet": "Products", "columns": [{"column": "Code", "name": "Product"}]},
+            {"op": "calculate", "columns": [{"name": "Key", "expression": fn("lower", fn("trim", col("Product")))}]},
+            {"op": "filter", "where": fn("not", fn("is_blank", col("Key")))},
+            {"op": "aggregate", "metrics": [metric("Distinct products", "count_distinct", "Key")]},
+        )
+        self.assertEqual(result.iloc[0, 0], 3)
+        pd.testing.assert_frame_equal(self.products, original)
+        self.assertEqual(self.sales["Product"].tolist(), ["A", "B", "A", "C"])
+
+    def test_select_accepts_validated_aliases_for_aligned_cross_source_columns(self):
+        result = self.run_plan({"op": "select", "columns": [
+            {"column": "Product", "name": "Key"}, {"literal": "Sales", "name": "Source"},
+        ]})
+        self.assertEqual(result.columns.tolist(), ["Key", "Source"])
+        self.assertEqual(result["Key"].tolist(), ["A", "B", "A", "C"])
+        self.assertEqual(result["Source"].tolist(), ["Sales"] * 4)
+        for selections in (
+            [{"column": "Missing", "name": "Key"}],
+            [{"column": "Product", "name": "Key"}, {"column": "Region", "name": "Key"}],
+            [{"column": "Product", "name": ""}],
+            [{"column": "Product", "name": "Key", "sql": "SELECT 1"}],
+            [{"literal": ["A"], "name": "Source"}],
+            [{"literal": float("nan"), "name": "Source"}],
+        ):
+            with self.subTest(selections=selections), self.assertRaises(ValueError):
+                self.run_plan({"op": "select", "columns": selections})
+
+    def test_append_preserves_unmatched_entities_and_supports_per_source_counts(self):
+        self.sheets["Products"] = pd.DataFrame({"Code": [" b ", "D", "", None]})
+        result = self.run_plan(
+            {"op": "select", "columns": ["Product"]},
+            {"op": "calculate", "columns": [{"name": "Source", "expression": lit("Sales")}]},
+            {"op": "append", "sheet": "Products", "columns": [
+                {"column": "Code", "name": "Product"}, {"literal": "Products", "name": "Source"},
+            ]},
+            {"op": "calculate", "columns": [{"name": "Key", "expression": fn("lower", fn("trim", col("Product")))}]},
+            {"op": "filter", "where": fn("not", fn("is_blank", col("Key")))},
+            {"op": "aggregate", "group_by": ["Source"], "metrics": [metric("Distinct", "count_distinct", "Key")]},
+        )
+        self.assertEqual(result.set_index("Source")["Distinct"].to_dict(), {"Sales": 3, "Products": 2})
+        combined = self.run_plan(
+            {"op": "select", "columns": ["Product"]},
+            {"op": "append", "sheet": "Products", "columns": [{"column": "Code", "name": "Product"}]},
+            {"op": "calculate", "columns": [{"name": "Key", "expression": fn("lower", fn("trim", col("Product")))}]},
+            {"op": "filter", "where": fn("not", fn("is_blank", col("Key")))},
+            {"op": "aggregate", "metrics": [metric("Distinct", "count_distinct", "Key")]},
+        )
+        self.assertEqual(combined.iloc[0, 0], 4)
+
+    def test_append_rejects_invalid_mappings_and_checks_cardinality_before_concat(self):
+        for mapping in (
+            [{"column": "Missing", "name": "Product"}],
+            [{"column": "Code", "name": "Wrong"}],
+            [{"column": "Code", "name": "Product"}, {"column": "Name", "name": "Product"}],
+            [{"literal": ["A"], "name": "Product"}],
+            [{"literal": float("inf"), "name": "Product"}],
+            [{"column": "Code", "name": "Product", "sql": "SELECT 1"}],
+        ):
+            with self.subTest(mapping=mapping), self.assertRaises(ValueError):
+                self.run_plan(
+                    {"op": "select", "columns": ["Product"]},
+                    {"op": "append", "sheet": "Products", "columns": mapping},
+                )
+        self.sheets["Sales"] = pd.DataFrame({"Product": ["A"] * 30_000})
+        self.sheets["Products"] = pd.DataFrame({"Code": ["B"] * 30_000})
+        with patch("workbook_operations.pd.concat", side_effect=AssertionError("Oversized append materialized")):
+            with self.assertRaisesRegex(ValueError, "too many rows"):
+                self.run_plan({"op": "append", "sheet": "Products", "columns": [{"column": "Code", "name": "Product"}]})
     def test_join_rejects_collisions_approximate_lookup_and_incompatible_keys(self):
         for fields in (
             {"columns": [{"column": "Name", "name": "Region"}]},

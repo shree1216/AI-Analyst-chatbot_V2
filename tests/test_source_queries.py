@@ -234,6 +234,63 @@ class SourceQueryTests(unittest.TestCase):
         compiler.assert_not_called()
         self.assertEqual(self.events[-1]["rows"], 1)
 
+    def test_combined_distinct_products_use_union_and_only_matching_catalog_sources(self):
+        with self.engine.begin() as connection:
+            pd.DataFrame({"code": ["A", "B", "B", None], "product": ["One", "Two", "Two", None]}).to_sql(
+                "sql_products", connection, index=False,
+            )
+        sql_sources, _ = discover_sql_sources(self.engine, self.trace)
+        product_id = next(key for key, value in sql_sources.items() if value.label.endswith(".sql_products"))
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            pd.DataFrame({"Code": [" a ", "C", "", "  "], "product": ["One", "Three", "", "  "]}).to_excel(
+                writer, index=False, sheet_name="products",
+            )
+            pd.DataFrame({"Code": ["D"], "product": ["Transaction-only"], "Amount": [100]}).to_excel(
+                writer, index=False, sheet_name="Sales",
+            )
+        excel_sources, _ = discover_excel_sources(output.getvalue(), self.trace)
+        sources = {**sql_sources, **excel_sources}
+        combined = data_plan(
+            sql=[{"source": product_id, "query": query(columns=["code"])}],
+            excel=["excel_0"],
+            calculation={"understood": True, "unhandled_conditions": [], "sheet": product_id, "steps": [
+                {"op": "append", "sheet": "excel_0", "columns": [{"column": "Code", "name": "code"}]},
+                {"op": "calculate", "columns": [{
+                    "name": "key", "expression": {"function": "lower", "args": [
+                        {"function": "trim", "args": [{"column": "code"}]},
+                    ]},
+                }]},
+                {"op": "filter", "where": {"function": "not", "args": [
+                    {"function": "is_blank", "args": [{"column": "key"}]},
+                ]}},
+                {"op": "aggregate", "metrics": [{
+                    "name": "Distinct product codes across SQL and Excel", "function": "count_distinct", "column": "key",
+                }]},
+            ]},
+        )
+        result, labels = execute_source_plan(
+            combined, sources, self.compiler, self.read, self.trace, required_kinds={"sql", "excel"},
+        )
+        self.assertEqual(result.iloc[0, 0], 3)
+        self.assertEqual(labels, ["SQL: main.sql_products", "EXCEL: products"])
+        self.assertEqual(self.read.call_count, 1)
+        implementation = {
+            item["function"] for event in self.events for item in event.get("implementation", [])
+        }
+        self.assertIn("_append", implementation)
+        self.assertTrue(any(event.get("operation") == "append" for event in self.events))
+        prompt = source_planner_prompt(sources, [])
+        self.assertIn("Do not ask the user to confirm tables", prompt)
+        self.assertIn("ONE combined distinct count", prompt)
+        self.assertIn("prefer a shared stable ID/code", prompt)
+        self.assertIn("master/catalog sheet", prompt)
+        self.read.reset_mock()
+        combined["excel"].append("excel_1")
+        with self.assertRaisesRegex(ValueError, "unused or missing sources"):
+            execute_source_plan(combined, sources, self.compiler, self.read, self.trace)
+        self.read.assert_not_called()
+
     def test_combined_question_aggregates_actuals_and_joins_targets_at_same_grain(self):
         result, labels = self.execute(self.combined_plan())
         self.assertEqual(result.to_dict("list"), {

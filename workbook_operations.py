@@ -393,6 +393,42 @@ def _join(frame: pd.DataFrame, step: dict[str, Any], sheets: dict[str, pd.DataFr
     return output.drop(columns=temporary_keys)
 
 
+def _select(frame: pd.DataFrame, selections: Any) -> pd.DataFrame:
+    if not (isinstance(selections, list) and selections and all(isinstance(item, dict) for item in selections)):
+        return frame[_columns(selections, frame)]
+    _require(isinstance(selections, list) and 1 <= len(selections) <= MAX_COLUMNS,
+             "Choose a bounded list of output columns.")
+    for selection in selections:
+        _require(isinstance(selection, dict) and set(selection) in ({"column", "name"}, {"literal", "name"}),
+                 "Name each selected source or constant and output column.")
+        if "column" in selection:
+            _columns([selection["column"]], frame)
+        else:
+            _require(_literal(selection["literal"]) and not isinstance(selection["literal"], list),
+                     "A selected constant must be a finite JSON scalar.")
+    names = [_name(selection["name"]) for selection in selections]
+    _require(len(set(names)) == len(names), "Selected output names must be unique.")
+    _require(len(frame) * len(names) <= MAX_CELLS, "The selected output would contain too many cells.")
+    output = pd.DataFrame(index=frame.index)
+    for selection in selections:
+        output[selection["name"]] = frame[selection["column"]] if "column" in selection else selection["literal"]
+    return output
+
+
+def _append(frame: pd.DataFrame, step: dict[str, Any], sheets: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    _keys(step, {"sheet", "columns"}, {"sheet", "columns"})
+    sheet = _name(step["sheet"])
+    _require(sheet in sheets, "An append source is unavailable. Check its name and headers.")
+    source = _bounded(sheets[sheet])
+    rows = len(frame) + len(source)
+    _require(rows <= MAX_ROWS and rows * len(frame.columns) <= MAX_CELLS,
+             "This append would produce too many rows or cells. Filter the sources first.")
+    incoming = _select(source, step["columns"])
+    _require(set(incoming.columns) == set(frame.columns),
+             "Appended column names must match the current result columns exactly.")
+    return pd.concat([frame, incoming[list(frame.columns)]], ignore_index=True)
+
+
 def execute_workbook_plan(
     plan: Any, sheets: dict[str, pd.DataFrame], *, trace: BackendTrace | None = None,
 ) -> pd.DataFrame:
@@ -407,13 +443,13 @@ def execute_workbook_plan(
              "A workbook question must contain between 1 and 20 calculation steps.")
     if trace:
         trace.record_code("source_selected", execute_workbook_plan, evaluate_expression, _evaluate,
-                          _aggregate_frame, _aggregate, _join,
+                          _aggregate_frame, _aggregate, _join, _select, _append,
                           sheet=sheet, rows=len(sheets[sheet]), columns=len(sheets[sheet].columns))
     frame = _bounded(sheets[sheet].copy(deep=True))
     for step_number, step in enumerate(steps, start=1):
         _require(isinstance(step, dict) and isinstance(step.get("op"), str), "A workbook calculation step is invalid.")
         operation = step["op"]
-        _require(operation in {"filter", "calculate", "aggregate", "join", "lookup", "select", "sort", "limit", "rank", "pivot"},
+        _require(operation in {"filter", "calculate", "aggregate", "join", "lookup", "append", "select", "sort", "limit", "rank", "pivot"},
                  "That workbook operation is not supported. No calculation was performed.")
         if trace:
             trace.record("step_started", step=step_number, operation=operation, rows=len(frame),
@@ -434,9 +470,11 @@ def execute_workbook_plan(
             frame = _aggregate_frame(frame, _columns(step.get("group_by", []), frame, empty=True), step["metrics"])
         elif operation in {"join", "lookup"}:
             frame = _join(frame, step, sheets)
+        elif operation == "append":
+            frame = _append(frame, step, sheets)
         elif operation == "select":
             _keys(step, {"columns"}, {"columns"})
-            frame = frame[_columns(step["columns"], frame)]
+            frame = _select(frame, step["columns"])
         elif operation == "sort":
             _keys(step, {"by"}, {"by"})
             ordering = step["by"]

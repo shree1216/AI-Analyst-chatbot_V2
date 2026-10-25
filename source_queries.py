@@ -283,7 +283,7 @@ def execute_source_plan(
         for step in calculation["steps"]:
             if not isinstance(step, dict):
                 raise ValueError("Each calculation step must be structured.")
-            if step.get("op") in {"join", "lookup"}:
+            if step.get("op") in {"join", "lookup", "append"}:
                 if not isinstance(step.get("sheet"), str):
                     raise ValueError("Each join or lookup needs a source.")
                 referenced.add(step["sheet"])
@@ -328,8 +328,25 @@ def source_planner_prompt(sources: dict[str, DataSource], unavailable: list[str]
         "QUERY and PLAN are descriptions of objects, NOT JSON keys or wrapper objects. "
         "The calculation value must DIRECTLY contain understood, unhandled_conditions, sheet and steps. "
         "NEVER output calculation:{PLAN:{...}} or calculation:{plan:{...}}. "
-        "If the sources or join keys/period/grain are ambiguous or unavailable, mode='clarification', explain what "
-        "is needed in message, sql=[], excel=[], calculation=null. Never guess a match or ignore conditions. "
+        "AUTOMATIC SELECTION: Inspect column names, types and available samples and make routine source choices "
+        "yourself. A database name refers to the whole connected database, NOT only its employee table. "
+        "For product questions choose tables/sheets with product/code/price columns, not employee columns. "
+        "Respect explicitly named sources; otherwise choose the best column coverage and semantic fit. "
+        "Prefer an entity master/catalog sheet for entity counts or catalog prices over a transaction sheet "
+        "repeating the same entities; use a sales sheet when sales, quantities, regions or transactions are needed. "
+        "Do not ask the user to confirm tables, sheets, obvious shared keys, case handling or blank exclusion. "
+        "For matching entities, prefer a shared stable ID/code; otherwise use a shared entity-name column. "
+        "Ignore case and outer whitespace in text identity keys; exclude null/blank identity keys from distinct counts. "
+        "For 'distinct products in SQL and Excel' default to ONE combined distinct count across the best relevant "
+        "SQL table and Excel sheet. Use append to combine their identity columns, then normalize and count distinct; "
+        "do NOT sum separate distinct counts or use an inner join (both can give the wrong union count). "
+        "Use product codes when available in both sources unless the user explicitly asks for distinct product names. "
+        "For 'each source', 'per source' or a comparison, return separately labeled values instead. "
+        "Use descriptive result labels to identify the selected metric/key and combined versus separate counts. "
+        "Only use mode='clarification' when essential data is unavailable or materially different metrics, "
+        "periods or relationships remain unresolved AFTER inspecting the schemas and applying these defaults. "
+        "Ask only the single missing essential detail, not a questionnaire. Never invent a column, relationship "
+        "or value, and never ignore an explicit condition. Clarification uses sql=[],excel=[],calculation=null. "
         "For ordinary non-data conversation use mode='conversation' and no sources. "
         "QUERY keys: understood:true,unhandled_conditions:[],columns:[exact original headers],metrics:[{function,column}],"
         "filter:null or {column,op,value} or {all:[filters]}/{any:[filters]},group_by:[],order_by:[{column,direction}],"
@@ -345,12 +362,21 @@ def source_planner_prompt(sources: dict[str, DataSource], unavailable: list[str]
         "For example, an Excel count uses calculation:{\"understood\":true,\"unhandled_conditions\":[],"
         "\"sheet\":\"excel_0\",\"steps\":[{\"op\":\"aggregate\",\"metrics\":[{\"name\":\"Rows\","
         "\"function\":\"count_rows\",\"column\":\"*\"}]}]}. Use source IDs as sheet names. "
-        "Each selected source MUST be referenced by sheet or join/lookup; no unused sources. "
+        "Each selected source MUST be referenced by sheet or join/lookup/append; no unused sources. "
         "PLAN is null only for a single source whose SQL query already answers the question (or an Excel preview). "
         "Steps: filter:{op,where:EXPR}; aggregate:{op,group_by:[headers],metrics:[{name,function,column,where?:EXPR}]}; "
-        "calculate:{op,columns:[{name,expression:EXPR}]}; select:{op,columns:[headers]}; "
+        "calculate:{op,columns:[{name,expression:EXPR}]}; "
+        "select:{op,columns:[headers] or [{column,name} or {literal:JSON_scalar,name}]}; "
+        "Select only the SQL columns needed for the result or calculation; do not fetch unrelated columns. "
         "sort:{op,by:[{column,direction:'asc'|'desc'}]}; limit:{op,count}; "
         "join:{op,sheet:source_id,left_on:[headers],right_on:[headers],columns:[{column,name}],how:'left'|'inner'|'right'|'outer'}; "
+        "append:{op,sheet:source_id,columns:[{column:source_header,name:existing_output_header}]}; "
+        "An append mapping may use {literal:JSON_scalar,name:existing_output_header} instead of column, "
+        "for example to label incoming rows with their source. For separate source counts, calculate a Source "
+        "literal on the initial frame, append the other source with its Source literal, then group by Source. "
+        "append stacks rows, mapping the incoming columns to EXACTLY the current result columns; "
+        "first select the identity columns needed, append the other source's matching columns, then calculate "
+        "normalized keys with lower(trim(column)), filter not(is_blank(key)), and aggregate count_distinct. "
         "lookup:{op,sheet:source_id,left_on:[headers],right_on:[headers],columns:[{column,name}],keep:'first'|'last'}. "
         "Retrieved column aliases must not collide. Exact text keys ignore case/outer whitespace; null keys match. "
         "Use join when duplicate keys matter; lookup intentionally keeps one match only when requested. "
@@ -361,6 +387,19 @@ def source_planner_prompt(sources: dict[str, DataSource], unavailable: list[str]
         "Aggregate metric column '*' only for count_rows; count counts numeric/date values; counta counts non-null. "
         "COUNT DISTINCT uses count_distinct. At most 20 steps. Use all matching rows, not only samples. "
         "Sample rows help interpret columns and join keys; they are not the answer. "
+        "SEPARATE-COUNT EXAMPLE (hypothetical IDs sql_example/excel_example and header code: replace these "
+        "with actual discovered IDs/headers, and use this pattern only when separate counts are requested): "
+        '{"mode":"data","message":"","sql":[{"source":"sql_example","query":{"understood":true,'
+        '"unhandled_conditions":[],"columns":["code"],"metrics":[],"filter":null,"group_by":[],"order_by":[]}}],'
+        '"excel":["excel_example"],"calculation":{"understood":true,"unhandled_conditions":[],"sheet":"sql_example",'
+        '"steps":[{"op":"select","columns":[{"column":"code","name":"code"},{"literal":"SQL","name":"Source"}]},'
+        '{"op":"append","sheet":"excel_example","columns":[{"column":"code","name":"code"},'
+        '{"literal":"Excel","name":"Source"}]},{"op":"calculate","columns":[{"name":"key","expression":'
+        '{"function":"lower","args":[{"function":"trim","args":[{"column":"code"}]}]}}]},'
+        '{"op":"filter","where":{"function":"not","args":[{"function":"is_blank","args":[{"column":"key"}]}]}},'
+        '{"op":"aggregate","group_by":["Source"],"metrics":[{"name":"Distinct product codes",'
+        '"function":"count_distinct","column":"key"}]}]}}. '
+        "Do not preaggregate SQL before this append pattern: both sources must supply raw identity rows. "
         f"Available sources: {json.dumps([source.metadata() for source in sources.values()], ensure_ascii=True)}. "
         f"Unavailable sources: {json.dumps(unavailable, ensure_ascii=True)}."
     )
