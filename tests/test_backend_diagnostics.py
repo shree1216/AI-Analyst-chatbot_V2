@@ -16,20 +16,60 @@ class BackendDiagnosticTests(unittest.TestCase):
         self.logger = Mock()
         self.enterContext(patch.object(diagnostics, "backend_logger", return_value=self.logger))
 
-    def test_trace_has_timestamps_request_id_metadata_and_no_unapproved_fields(self):
+    def test_trace_has_no_timestamp_and_preserves_request_metadata(self):
         events = []
         trace = diagnostics.BackendTrace(events)
         trace.record("sheet_schema", sheet="Sales", rows=150, schemas={"Revenue": "number"})
         trace.record("request_completed", rows=2, status="success")
         self.assertEqual(len(events), 2)
         self.assertEqual(events[0]["request_id"], events[1]["request_id"])
-        self.assertIn("+00:00", events[0]["timestamp"])
+        self.assertNotIn("timestamp", events[0])
         self.assertGreaterEqual(events[1]["elapsed_ms"], events[0]["elapsed_ms"])
         self.assertEqual(json.loads(diagnostics.diagnostic_log(events).splitlines()[0])["rows"], 150)
         for field in ("question", "cell_values", "password", "api_key", "filter", "error_message"):
             with self.subTest(field=field), self.assertRaisesRegex(ValueError, "must not include"):
                 trace.record("unsafe", **{field: "PRIVATE_VALUE"})
         self.assertNotIn("PRIVATE_VALUE", diagnostics.diagnostic_log(events))
+
+    def test_code_log_shows_readable_sql_steps_and_deduplicated_python_without_timestamps(self):
+        events = []
+        trace = diagnostics.BackendTrace(events)
+        trace.record_code("source_selected", execute_workbook_plan)
+        trace.record("query_started", sql="SELECT [Name] FROM Employees WHERE [Name] = :name",
+                     parameters={"name": "PRIVATE_PERSON"})
+        trace.record("step_started", step=1, operation="filter", details={
+            "op": "filter", "where": {"function": "eq", "args": [
+                {"column": "Name"}, {"literal": "PRIVATE_PERSON"},
+            ]},
+        })
+        trace.record_code("source_selected", execute_workbook_plan)
+        events[0]["timestamp"] = "2026-10-25T00:00:00+00:00"
+        result = diagnostics.execution_code_log(events)
+        self.assertIn("SELECT [Name] FROM Employees WHERE [Name] = :name", result)
+        self.assertIn(inspect.getsource(execute_workbook_plan), result)
+        self.assertEqual(result.count("def execute_workbook_plan("), 1)
+        self.assertLess(result.index("SELECT"), result.index("def execute_workbook_plan("))
+        self.assertIn('"op": "filter"', result)
+        self.assertNotIn("PRIVATE_PERSON", result)
+        self.assertNotIn("timestamp", result)
+        self.assertNotIn("2026-10-25", result)
+        self.assertNotIn("elapsed_ms", result)
+        self.assertNotIn("\\n    _require", result)
+
+    def test_code_log_reports_missing_source_and_failures_without_inventing_code(self):
+        events = []
+        trace = diagnostics.BackendTrace(events)
+        with patch("backend_diagnostics.inspect.getsourcelines", side_effect=OSError("PRIVATE_PATH")):
+            trace.record_code("source_selected", execute_workbook_plan)
+        trace.record("request_failed", error_type="ValueError", status="failed")
+        result = diagnostics.execution_code_log(events)
+        self.assertIn("Python source unavailable", result)
+        self.assertIn("OSError", result)
+        self.assertIn("request_failed", result)
+        self.assertIn("ValueError", result)
+        self.assertNotIn("PRIVATE_PATH", result)
+        self.assertNotIn("def execute_workbook_plan(", result)
+        self.assertIn("No execution code", diagnostics.execution_code_log([]))
 
     def test_sql_keeps_statement_and_identifiers_without_literals_or_parameter_values(self):
         events = []

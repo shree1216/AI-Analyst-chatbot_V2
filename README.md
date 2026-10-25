@@ -440,17 +440,23 @@ than only a generic interpretation failure.
 #### Backend log file
 
 Open **Backend diagnostics** in the sidebar after asking an employee database or Excel question, then
-select **Download backend log**. This downloads JSON-lines text as
-`chatbot_backend.log` for this chat only. The log includes a request ID to match
-against UTC timestamps, elapsed milliseconds, worksheet schemas/unavailable
-sheets, automatic routing, planner status and structured plans, calculation step
-details (columns, metrics, grouping, sorting, joins and filter structure), row/column counts,
-export events and failures. Cached answers do not rerun or duplicate their traces.
-For SQL Server and the hosted SQLite demo, the same log records the backend,
+select **Download backend log**. The sidebar and downloaded `chatbot_backend.log`
+show readable execution code for this chat, not timestamp-prefixed JSON events.
+SQL statements appear first, followed by the complete Python implementations used,
+the attempted Excel/pandas calculation steps, and any execution failures. Python
+source is shown with real line breaks and identical function snapshots appear
+only once; repeated SQL executions are retained. Existing cached traces also use
+this code-focused view. A cached trace without source explicitly says that no
+execution code was recorded; retry the question to capture it.
+
+Internal structured traces retain request IDs, elapsed durations, worksheet
+schemas, routing, plans, step details, result dimensions, export events and
+failures, but new events have no wall-clock timestamp. Cached answers do not
+rerun or duplicate their traces. For SQL Server and the hosted SQLite demo, these traces record the backend,
 local planning, Azure planner requests/validation or plan-cache hits, read-query
 start/completion/failure, readable SQL statements, parameter names/types (with values redacted),
 query duration in milliseconds, SQL Server reconnect retry attempts, result column names/dimensions, and
-Excel/PDF generation. Elapsed timestamps show where time is spent. Queries made
+Excel/PDF generation. Internal elapsed durations show where time is spent. Queries made
 during employee-name resolution are included in the same request. The connection
 test button also logs its latest check. Preparing an export is not proof that a
 user downloaded it. General conversation is identified separately and does not
@@ -470,10 +476,9 @@ These are application implementation snapshots, not model-generated Python or
 a line-by-line execution replay. Runtime arguments, locals and cell values are
 not dumped. The validated plan and processing events identify the operations
 used for that request. If source cannot be inspected, its entry explicitly
-reports `status: "unavailable"`. Both the session download and rotating server log
-contain the implementation entries; treat these files as private application code.
-Existing cached answers keep their original logs; ask a new question to capture
-implementation entries.
+reports `status: "unavailable"` internally and a readable source-unavailable message
+in the code view. Both the session download and rotating server log contain the
+implementation code; treat these files as private application code.
 
 The app also writes a server-side `logs/backend.log`, with 2 MB rotation and
 three backups (up to approximately 8 MB total). When running locally, this folder

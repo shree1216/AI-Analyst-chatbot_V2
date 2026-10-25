@@ -274,11 +274,14 @@ class DemoDatabaseTests(unittest.TestCase):
         self.assertFalse(any("join date" in caption.value or "gender =" in caption.value for caption in app.caption))
         self.assertEqual(len(app.code), 1)
         self.assertEqual(app.session_state["chat_history"][0]["backend_log"], first_events)
-        events = [json.loads(line) for line in app.code[0].value.splitlines()]
+        events = [event for message in app.session_state["chat_history"] for event in message["backend_log"]]
         self.assertEqual(len({event["request_id"] for event in events}), 3)
         self.assertNotIn("80000", app.code[0].value)
         self.assertEqual(len(app.sidebar.code), 1)
         self.assertIn("SELECT", app.sidebar.code[0].value)
+        self.assertIn("def run_query(", app.sidebar.code[0].value)
+        self.assertNotIn('"timestamp":', app.sidebar.code[0].value)
+        self.assertNotIn('"elapsed_ms":', app.sidebar.code[0].value)
         self.assertFalse(any("SELECT" in message["answer"] for message in app.session_state["chat_history"]))
         self.assertTrue(any(button.label == "Download backend log" for button in app.get("download_button")))
         self.assertTrue(all(caption.value.startswith("Sources used:") for caption in app.caption))

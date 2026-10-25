@@ -1,4 +1,3 @@
-from datetime import datetime, timezone
 from functools import lru_cache
 import inspect
 import json
@@ -147,7 +146,6 @@ class BackendTrace:
             if key in fields:
                 fields[key] = diagnostic_plan(fields[key])
         entry = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
             "request_id": self.request_id,
             "event": event,
             "elapsed_ms": round((perf_counter() - self.started) * 1000, 2),
@@ -167,3 +165,41 @@ class BackendTrace:
 
 def diagnostic_log(events: list[dict[str, Any]]) -> str:
     return "".join(json.dumps(event, ensure_ascii=True, allow_nan=False) + "\n" for event in events[-1000:])
+
+
+def execution_code_log(events: list[dict[str, Any]]) -> str:
+    sql_blocks: list[str] = []
+    python_blocks: list[str] = []
+    step_blocks: list[str] = []
+    failures: list[str] = []
+    seen: set[tuple[str, str, str]] = set()
+    for event in events[-1000:]:
+        sql = event.get("sql")
+        if isinstance(sql, str) and sql.strip():
+            sql_blocks.append(f"# SQL statement {len(sql_blocks) + 1}\n{diagnostic_sql(sql)}")
+        for implementation in event.get("implementation", []):
+            code = implementation.get("code")
+            if isinstance(code, str) and code.strip():
+                file = str(implementation.get("file", "unknown file"))
+                function = str(implementation.get("function", "unknown function"))
+                key = (file, function, code)
+                if key not in seen:
+                    seen.add(key)
+                    python_blocks.append(f"# {file} - {function}\n{code.rstrip()}")
+            elif implementation.get("status") == "unavailable":
+                failures.append(f"# Python source unavailable: {implementation.get('error_type', 'unknown error')}.")
+        if event.get("event") == "step_started" and isinstance(event.get("details"), dict):
+            details = json.dumps(diagnostic_plan(event["details"]), ensure_ascii=True, allow_nan=False, indent=2)
+            step_blocks.append(f"# Attempted calculation step {event.get('step', '?')}\n{details}")
+        if event.get("error_type"):
+            failures.append(f"# {event.get('event', 'Backend failure')}: {event['error_type']}")
+    sections = []
+    for heading, blocks in (
+        ("SQL executed", sql_blocks), ("Python code used", python_blocks),
+        ("Excel/pandas calculation steps", step_blocks), ("Execution failures", list(dict.fromkeys(failures))),
+    ):
+        if blocks:
+            sections.append(f"# {heading}\n\n" + "\n\n".join(blocks))
+    return "\n\n".join(sections) + "\n" if sections else (
+        "# No execution code has been recorded yet. Ask or retry a data question.\n"
+    )

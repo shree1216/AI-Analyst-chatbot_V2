@@ -54,7 +54,7 @@ from excel_support import (
     spreadsheet_answer, spreadsheet_schema, write_region_summary,
 )
 from workbook_operations import MAX_SHEETS, execute_workbook_plan
-from backend_diagnostics import BackendTrace, diagnostic_log
+from backend_diagnostics import BackendTrace, diagnostic_log, execution_code_log
 from source_queries import (
     SourceMatchError, allows_unmatched_sources, discover_excel_sources, discover_sql_sources, execute_source_plan,
     requested_source_kinds, source_planner_prompt,
@@ -4731,16 +4731,15 @@ for index, message in enumerate(history):
         ):
             render_copy_response(answer, str(index))
 
-backend_events = sorted(
+backend_events = (
     [event for message in history for event in message.get("backend_log", [])]
-    + st.session_state.get("employee_connection_log", []),
-    key=lambda event: event["timestamp"],
+    + st.session_state.get("employee_connection_log", [])
 )[-1000:]
 with st.sidebar.expander("Backend diagnostics"):
     if backend_events:
-        session_log = diagnostic_log(backend_events)
+        session_log = execution_code_log(backend_events)
         st.download_button(
             "Download backend log", data=session_log, file_name="chatbot_backend.log",
             mime="text/plain", key="download_backend_log",
         )
-        st.code(session_log, language="json")
+        st.code(session_log, language="text", wrap_lines=True)
