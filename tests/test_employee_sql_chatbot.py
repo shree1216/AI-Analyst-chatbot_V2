@@ -69,6 +69,70 @@ class WorkforceTests(unittest.TestCase):
         self.enterContext(patch("socket.create_connection", side_effect=AssertionError("Unexpected network access")))
         self.result = employee_fixture()
 
+    def test_employee_db_sql_auth_uses_configured_server_with_validated_tls(self):
+        environment = {
+            key: value for key, value in TEST_ENVIRONMENT.items() if not key.upper().startswith("WORKFORCE_")
+        }
+        environment.update({
+            "WORKFORCE_SQL_USERNAME": "readonly-user", "WORKFORCE_SQL_PASSWORD": "test-only-password",
+            "WORKFORCE_SQL_PORT": "1433", "WORKFORCE_SQL_DRIVER": "ODBC Driver 18 for SQL Server",
+        })
+        self.chatbot.get_engine.clear()
+        self.addCleanup(self.chatbot.get_engine.clear)
+        with patch.dict(os.environ, environment, clear=True), patch.multiple(
+            self.chatbot, DATA_MODE="sqlserver", SERVER="sql.example.test", DATABASE="EmployeeDB",
+        ), patch.object(self.chatbot, "create_engine") as create:
+            self.chatbot.get_engine()
+        url = create.call_args.args[0]
+        self.assertEqual(url.host, "sql.example.test")
+        self.assertEqual(url.database, "EmployeeDB")
+        self.assertEqual(url.port, 1433)
+        self.assertEqual(url.username, "readonly-user")
+        self.assertEqual(url.password, "test-only-password")
+        self.assertEqual(url.query["Encrypt"], "yes")
+        self.assertEqual(url.query["TrustServerCertificate"], "no")
+        self.assertNotIn("trusted_connection", url.query)
+        self.assertNotIn("test-only-password", str(url))
+        self.assertEqual(create.call_args.kwargs["connect_args"], {"timeout": 10})
+
+    def test_local_employee_db_preserves_windows_authentication(self):
+        environment = {
+            key: value for key, value in TEST_ENVIRONMENT.items() if not key.upper().startswith("WORKFORCE_")
+        }
+        self.chatbot.get_engine.clear()
+        self.addCleanup(self.chatbot.get_engine.clear)
+        with patch.dict(os.environ, environment, clear=True), patch.multiple(
+            self.chatbot, DATA_MODE="sqlserver", SERVER=r"localhost\SQLEXPRESS", DATABASE="EmployeeDB",
+        ), patch.object(self.chatbot, "create_engine") as create:
+            self.chatbot.get_engine()
+        url = create.call_args.args[0]
+        self.assertEqual(url.host, r"localhost\SQLEXPRESS")
+        self.assertEqual(url.database, "EmployeeDB")
+        self.assertIsNone(url.username)
+        self.assertIsNone(url.password)
+        self.assertEqual(url.query["trusted_connection"], "yes")
+
+    def test_invalid_sql_settings_fail_before_creating_a_connection(self):
+        environment = {
+            key: value for key, value in TEST_ENVIRONMENT.items() if not key.upper().startswith("WORKFORCE_")
+        }
+        for settings in (
+            {"WORKFORCE_SQL_USERNAME": "readonly-user"},
+            {"WORKFORCE_SQL_PASSWORD": "test-only-password"},
+            {"WORKFORCE_SQL_PORT": "invalid"},
+            {"WORKFORCE_SQL_PORT": "0"},
+            {"WORKFORCE_SQL_PORT": "65536"},
+        ):
+            self.chatbot.get_engine.clear()
+            with self.subTest(settings=list(settings)), patch.dict(
+                os.environ, {**environment, **settings}, clear=True,
+            ), patch.object(self.chatbot, "DATA_MODE", "sqlserver"), patch.object(
+                self.chatbot, "create_engine",
+            ) as create, self.assertRaises(ValueError):
+                self.chatbot.get_engine()
+            create.assert_not_called()
+        self.chatbot.get_engine.clear()
+
     def test_chart_request_routes_before_generic_count(self):
         request = self.chatbot.translate_question("Show a bar chart of employee count by department")
         self.assertEqual(request.response_kind, "chart_employee_count")

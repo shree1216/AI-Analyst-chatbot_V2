@@ -143,7 +143,9 @@ results use the existing bounded pandas join, lookup and calculation engine.
 Targets must be matched at the correct grain (for example, department and month).
 Ambiguous source names, keys, periods or missing sources request clarification
 instead of inventing a join or silently substituting Excel targets for SQL actuals.
-Each answer names the actual sources used and offers an Excel export.
+Each answer names the actual sources used and offers an Excel export. The interface
+keeps only **Sources used** captions; request IDs, timing, preview counts and
+technical routing details remain in backend diagnostics rather than faded helper text.
 Explicit SQL/database-only questions do not inspect uploaded Excel data;
 explicit Excel/workbook-only questions do not inspect SQL. A plan that selects
 different source kinds from those explicitly requested is rejected before any
@@ -359,7 +361,7 @@ than only a generic interpretation failure.
 
 Open **Backend diagnostics** in the sidebar after asking an employee database or Excel question, then
 select **Download backend log**. This downloads JSON-lines text as
-`chatbot_backend.log` for this chat only. Each answer shows a request ID to match
+`chatbot_backend.log` for this chat only. The log includes a request ID to match
 against UTC timestamps, elapsed milliseconds, worksheet schemas/unavailable
 sheets, automatic routing, planner status and structured plans, calculation step
 details (columns, metrics, grouping, sorting, joins and filter structure), row/column counts,
@@ -465,7 +467,7 @@ Only the chat answer and supporting-data preview are capped at 100 rows.
 **Download Excel includes all matching result rows**, up to the existing
 50,000-row result safety limit, including rows beyond the preview. If the question
 requests top/bottom N or a specific row limit, that requested limit still applies.
-The caption shows preview and total result counts; calculations use every
+Backend diagnostics record preview and total result counts; calculations use every
 matching source row. Downloads use streaming workbook generation to avoid keeping
 a second full workbook cell grid in memory. Previously cached answers retain
 their original snapshots; ask the question again to generate a complete new download.
@@ -485,12 +487,11 @@ in place. Prior spreadsheet result cells are excluded from general AI chat conte
 
 #### Verify which data source is active
 
-- **Employee database** shows **Active backend: SQL Server** or **SQLite demo
-  (not SQL Server)**, plus the actual configured employee source. Select **Test
-  employee data connection** to run a read-only row count. A successful check
-  displays the count and check time; failures are shown explicitly.
-- **Excel workbook** shows the uploaded filename, selected worksheet, row/column
-  counts, and preview. Ask `count rows`, then compare a known region's total
+- Employee answers identify **SQL** or **SQL (SQLite demo)** in **Sources used**.
+  Select **Test employee data connection** to run a read-only row count. A
+  successful check displays the count and check time; failures are shown explicitly.
+- **Excel workbook** shows the uploaded filename, selected worksheet and
+  preview. Ask `count rows`, then compare a known region's total
   against the worksheet. This does not import the workbook into SQL Server.
 - In employee mode, sales/revenue questions ask you to upload the Sales workbook
   rather than sending the calculation to general AI chat.
@@ -899,9 +900,44 @@ but this is not a promise of continuous uptime.
 
 The default `localhost\SQLEXPRESS` connection works only on the computer running
 SQL Server. It will not connect from Streamlit Community Cloud or another hosted
-environment. Hosting the SQL Server version requires a secured hosted database
-and changes to its connection configuration; use the platform's secret manager
-and restrict access to sensitive workforce information.
+environment. EmployeeDB can be used locally with Windows authentication without
+changing the default settings.
+
+For a network-accessible SQL Server or Azure SQL database, configure these
+root-level values in the deployment secret manager (Streamlit uses TOML):
+
+```toml
+WORKFORCE_DATA_MODE = "sqlserver"
+WORKFORCE_SQL_SERVER = "your-reachable-sql-host.example"
+WORKFORCE_SQL_PORT = "1433"
+WORKFORCE_SQL_DATABASE = "EmployeeDB"
+WORKFORCE_SQL_DRIVER = "ODBC Driver 18 for SQL Server"
+WORKFORCE_SQL_USERNAME = "your-readonly-sql-login"
+WORKFORCE_SQL_PASSWORD = "set-your-password-only-in-secrets"
+```
+
+The selected Microsoft ODBC driver must be installed on the host. `unixodbc`
+alone (as used by the demo's Linux environment) is not the Microsoft SQL Server
+driver; install the matching Microsoft driver on an appropriate hosting runtime
+before switching that runtime to SQL Server mode. Do not switch the public demo
+until a reachable host, driver and credentials are configured.
+
+SQL authentication requires both username and password, encrypts the connection,
+and validates the server certificate. No certificate-trust bypass is enabled.
+Connection attempts have a 10-second login timeout. SQL mode never silently
+falls back to demo data. After changing database settings, reboot the app to
+discard any previously cached database engine, then select **Test employee data
+connection** to verify the actual database row count.
+
+`localhost` on the cloud server cannot address a database on your laptop.
+If EmployeeDB exists only on your PC, either run Streamlit on that PC or arrange
+an approved hosted/private-network database setup. Do not expose SQL Server
+directly to the public internet as a shortcut.
+
+Use a dedicated read-only account, restrict database network access, and protect
+the chatbot with appropriate access controls before connecting private employee
+records. The public demo does not provide application-level authentication.
+Never commit credentials or paste passwords into chat.
 
 ### Cloudflare Error 1033
 

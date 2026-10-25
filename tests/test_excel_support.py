@@ -751,6 +751,9 @@ class ExcelChatTests(unittest.TestCase):
             route = next(event for event in message["backend_log"] if event["event"] == "route_selected")
             functions = {item["function"] for item in route["implementation"]}
             self.assertEqual(functions, {"local_excel_result", "query_sales_total"})
+            self.assertTrue(all(caption.value.startswith("Sources used:") for caption in app.caption))
+            self.assertEqual(len(app.caption), 1)
+            self.assertIn("EXCEL:", app.caption[0].value)
             implementation = {
                 item["function"]: item["code"]
                 for event in message["backend_log"] for item in event.get("implementation", [])

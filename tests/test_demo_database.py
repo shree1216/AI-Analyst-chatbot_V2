@@ -252,7 +252,7 @@ class DemoDatabaseTests(unittest.TestCase):
         self.assertFalse(any("credentials" in caption.value.lower() for caption in app.caption))
         self.assertTrue(app.get("audio_input")[0].disabled)
         self.assertTrue(app.toggle[0].disabled)
-        self.assertTrue(any("Voice is not enabled" in caption.value for caption in app.caption))
+        self.assertEqual(len(app.caption), 0)
         app.chat_input[0].set_value("How many employees do we have?").run(timeout=30)
         self.assertEqual(len(app.exception), 0)
         self.assertIn(f"{len(self.employees)} employees", app.session_state["chat_history"][0]["answer"])
@@ -281,10 +281,12 @@ class DemoDatabaseTests(unittest.TestCase):
         self.assertIn("SELECT", app.sidebar.code[0].value)
         self.assertFalse(any("SELECT" in message["answer"] for message in app.session_state["chat_history"]))
         self.assertTrue(any(button.label == "Download backend log" for button in app.get("download_button")))
+        self.assertTrue(all(caption.value.startswith("Sources used:") for caption in app.caption))
+        self.assertTrue(any("SQLite demo" in caption.value for caption in app.caption))
 
     def test_backend_status_and_connection_check_show_real_demo_count(self):
         app = employee_app().run(timeout=30)
-        self.assertTrue(any("SQLite demo (not SQL Server)" in caption.value for caption in app.caption))
+        self.assertEqual(len(app.caption), 0)
         app.button(key="test_employee_connection").click().run(timeout=30)
         self.assertEqual(len(app.exception), 0)
         self.assertTrue(any(f"{len(self.employees):,} employee rows" in status.value for status in app.success))

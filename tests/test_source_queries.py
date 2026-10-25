@@ -429,6 +429,8 @@ class SourceQueryTests(unittest.TestCase):
             self.assertNotIn("error", message)
             self.assertEqual(message["result"]["Variance"].tolist(), [-1000] * len(budgets))
             self.assertTrue(any("SQL: main.Employees; EXCEL: Targets" in caption.value for caption in app.caption))
+            self.assertEqual(len(app.caption), 1)
+            self.assertTrue(all(caption.value.startswith("Sources used:") for caption in app.caption))
             self.assertTrue(any(button.label == "Download Excel" for button in app.get("download_button")))
             self.assertTrue(any(button.label == "Download backend log" for button in app.get("download_button")))
             original_events = list(message["backend_log"])

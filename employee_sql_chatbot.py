@@ -66,8 +66,8 @@ load_dotenv(Path(__file__).with_name(".env"), override=False)
 DATA_MODE = os.getenv("WORKFORCE_DATA_MODE", "sqlserver").strip().lower()
 if DATA_MODE not in {"sqlserver", "demo"}:
     raise ValueError("WORKFORCE_DATA_MODE must be 'sqlserver' or 'demo'.")
-SERVER = r"localhost\SQLEXPRESS"
-DATABASE = "EmployeeDB"
+SERVER = os.getenv("WORKFORCE_SQL_SERVER", r"localhost\SQLEXPRESS").strip()
+DATABASE = os.getenv("WORKFORCE_SQL_DATABASE", "EmployeeDB").strip()
 EMPLOYEE_TABLE = "Employees" if DATA_MODE == "demo" else "dbo.Employees"
 SOURCE_LABEL = "Bundled synthetic employee_dataset.xlsx" if DATA_MODE == "demo" else f"{DATABASE}.dbo.Employees"
 TABLE = (
@@ -337,13 +337,32 @@ def get_engine() -> Engine:
             employees.to_sql("Employees", connection, index=False)
             connection.exec_driver_sql("PRAGMA query_only = ON")
         return engine
+    username = os.getenv("WORKFORCE_SQL_USERNAME", "").strip()
+    password = os.getenv("WORKFORCE_SQL_PASSWORD", "")
+    if bool(username) != bool(password):
+        raise ValueError("Set both WORKFORCE_SQL_USERNAME and WORKFORCE_SQL_PASSWORD in the secret manager.")
+    connection_options = {
+        "driver": os.getenv("WORKFORCE_SQL_DRIVER", "ODBC Driver 17 for SQL Server").strip(),
+    }
+    if username:
+        connection_options.update({"Encrypt": "yes", "TrustServerCertificate": "no"})
+    else:
+        connection_options["trusted_connection"] = "yes"
+    port_text = os.getenv("WORKFORCE_SQL_PORT", "").strip()
+    if port_text and (not port_text.isdecimal() or not 1 <= int(port_text) <= 65535):
+        raise ValueError("WORKFORCE_SQL_PORT must be a port number between 1 and 65535.")
+    if not SERVER or not DATABASE:
+        raise ValueError("WORKFORCE_SQL_SERVER and WORKFORCE_SQL_DATABASE must not be empty.")
     database_url = URL.create(
         "mssql+pyodbc",
+        username=username or None,
+        password=password or None,
         host=SERVER,
+        port=int(port_text) if port_text else None,
         database=DATABASE,
-        query={"driver": "ODBC Driver 17 for SQL Server", "trusted_connection": "yes"},
+        query=connection_options,
     )
-    return create_engine(database_url, pool_pre_ping=True, pool_recycle=1800)
+    return create_engine(database_url, pool_pre_ping=True, pool_recycle=1800, connect_args={"timeout": 10})
 
 
 def limit_query(sql: str, limit: int) -> str:
@@ -3049,8 +3068,7 @@ def display_excel_response(message: dict[str, Any], render_key: str) -> str | No
     if result is not None and result.attrs.get("source_sheets"):
         workbook_name = message["excel_source"].rsplit(" / ", 1)[0]
         message["excel_source"] = f"{workbook_name} / {', '.join(result.attrs['source_sheets'])}"
-    st.caption(f"Excel source: {message['excel_source']}.")
-    st.caption(f"Backend request ID: {trace.request_id}. Download the backend log from the sidebar.")
+    st.caption(f"Sources used: EXCEL: {message['excel_source']}.")
     if message.get("error"):
         if new_trace and not any(event["event"] == "request_failed" for event in trace.events):
             trace.record("request_failed", error_type="WorksheetLoadError", status="failed")
@@ -3061,13 +3079,7 @@ def display_excel_response(message: dict[str, Any], render_key: str) -> str | No
             st.warning(message["backend_log_error"])
         return None
     result = message["result"]
-    if result.attrs.get("interpretation"):
-        st.caption(result.attrs["interpretation"])
     preview = result.head(MAX_ROWS)
-    st.caption(
-        f"Showing {len(preview):,} of {len(result):,} result rows. "
-        "Download Excel includes all result rows. Calculations use all matching source rows."
-    )
     answer = spreadsheet_answer(preview)
     if new_trace:
         trace.record_code("answer_rendered", spreadsheet_answer, rows=len(result), preview_rows=len(preview))
@@ -3176,7 +3188,7 @@ def display_business_report(
         if source:
             interpretation = next(text for heading, _, text in report.tables if heading == source[0])
             if interpretation not in report.executive_summary:
-                st.caption(interpretation)
+                st.write(interpretation)
     if report.findings:
         st.markdown('<h3 class="report-section">Key Findings</h3>', unsafe_allow_html=True)
         for finding in report.findings:
@@ -3191,13 +3203,13 @@ def display_business_report(
                 elif column == "Percentage of total":
                     formatted[column] = formatted[column].map(lambda value: f"{value:.1f}%")
             st.dataframe(formatted, hide_index=True, width="stretch")
-            st.caption(interpretation)
+            st.write(interpretation)
             if "Headcount" in table:
-                st.caption(f"Table total: {int(table['Headcount'].sum()):,} employees.")
+                st.write(f"Table total: {int(table['Headcount'].sum()):,} employees.")
         if not report.tables:
             st.write("No matching data is available for a breakdown.")
     with st.expander("Data Notes", expanded=False):
-        st.caption(f"Source: {SOURCE_LABEL} | Question: {question}")
+        st.write(f"Sources used: SQL: {SOURCE_LABEL}.")
         for limitation in report.limitations:
             st.markdown(f"- {escape(limitation)}")
         if report.recommendations:
@@ -3374,7 +3386,9 @@ def display_employee_message(
                          status="success" if completed else "failed")
             if trace.file_error:
                 message["backend_log_error"] = trace.file_error
-        st.caption(f"Backend request ID: {message['request_id']}. Download the backend log from the sidebar.")
+        if message.get("result") is not None:
+            backend_label = "SQL (SQLite demo)" if DATA_MODE == "demo" else "SQL"
+            st.caption(f"Sources used: {backend_label}: {SOURCE_LABEL}.")
         if message.get("backend_log_error"):
             st.warning(message["backend_log_error"])
 
@@ -3461,6 +3475,11 @@ def display_automatic_message(
                 )
                 message["result"] = result
                 message["source_labels"] = labels
+                if DATA_MODE != "demo":
+                    message["source_labels"] = [
+                        f"SQL: {DATABASE}.{label.removeprefix('SQL: ')}" if label.startswith("SQL: ") else label
+                        for label in labels
+                    ]
                 preview = result.head(MAX_ROWS)
                 message["answer"] = spreadsheet_answer(preview)
                 trace.record_code("answer_rendered", spreadsheet_answer, rows=len(result), preview_rows=len(preview))
@@ -3491,8 +3510,6 @@ def display_automatic_message(
         st.warning(warning)
     if message.get("source_labels"):
         st.caption("Sources used: " + "; ".join(message["source_labels"]) + ".")
-    if message.get("request_id"):
-        st.caption(f"Backend request ID: {message['request_id']}. Download the backend log from the sidebar.")
     if message.get("backend_log_error"):
         st.warning(message["backend_log_error"])
     if message.get("error"):
@@ -3511,7 +3528,6 @@ def display_automatic_message(
     st.write(answer)
     if "result" in message:
         result = message["result"]
-        st.caption(f"Showing {min(MAX_ROWS, len(result)):,} of {len(result):,} result rows. Calculations use all matching rows.")
         with st.expander("Supporting data"):
             st.dataframe(result.head(MAX_ROWS), hide_index=True, width="stretch")
         display_excel_download([("Results", result)], render_key, message)
@@ -4108,19 +4124,6 @@ def apply_theme() -> None:
                 width: 36px !important;
             }
 
-            .disclaimer {
-                color: var(--wc-muted);
-                bottom: 5px;
-                left: 50%;
-                font-size: 0.72rem;
-                max-width: 760px;
-                position: fixed;
-                text-align: center;
-                transform: translateX(-50%);
-                width: calc(100vw - 2rem);
-                z-index: 10;
-            }
-
             /* Feedback and scrollbar */
             .report-heading { border-top: 3px solid #0f766e; padding: 16px 0 12px; }
             .report-brand { color: #0f766e; font: 600 12px 'DM Sans', sans-serif; }
@@ -4222,11 +4225,6 @@ def render_recent_chats(placeholder: Any) -> None:
                 recent_label = message.get("question") or f"Image: {message.get('image_name', 'upload')}"
                 recent_question = escape(recent_label[:72])
                 st.markdown(f'<div class="recent-chat">{recent_question}</div>', unsafe_allow_html=True)
-        else:
-            st.markdown(
-                '<div class="sidebar-caption">Your recent conversations will appear here.</div>',
-                unsafe_allow_html=True,
-            )
 
 
 # Sidebar navigation
@@ -4241,22 +4239,12 @@ with st.sidebar:
 
     data_source = st.radio(
         "Data source", ["Automatic (SQL + Excel)", "Employee database", "Excel workbook"], key="data_source",
+        help="Automatic mode sends SQL schemas and Excel headers/sample rows to the configured Azure planner.",
     )
     excel_selected = data_source == "Excel workbook"
     automatic_selected = data_source == "Automatic (SQL + Excel)"
-    if automatic_selected:
-        st.caption(
-            "Automatically chooses SQL tables, Excel worksheets, or both. "
-            "SQL schemas and up to three sample rows per Excel sheet are sent to the configured Azure AI planner. "
-            "Only selected sources are queried; comparisons need an uploaded workbook."
-        )
     if not excel_selected:
         backend = "SQLite demo (not SQL Server)" if DATA_MODE == "demo" else "SQL Server"
-        st.caption(f"Active backend: {backend}")
-        st.caption(
-            "SQL discovery: all visible user tables in the configured database."
-            if automatic_selected else f"Employee source: {SOURCE_LABEL}"
-        )
         if st.button("Test employee data connection", key="test_employee_connection"):
             connection_trace = BackendTrace([])
             st.session_state["employee_connection_log"] = connection_trace.events
@@ -4347,32 +4335,10 @@ with st.sidebar:
                     workbook_cache["frame_preview_only"] = automatic_selected
                 excel_frame = workbook_cache["frame"]
                 excel_source = f"{file_name} / {sheet}"
-                st.caption(
-                    f"Workbook preview: {excel_source}" if automatic_selected
-                    else f"Active source: Excel workbook | {excel_source}"
-                )
-                st.caption(
-                    f"Preview: {len(excel_frame):,} rows | {len(excel_frame.columns)} columns. "
-                    "Full worksheets load only when selected for a question."
-                    if automatic_selected else f"{len(excel_frame):,} rows | {len(excel_frame.columns)} columns"
-                )
                 with st.expander("Worksheet preview"):
                     st.dataframe(excel_frame.head(10), hide_index=True, width="stretch")
-                st.caption(
-                    "Try 'Compare SQL actuals against the Excel department budgets and show the variance'. "
-                    "Automatic source selection needs Azure OpenAI."
-                    if automatic_selected else
-                    "Try 'What are the total sales by region?', 'count rows', or "
-                    "'What are the total sales for the North region?'. "
-                    "More complex questions need Azure OpenAI."
-                )
                 if any(name.casefold() == "sales" for name in sheet_names):
                     with st.expander("Create region summary"):
-                        st.caption(
-                            "Uses all rows in the Sales sheet. Adds Region_Summary to a downloadable copy; "
-                            "never changes the uploaded original or replaces an existing sheet. "
-                            "Download the original backup before leaving this session."
-                        )
                         if "backup" not in workbook_cache:
                             workbook_cache["backup"] = memoryview(content).tobytes()
                         stem = Path(file_name).stem
@@ -4412,8 +4378,6 @@ with st.sidebar:
             except ValueError as error:
                 excel_load_error = str(error)
                 st.warning(str(error))
-                if st.session_state.get("excel_workbook"):
-                    st.caption("This preview is unavailable. Questions can still automatically use other valid worksheets.")
         else:
             st.session_state.pop("excel_workbook", None)
 
@@ -4427,14 +4391,13 @@ with st.sidebar:
         key=f"voice_question_{voice_recorder_version}",
         sample_rate=16000,
         disabled=not voice_enabled,
+        help="Voice is unavailable until Azure Speech is configured." if not voice_enabled else None,
     )
     read_answers_aloud = st.toggle(
         "Read responses aloud",
         key="read_answers_aloud",
         disabled=not voice_enabled,
     )
-    if not voice_enabled:
-        st.caption("Voice is not enabled for this workspace. Please type your question.")
     st.markdown(
         '<div class="sidebar-credit"><strong>Created by Vijayashree</strong><br>All rights reserved 2026</div>',
         unsafe_allow_html=True,
@@ -4556,11 +4519,6 @@ if submitted_question:
 if image_uploads or submitted_question:
     render_recent_chats(recent_chats_placeholder)
 
-st.markdown(
-    '<div class="disclaimer">Answers identify the sources used. Please verify important data.</div>',
-    unsafe_allow_html=True,
-)
-
 # Conversation thread
 chat_scroll_component(data={"message_count": len(history)}, key="chat_auto_scroll")
 for index, message in enumerate(history):
@@ -4615,20 +4573,9 @@ backend_events = sorted(
 )[-1000:]
 with st.sidebar.expander("Backend diagnostics"):
     if backend_events:
-        st.caption(
-            "SQL Server / SQLite statements, parameter names/types, query durations, retries and exports; "
-            "Excel routing, worksheet schemas, calculation plans, processing steps, result columns and failures. "
-            "Implementation entries include the Python source of the invoked query/calculation functions, "
-            "not generated code or runtime variable values. "
-            "SQL literals, parameter/filter values, question text, cell values and connection secrets are redacted or excluded. "
-            "Excel workbook calculations use pandas, so their steps appear instead of SQL. Logs are private. "
-            "The server also writes rotating logs to logs/backend.log."
-        )
         session_log = diagnostic_log(backend_events)
         st.download_button(
             "Download backend log", data=session_log, file_name="chatbot_backend.log",
             mime="text/plain", key="download_backend_log",
         )
         st.code(session_log, language="json")
-    else:
-        st.caption("Ask an employee database or worksheet question to create a diagnostic trace.")
