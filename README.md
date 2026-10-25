@@ -144,6 +144,11 @@ Targets must be matched at the correct grain (for example, department and month)
 Ambiguous source names, keys, periods or missing sources request clarification
 instead of inventing a join or silently substituting Excel targets for SQL actuals.
 Each answer names the actual sources used and offers an Excel export.
+Explicit SQL/database-only questions do not inspect uploaded Excel data;
+explicit Excel/workbook-only questions do not inspect SQL. A plan that selects
+different source kinds from those explicitly requested is rejected before any
+data query runs. Without an explicit source, the planner selects the relevant
+source(s) from the question and available schemas.
 
 The configured Azure planner receives SQL schema metadata and Excel sample rows
 (at most three per sheet; sample strings are shortened to 160 characters), not
@@ -163,6 +168,14 @@ Source inspection/query failures are visible in diagnostics. A SQL outage does
 not prevent an Excel-only answer, but it is explicitly reported and SQL-based
 comparisons cannot be completed. Results and traces are cached with each answer;
 rerunning the UI does not repeat queries. **New chat** clears those snapshots.
+Failed automatic questions offer **Retry question**, using the workbook currently
+uploaded (if any).
+
+On startup, the app checks the deployed backend dependency revisions and refreshes
+their imports together when they change. This prevents Streamlit hot updates from
+mixing a new query planner with a cached older diagnostics schema, which previously
+caused valid questions to fail with a backend-log field restriction message.
+Unchanged reruns keep the same modules; schema privacy checks are not disabled.
 
 The existing **Employee database** and **Excel workbook** modes remain available
 for explicit single-source workflows, including supported questions without AI.

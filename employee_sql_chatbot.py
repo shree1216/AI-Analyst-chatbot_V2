@@ -44,6 +44,10 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL, Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.pool import StaticPool
+from backend_runtime import refresh_backend_modules
+
+refresh_backend_modules()
+
 from excel_support import (
     EXCEL_MIME, excel_sheet_names, generate_excel_download, query_sales_total, read_excel_sheet,
     spreadsheet_answer, spreadsheet_schema, write_region_summary,
@@ -51,7 +55,7 @@ from excel_support import (
 from workbook_operations import MAX_SHEETS, execute_workbook_plan
 from backend_diagnostics import BackendTrace, diagnostic_log
 from source_queries import (
-    discover_excel_sources, discover_sql_sources, execute_source_plan, source_planner_prompt,
+    discover_excel_sources, discover_sql_sources, execute_source_plan, requested_source_kinds, source_planner_prompt,
 )
 
 
@@ -3394,20 +3398,22 @@ def display_automatic_message(
                 )
             sources = {}
             unavailable = []
-            try:
-                with get_demo_query_lock() if DATA_MODE == "demo" else nullcontext():
-                    sql_sources, sql_unavailable = discover_sql_sources(get_engine(), trace)
-                sources.update(sql_sources)
-                unavailable.extend(sql_unavailable)
-            except SQLAlchemyError as error:
-                trace.record("schema_discovery_failed", route="sql", error_type=type(error).__name__, status="unavailable")
-                unavailable.append("SQL is unavailable. SQL actual values cannot be queried or compared.")
+            requested_kinds = requested_source_kinds(message["question"])
+            if requested_kinds != {"excel"}:
+                try:
+                    with get_demo_query_lock() if DATA_MODE == "demo" else nullcontext():
+                        sql_sources, sql_unavailable = discover_sql_sources(get_engine(), trace)
+                    sources.update(sql_sources)
+                    unavailable.extend(sql_unavailable)
+                except SQLAlchemyError as error:
+                    trace.record("schema_discovery_failed", route="sql", error_type=type(error).__name__, status="unavailable")
+                    unavailable.append("SQL is unavailable. SQL actual values cannot be queried or compared.")
             content = message.get("workbook_content")
-            if content is not None:
+            if content is not None and requested_kinds != {"sql"}:
                 excel_sources, excel_unavailable = discover_excel_sources(content, trace)
                 sources.update(excel_sources)
                 unavailable.extend(excel_unavailable)
-            else:
+            elif content is None:
                 unavailable.append("No Excel workbook is uploaded. Excel targets, budgets and lookups are unavailable.")
             message["source_warnings"] = [
                 item for item in unavailable if not item.startswith("No Excel workbook")
@@ -3418,7 +3424,9 @@ def display_automatic_message(
                     model=deployment, max_completion_tokens=6000, timeout=60.0,
                     response_format={"type": "json_object"},
                     messages=[
-                        {"role": "system", "content": source_planner_prompt(sources, unavailable)},
+                        {"role": "system", "content": source_planner_prompt(sources, unavailable)
+                         + (f" The user explicitly requested these source kinds: {sorted(requested_kinds)}."
+                            if requested_kinds else "")},
                         {"role": "user", "content": message["question"]},
                     ],
                 )
@@ -3449,6 +3457,7 @@ def display_automatic_message(
                         query, schema, table, DATA_MODE == "demo", max_rows=50_001,
                     ),
                     run_query, trace,
+                    required_kinds=requested_kinds,
                 )
                 message["result"] = result
                 message["source_labels"] = labels
@@ -3488,6 +3497,15 @@ def display_automatic_message(
         st.warning(message["backend_log_error"])
     if message.get("error"):
         st.warning(message["error"])
+        if st.button(
+            "Retry question", key=f"retry_automatic_{render_key}",
+            help="Retry this question using the currently uploaded workbook, if any.",
+        ):
+            for key in ("error", "answer", "result", "excel_download", "source_labels", "source_warnings"):
+                message.pop(key, None)
+            workbook = st.session_state.get("excel_workbook")
+            message["workbook_content"] = workbook.get("content") if workbook else None
+            st.rerun()
         return None
     answer = message["answer"]
     st.write(answer)

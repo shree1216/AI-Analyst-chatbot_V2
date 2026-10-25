@@ -17,7 +17,7 @@ from backend_diagnostics import BackendTrace, diagnostic_log
 from excel_support import read_excel_sheet
 from source_queries import (
     compile_source_query, discover_excel_sources, discover_sql_sources,
-    execute_source_plan, source_planner_prompt,
+    execute_source_plan, requested_source_kinds, source_planner_prompt,
 )
 
 
@@ -131,6 +131,63 @@ class SourceQueryTests(unittest.TestCase):
         self.assertEqual(labels, ["SQL: main.Actuals"])
         self.read.assert_called_once()
         self.assertEqual(self.events[-1]["route"], "sql")
+
+    def test_explicit_source_mentions_identify_sql_excel_and_combined_questions(self):
+        cases = {
+            "How many employees are there?": set(),
+            "How many employees from SQL?": {"sql"},
+            "Get the total in the database": {"sql"},
+            "Count rows from Excel": {"excel"},
+            "Sum budgets in the workbook": {"excel"},
+            "Compare SQL actuals with targets in Excel": {"sql", "excel"},
+            "Use SQL Server and the Excel lookup": {"sql", "excel"},
+            "Use SQL only, not Excel": {"sql"},
+            "Count Excel rows without using SQL": {"excel"},
+        }
+        for question, expected in cases.items():
+            with self.subTest(question=question):
+                self.assertEqual(requested_source_kinds(question), expected)
+
+    def test_explicit_sql_excel_or_both_cannot_be_silently_replaced_with_other_sources(self):
+        for plan, required in (
+            (data_plan(excel=["excel_0"]), {"sql"}),
+            (data_plan(sql=[{"source": self.actual, "query": query()}]), {"excel"}),
+            (data_plan(excel=["excel_0"]), {"sql", "excel"}),
+        ):
+            with self.subTest(required=required), self.assertRaisesRegex(ValueError, "requested SQL/Excel"):
+                execute_source_plan(plan, self.sources, self.compiler, self.read, self.trace, required_kinds=required)
+        self.read.assert_not_called()
+
+    def test_explicit_excel_question_does_not_inspect_sql(self):
+        client = Mock()
+        client.chat.completions.create.return_value = SimpleNamespace(choices=[
+            SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=json.dumps(data_plan(excel=["excel_0"])))),
+        ])
+        with patch.dict(os.environ, {"AZURE_OPENAI_DEPLOYMENT_MINI": "test"}), patch.object(
+            self.chatbot, "get_azure_openai_client", return_value=client,
+        ), patch.object(self.chatbot, "get_engine", side_effect=AssertionError("Unneeded SQL discovery")):
+            message = {"question": "Preview the targets from Excel", "workbook_content": workbook_bytes()}
+            self.chatbot.display_automatic_message(message, "explicit_excel")
+        self.assertNotIn("error", message)
+        self.assertEqual(message["source_labels"], ["EXCEL: Targets"])
+        self.assertFalse(message["source_warnings"])
+
+    def test_explicit_sql_question_does_not_inspect_uploaded_excel(self):
+        client = Mock()
+        client.chat.completions.create.return_value = SimpleNamespace(choices=[
+            SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=json.dumps(
+                data_plan(sql=[{"source": self.actual, "query": query()}]),
+            ))),
+        ])
+        with patch.dict(os.environ, {"AZURE_OPENAI_DEPLOYMENT_MINI": "test"}), patch.object(
+            self.chatbot, "get_azure_openai_client", return_value=client,
+        ), patch.object(self.chatbot, "get_engine", return_value=self.engine), patch.object(
+            self.chatbot, "discover_excel_sources", side_effect=AssertionError("Unneeded Excel discovery"),
+        ):
+            message = {"question": "Get actuals from SQL", "workbook_content": workbook_bytes()}
+            self.chatbot.display_automatic_message(message, "explicit_sql")
+        self.assertNotIn("error", message)
+        self.assertEqual(message["source_labels"], ["SQL: main.Actuals"])
 
     def test_sql_server_money_columns_are_numeric_for_actual_budget_comparisons(self):
         inspector = Mock(default_schema_name="main")
@@ -365,7 +422,7 @@ class SourceQueryTests(unittest.TestCase):
         ), patch.object(self.chatbot, "get_engine", side_effect=SQLAlchemyError("PRIVATE_CONNECTION")), patch.object(
             self.chatbot, "run_query", side_effect=AssertionError("Unexpected SQL read"),
         ):
-            message = {"question": "Preview the Excel targets", "workbook_content": workbook_bytes()}
+            message = {"question": "Preview the targets", "workbook_content": workbook_bytes()}
             self.chatbot.display_automatic_message(message, "excel_only")
         self.assertNotIn("error", message)
         self.assertEqual(len(message["result"]), 4)

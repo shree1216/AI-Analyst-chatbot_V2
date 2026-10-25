@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 import json
+import re
 from typing import Any, Callable, Protocol
 
 import pandas as pd
@@ -15,6 +16,22 @@ from workbook_operations import MAX_CELLS, MAX_ROWS, MAX_SHEETS, execute_workboo
 
 MAX_SQL_TABLES = 200
 SAMPLE_ROWS = 3
+
+
+def requested_source_kinds(question: str) -> set[str]:
+    question = re.sub(
+        r"\b(?:not|without|ignore|exclude|excluding)\s+(?:(?:from|using|the)\s+)*"
+        r"(?:sql(?:\s+server)?|database|excel|workbook|spreadsheet)\b",
+        "", question, flags=re.IGNORECASE,
+    )
+    names = re.findall(
+        r"\b(?:sql(?:\s+server)?|database|excel|workbook|spreadsheet)\b",
+        question, flags=re.IGNORECASE,
+    )
+    return {
+        "sql" if re.fullmatch(r"sql(?:\s+server)?|database", name, flags=re.IGNORECASE) else "excel"
+        for name in names
+    }
 
 
 @dataclass
@@ -211,6 +228,7 @@ def execute_source_plan(
     plan: Any, sources: dict[str, DataSource],
     compiler: Callable[[dict[str, Any], dict[str, str], str], CompiledQuery],
     read_query: Callable[[str, dict[str, Any]], pd.DataFrame], trace: BackendTrace,
+    *, required_kinds: set[str] | None = None,
 ) -> tuple[pd.DataFrame, list[str]]:
     if not isinstance(plan, dict) or set(plan) != {"mode", "message", "sql", "excel", "calculation"}:
         raise ValueError("The source-selection plan has unexpected fields. Please rephrase the question.")
@@ -236,6 +254,11 @@ def execute_source_plan(
     calculation = plan["calculation"]
     if not chosen:
         raise ValueError("No data source was selected. Specify the table or worksheet.")
+    if required_kinds and {sources[key].kind for key in chosen} != required_kinds:
+        raise ValueError(
+            "The query plan did not match the requested SQL/Excel sources. "
+            "Please specify the SQL table and/or Excel worksheet to use."
+        )
     if calculation is None:
         if len(chosen) != 1:
             raise ValueError("Multiple sources need explicit join or lookup/calculation steps.")
