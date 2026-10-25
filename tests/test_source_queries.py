@@ -144,6 +144,14 @@ class SourceQueryTests(unittest.TestCase):
             "Use SQL Server and the Excel lookup": {"sql", "excel"},
             "Use SQL only, not Excel": {"sql"},
             "Count Excel rows without using SQL": {"excel"},
+            "Give me top 5 sales people by using both sources": {"sql", "excel"},
+            "Combine the sources to rank salespeople": {"sql", "excel"},
+            "Use all available data sources": {"sql", "excel"},
+            "Use both SQL sources": {"sql"},
+            "Use both workbook sources": {"excel"},
+            "Use both sources, excluding inactive employees": {"sql", "excel"},
+            "Use both sources but exclude Excel": {"sql"},
+            "Do not use both sources": set(),
         }
         for question, expected in cases.items():
             with self.subTest(question=question):
@@ -158,6 +166,50 @@ class SourceQueryTests(unittest.TestCase):
             with self.subTest(required=required), self.assertRaisesRegex(ValueError, "requested SQL/Excel"):
                 execute_source_plan(plan, self.sources, self.compiler, self.read, self.trace, required_kinds=required)
         self.read.assert_not_called()
+
+    def test_both_sources_phrase_requires_and_repairs_a_real_combined_plan(self):
+        client = Mock()
+        client.chat.completions.create.side_effect = [
+            SimpleNamespace(choices=[
+                SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=json.dumps(plan))),
+            ]) for plan in (data_plan(excel=["excel_0"]), self.combined_plan())
+        ]
+        with patch.dict(os.environ, {"AZURE_OPENAI_DEPLOYMENT_MINI": "test"}), patch.object(
+            self.chatbot, "get_azure_openai_client", return_value=client,
+        ), patch.object(self.chatbot, "get_engine", return_value=self.engine):
+            message = {"question": "Compare actual amounts with budgets using both sources",
+                       "workbook_content": workbook_bytes()}
+            self.chatbot.display_automatic_message(message, "both_sources")
+        self.assertNotIn("error", message)
+        self.assertEqual(client.chat.completions.create.call_count, 2)
+        self.assertEqual(message["source_labels"], ["SQL: main.Actuals", "EXCEL: Targets"])
+        self.assertEqual(message["result"]["Variance"].tolist(), [-50, 5])
+        self.assertTrue(any(event["event"] == "planner_repair_requested" for event in message["backend_log"]))
+
+    def test_unmatched_sources_do_not_offer_to_ignore_a_both_sources_requirement(self):
+        with self.engine.begin() as connection:
+            connection.execute(text("UPDATE Actuals SET Department = 'No overlap'"))
+        clarification = {
+            "mode": "clarification", "message": "Confirm Excel-only output instead?",
+            "sql": [], "excel": [], "calculation": None,
+        }
+        client = Mock()
+        client.chat.completions.create.side_effect = [
+            SimpleNamespace(choices=[
+                SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=json.dumps(plan))),
+            ]) for plan in (self.combined_plan(), clarification)
+        ]
+        with patch.dict(os.environ, {"AZURE_OPENAI_DEPLOYMENT_MINI": "test"}), patch.object(
+            self.chatbot, "get_azure_openai_client", return_value=client,
+        ), patch.object(self.chatbot, "get_engine", return_value=self.engine):
+            message = {"question": "Compare actual amounts with budgets using both sources",
+                       "workbook_content": workbook_bytes()}
+            self.chatbot.display_automatic_message(message, "unmatched_both")
+        self.assertIn("no records matched", message["error"])
+        self.assertNotIn("Confirm", message["error"])
+        self.assertNotIn("answer", message)
+        self.assertNotIn("excel_download", message)
+        self.assertEqual(client.chat.completions.create.call_count, 2)
 
     def test_explicit_excel_question_does_not_inspect_sql(self):
         client = Mock()
@@ -233,6 +285,58 @@ class SourceQueryTests(unittest.TestCase):
         self.read.assert_not_called()
         compiler.assert_not_called()
         self.assertEqual(self.events[-1]["rows"], 1)
+
+    def test_combined_sales_ranking_matches_real_keys_and_rejects_fictitious_enrichment(self):
+        employees = pd.DataFrame({
+            "Employee ID": ["E1", "E2"], "Name": [" ava ", "BEN"], "Department": ["Sales", "Sales"],
+        })
+        with self.engine.begin() as connection:
+            employees.to_sql("Employees", connection, index=False)
+        sql_sources, _ = discover_sql_sources(self.engine, self.trace)
+        employee_id = next(key for key, value in sql_sources.items() if value.label.endswith(".Employees"))
+        output = BytesIO()
+        pd.DataFrame({
+            "Salesperson": ["AVA", "AVA", "ben", "Unmatched"], "amount": [100, 200, 50, 30],
+        }).to_excel(output, sheet_name="Sales", index=False)
+        excel_sources, _ = discover_excel_sources(output.getvalue(), self.trace)
+        sources = {**sql_sources, **excel_sources}
+        proposed = data_plan(
+            sql=[{"source": employee_id, "query": query(columns=["Employee ID", "Name", "Department"])}],
+            excel=["excel_0"], calculation={
+                "understood": True, "unhandled_conditions": [], "sheet": "excel_0", "steps": [
+                    {"op": "aggregate", "group_by": ["Salesperson"], "metrics": [
+                        {"name": "Total Sales", "function": "sum", "column": "amount"},
+                    ]},
+                    {"op": "join", "sheet": employee_id, "left_on": ["Salesperson"], "right_on": ["Name"],
+                     "columns": [{"column": "Employee ID", "name": "Employee ID"},
+                                 {"column": "Department", "name": "Department"}], "how": "left"},
+                    {"op": "sort", "by": [{"column": "Total Sales", "direction": "desc"}]},
+                    {"op": "limit", "count": 5},
+                ],
+            },
+        )
+        result, labels = execute_source_plan(
+            proposed, sources, self.compiler, self.read, self.trace, required_kinds={"sql", "excel"},
+        )
+        self.assertEqual(result["Total Sales"].tolist(), [300, 50, 30])
+        self.assertEqual(result["Employee ID"].iloc[:2].tolist(), ["E1", "E2"])
+        self.assertTrue(pd.isna(result["Employee ID"].iloc[2]))
+        self.assertEqual(len(labels), 2)
+        self.assertEqual(result.attrs["source_matches"][0]["matched_rows"], 2)
+        self.assertEqual(result.attrs["source_matches"][0]["unmatched_rows"], 1)
+        self.assertTrue(any(event.get("matched_rows") == 2 for event in self.events))
+        with self.engine.begin() as connection:
+            connection.execute(text("UPDATE Employees SET Name = 'No overlap'"))
+        for how in ("left", "inner", "outer"):
+            proposed["calculation"]["steps"][1]["how"] = how
+            with self.subTest(how=how), self.assertRaisesRegex(ValueError, "no records matched"):
+                execute_source_plan(proposed, sources, self.compiler, self.read, self.trace)
+        proposed["calculation"]["steps"][1]["how"] = "left"
+        unmatched, _ = execute_source_plan(
+            proposed, sources, self.compiler, self.read, self.trace, allow_unmatched=True,
+        )
+        self.assertEqual(len(unmatched), 3)
+        self.assertTrue(unmatched["Employee ID"].isna().all())
 
     def test_combined_distinct_products_use_union_and_only_matching_catalog_sources(self):
         with self.engine.begin() as connection:

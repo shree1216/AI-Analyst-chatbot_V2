@@ -22,6 +22,7 @@ LOG_FIELDS = {
     "response_kind", "attempt",
     "source_id",
     "implementation",
+    "matched_rows", "unmatched_rows",
 }
 
 # Preserve identifiers/placeholders while removing SQL comments and literal values.

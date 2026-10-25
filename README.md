@@ -180,6 +180,20 @@ explicit Excel/workbook-only questions do not inspect SQL. A plan that selects
 different source kinds from those explicitly requested is rejected before any
 data query runs. Without an explicit source, the planner selects the relevant
 source(s) from the question and available schemas.
+Requests such as **using both sources**, **all data sources**, or **combine the
+sources** explicitly require SQL and Excel, even if neither technology is named.
+Explicit exclusions still apply; **both SQL sources** means SQL tables only.
+
+Cross-source joins now verify actual key overlap, not just compatible column
+names. Shared IDs/codes are preferred; exact text keys ignore case and outer
+whitespace. Match and unmatched-row counts are logged without recording key
+values. Partial matches produce a visible warning. A join with no real matches
+cannot be presented as a successful combined answer with blank SQL details.
+The automatic correction pass can try another valid key; otherwise the app
+explains the missing relationship. Explicit unmatched/missing-record questions
+remain supported. An Excel salesperson name that does not exist in the SQL
+employee table needs a shared employee ID or verified mapping; unrelated people
+are never joined by row position or guessed/fuzzy identity.
 The planner's equivalent `count_rows`/`average` SQL aggregate names are normalized
 to `count('*')`/`avg`, and an extra single `PLAN` wrapper around a calculation is
 unwrapped before full validation. Unsupported operations, extra conditions and

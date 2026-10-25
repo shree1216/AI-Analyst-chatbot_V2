@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from dataclasses import dataclass
 import math
 from numbers import Real
 from typing import Any
@@ -12,6 +13,18 @@ MAX_SHEETS = 20
 MAX_ROWS = 50_000
 MAX_COLUMNS = 200
 MAX_CELLS = 5_000_000
+
+
+@dataclass(frozen=True)
+class JoinDiagnostic:
+    left_sources: frozenset[str]
+    right_source: str
+    left_columns: tuple[str, ...]
+    right_columns: tuple[str, ...]
+    left_rows: int
+    matched_rows: int
+
+
 AGGREGATES = {"sum", "average", "min", "max", "count", "counta", "count_rows", "count_distinct", "median"}
 FUNCTION_ARITY = {
     **{name: (2, 2) for name in (
@@ -343,7 +356,7 @@ def _aggregate_frame(frame: pd.DataFrame, groups: list[str], metrics: Any) -> pd
     return output
 
 
-def _join(frame: pd.DataFrame, step: dict[str, Any], sheets: dict[str, pd.DataFrame]) -> pd.DataFrame:
+def _join(frame: pd.DataFrame, step: dict[str, Any], sheets: dict[str, pd.DataFrame]) -> tuple[pd.DataFrame, int]:
     lookup = step["op"] == "lookup"
     allowed = {"sheet", "left_on", "right_on", "columns", "how", "keep"} if lookup else {
         "sheet", "left_on", "right_on", "columns", "how",
@@ -388,6 +401,12 @@ def _join(frame: pd.DataFrame, step: dict[str, Any], sheets: dict[str, pd.DataFr
     right_counts = right[temporary_keys].set_axis(keys, axis=1).value_counts(dropna=False).rename("right_count").reset_index()
     try:
         counts = left_counts.merge(right_counts, on=keys, how=how)
+        valid_keys = counts[keys].notna().all(axis=1)
+        for key in keys:
+            valid_keys &= counts[key].map(lambda value: not isinstance(value, str) or bool(value.strip()))
+        matched_rows = int(counts.loc[
+            valid_keys & counts["left_count"].notna() & counts["right_count"].notna(), "left_count"
+        ].sum())
         predicted = int((counts["left_count"].fillna(1) * counts["right_count"].fillna(1)).sum())
         _require(predicted <= MAX_ROWS and predicted * (len(frame.columns) + len(selections)) <= MAX_CELLS,
                  "This join would produce too many rows. Filter the data or use a first-match lookup.")
@@ -396,7 +415,7 @@ def _join(frame: pd.DataFrame, step: dict[str, Any], sheets: dict[str, pd.DataFr
         if isinstance(error, ValueError) and str(error).startswith("This join"):
             raise
         raise ValueError("The join keys have incompatible types. Use matching text, numeric, or date keys.") from error
-    return output.drop(columns=temporary_keys)
+    return output.drop(columns=temporary_keys), matched_rows
 
 
 def _extrema(frame: pd.DataFrame, step: dict[str, Any]) -> pd.DataFrame:
@@ -461,6 +480,7 @@ def _append(frame: pd.DataFrame, step: dict[str, Any], sheets: dict[str, pd.Data
 
 def execute_workbook_plan(
     plan: Any, sheets: dict[str, pd.DataFrame], *, trace: BackendTrace | None = None,
+    join_diagnostics: list[JoinDiagnostic] | None = None,
 ) -> pd.DataFrame:
     _require(isinstance(plan, dict) and set(plan) == {"understood", "unhandled_conditions", "sheet", "steps"},
              "The workbook interpretation is invalid. Please specify the columns and calculation.")
@@ -476,6 +496,7 @@ def execute_workbook_plan(
                           _aggregate_frame, _aggregate, _join, _extrema, _select, _append,
                           sheet=sheet, rows=len(sheets[sheet]), columns=len(sheets[sheet].columns))
     frame = _bounded(sheets[sheet].copy(deep=True))
+    frame_sources = {sheet}
     for step_number, step in enumerate(steps, start=1):
         _require(isinstance(step, dict) and isinstance(step.get("op"), str), "A workbook calculation step is invalid.")
         operation = step["op"]
@@ -501,9 +522,22 @@ def execute_workbook_plan(
         elif operation == "extrema":
             frame = _extrema(frame, step)
         elif operation in {"join", "lookup"}:
-            frame = _join(frame, step, sheets)
+            left_rows = len(frame)
+            frame, matched_rows = _join(frame, step, sheets)
+            diagnostic = JoinDiagnostic(
+                frozenset(frame_sources), step["sheet"], tuple(step["left_on"]), tuple(step["right_on"]),
+                left_rows, matched_rows,
+            )
+            if join_diagnostics is not None:
+                join_diagnostics.append(diagnostic)
+            if trace:
+                trace.record("join_matched", source_id=step["sheet"], rows=left_rows,
+                             matched_rows=matched_rows, unmatched_rows=left_rows - matched_rows,
+                             details={"left_on": step["left_on"], "right_on": step["right_on"]})
+            frame_sources.add(step["sheet"])
         elif operation == "append":
             frame = _append(frame, step, sheets)
+            frame_sources.add(step["sheet"])
         elif operation == "select":
             _keys(step, {"columns"}, {"columns"})
             frame = _select(frame, step["columns"])

@@ -56,7 +56,8 @@ from excel_support import (
 from workbook_operations import MAX_SHEETS, execute_workbook_plan
 from backend_diagnostics import BackendTrace, diagnostic_log
 from source_queries import (
-    discover_excel_sources, discover_sql_sources, execute_source_plan, requested_source_kinds, source_planner_prompt,
+    SourceMatchError, discover_excel_sources, discover_sql_sources, execute_source_plan,
+    requested_source_kinds, source_planner_prompt,
 )
 
 
@@ -3538,6 +3539,11 @@ def display_automatic_message(
                             query, schema, table, DATA_MODE == "demo", max_rows=50_001,
                         ),
                         run_query, trace, required_kinds=requested_kinds,
+                        allow_unmatched=bool(re.search(
+                            r"\b(?:unmatched|missing)\b|\bnot\s+(?:present\s+)?in\b|"
+                            r"\b(?:no|without)\s+(?:a\s+)?match(?:ing)?\b",
+                            message["question"], re.IGNORECASE,
+                        )),
                     )
 
                 try:
@@ -3549,10 +3555,19 @@ def display_automatic_message(
                         client, deployment, system_prompt, message["question"], trace,
                         previous_plan=plan, validation_error=str(error),
                     )
+                    if isinstance(error, SourceMatchError) and repaired["mode"] != "data":
+                        raise error
                     if repaired["mode"] == "clarification" and isinstance(repaired["message"], str) and repaired["message"].strip():
                         raise ValueError(repaired["message"][:1500]) from error
                     result, labels = execute_plan(repaired)
                 message["result"] = result
+                for match in result.attrs.get("source_matches", []):
+                    if match["unmatched_rows"]:
+                        message["source_warnings"].append(
+                            f"Matching to {match['source']}: {match['matched_rows']:,} records matched; "
+                            f"{match['unmatched_rows']:,} had no matching key. "
+                            "Missing details are not inferred or filled with unrelated records."
+                        )
                 message["source_labels"] = labels
                 if DATA_MODE != "demo":
                     message["source_labels"] = [

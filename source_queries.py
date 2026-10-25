@@ -11,27 +11,51 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from backend_diagnostics import BackendTrace
 from excel_support import excel_sheet_names, read_excel_sheet, spreadsheet_schema
-from workbook_operations import MAX_CELLS, MAX_ROWS, MAX_SHEETS, execute_workbook_plan
+from workbook_operations import JoinDiagnostic, MAX_CELLS, MAX_ROWS, MAX_SHEETS, execute_workbook_plan
 
 
 MAX_SQL_TABLES = 200
 SAMPLE_ROWS = 3
 
 
+class SourceMatchError(ValueError):
+    pass
+
+
 def requested_source_kinds(question: str) -> set[str]:
     question = re.sub(
-        r"\b(?:not|without|ignore|exclude|excluding)\s+(?:(?:from|using|the)\s+)*"
-        r"(?:sql(?:\s+server)?|database|excel|workbook|spreadsheet)\b",
-        "", question, flags=re.IGNORECASE,
+        r"\b(?:not|without|ignore|exclude|excluding)\s+(?:(?:from|using|use|the)\s+)*"
+        r"(?:both|all|two|2)\s+(?:data\s+)?sources\b", "", question, flags=re.IGNORECASE,
     )
+    excluded: set[str] = set()
+
+    def exclude_source(match: re.Match[str]) -> str:
+        excluded.add("sql" if re.fullmatch(
+            r"sql(?:\s+server)?|database", match.group("source"), flags=re.IGNORECASE,
+        ) else "excel")
+        return ""
+
+    question = re.sub(
+        r"\b(?:not|without|ignore|exclude|excluding)\s+(?:(?:from|using|use|the)\s+)*"
+        r"(?P<source>sql(?:\s+server)?|database|excel|workbook|spreadsheet)\b",
+        exclude_source, question, flags=re.IGNORECASE,
+    )
+    combined = bool(re.search(
+        r"\b(?:both|all|two|2)\s+(?:(?:the|available|data)\s+)*sources\b",
+        question, flags=re.IGNORECASE,
+    ) or re.search(
+        r"\b(?:combine|merge|join)\s+(?:(?:the|these|available|data)\s+)*sources\b",
+        question, flags=re.IGNORECASE,
+    ))
     names = re.findall(
         r"\b(?:sql(?:\s+server)?|database|excel|workbook|spreadsheet)\b",
         question, flags=re.IGNORECASE,
     )
-    return {
+    kinds = {
         "sql" if re.fullmatch(r"sql(?:\s+server)?|database", name, flags=re.IGNORECASE) else "excel"
         for name in names
     }
+    return ({"sql", "excel"} if combined else kinds) - excluded
 
 
 @dataclass
@@ -235,7 +259,7 @@ def execute_source_plan(
     plan: Any, sources: dict[str, DataSource],
     compiler: Callable[[dict[str, Any], dict[str, str], str], CompiledQuery],
     read_query: Callable[[str, dict[str, Any]], pd.DataFrame], trace: BackendTrace,
-    *, required_kinds: set[str] | None = None,
+    *, required_kinds: set[str] | None = None, allow_unmatched: bool = False,
 ) -> tuple[pd.DataFrame, list[str]]:
     if not isinstance(plan, dict) or set(plan) != {"mode", "message", "sql", "excel", "calculation"}:
         raise ValueError("The source-selection plan has unexpected fields. Please rephrase the question.")
@@ -313,7 +337,31 @@ def execute_source_plan(
             trace.record("sheet_loaded", sheet=source.label, rows=len(frames[key]), columns=len(frames[key].columns))
         if sum(len(frame) for frame in frames.values()) > 100_000 or sum(frame.size for frame in frames.values()) > MAX_CELLS:
             raise ValueError("The selected sources exceed 100,000 rows or 5 million cells. Aggregate or filter SQL data first.")
-    result = frames[chosen[0]].copy() if calculation is None else execute_workbook_plan(calculation, frames, trace=trace)
+    joins: list[JoinDiagnostic] = []
+    result = frames[chosen[0]].copy() if calculation is None else execute_workbook_plan(
+        calculation, frames, trace=trace, join_diagnostics=joins,
+    )
+    source_matches = []
+    for join in joins:
+        right_kind = sources[join.right_source].kind
+        if not any(sources[key].kind != right_kind for key in join.left_sources):
+            continue
+        source_matches.append({
+            "source": sources[join.right_source].label, "matched_rows": join.matched_rows,
+            "unmatched_rows": join.left_rows - join.matched_rows,
+        })
+        if join.left_rows and not join.matched_rows:
+            trace.record("source_match_failed", source_id=join.right_source, rows=join.left_rows,
+                         matched_rows=0, unmatched_rows=join.left_rows, status="unmatched")
+            if not allow_unmatched:
+                raise SourceMatchError(
+                    "SQL and Excel were read, but no records matched between "
+                    + ", ".join(join.left_columns) + " and " + ", ".join(join.right_columns)
+                    + ". Similar column names alone do not establish a relationship. "
+                    "A shared employee/product ID, code, or verified name mapping is needed. "
+                    "No combined result was produced; unrelated records will not be linked."
+                )
+    result.attrs["source_matches"] = source_matches
     return result, [f"{sources[key].kind.upper()}: {sources[key].label}" for key in chosen]
 
 
@@ -336,6 +384,16 @@ def source_planner_prompt(sources: dict[str, DataSource], unavailable: list[str]
         "repeating the same entities; use a sales sheet when sales, quantities, regions or transactions are needed. "
         "Do not ask the user to confirm tables, sheets, obvious shared keys, case handling or blank exclusion. "
         "For matching entities, prefer a shared stable ID/code; otherwise use a shared entity-name column. "
+        "A request for 'both sources', 'all sources', or 'combine the sources' requires BOTH SQL and Excel. "
+        "Combining sources means actually matching related records or appending compatible entities, not "
+        "merely selecting two source names. For salesperson rankings, aggregate sales first, then enrich "
+        "using a shared employee ID/code when present; exact normalized full names are a fallback only. "
+        "Do not invent relationships from similar column headers, use row order, fuzzy-match unrelated people, "
+        "or attach an arbitrary employee to a salesperson. The runtime verifies actual join-key matches. "
+        "If no keys match, use another valid available key or explain the missing ID/name mapping; do not "
+        "return Excel-only rows with every SQL field blank as a successful combined answer. "
+        "Unmatched-record investigations are valid when explicitly requested. Partial matches must remain "
+        "visible, and requesting top N never permits inventing extra people when fewer valid rows exist. "
         "Ignore case and outer whitespace in text identity keys; exclude null/blank identity keys from distinct counts. "
         "For 'distinct products in SQL and Excel' default to ONE combined distinct count across the best relevant "
         "SQL table and Excel sheet. Use append to combine their identity columns, then normalize and count distinct; "
