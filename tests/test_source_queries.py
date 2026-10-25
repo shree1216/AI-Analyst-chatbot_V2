@@ -245,6 +245,22 @@ class SourceQueryTests(unittest.TestCase):
             next(event for event in self.events if event["event"] == "sources_selected")["route"], "combined",
         )
 
+    def test_equivalent_planner_calculation_wrapper_is_unwrapped_then_fully_validated(self):
+        for key in ("PLAN", "plan"):
+            plan = self.combined_plan()
+            plan["calculation"] = {key: plan["calculation"]}
+            with self.subTest(key=key):
+                result, labels = self.execute(plan)
+                self.assertEqual(result["Variance"].tolist(), [-50, 5])
+                self.assertEqual(labels, ["SQL: main.Actuals", "EXCEL: Targets"])
+        self.assertTrue(any(event["event"] == "plan_normalized" for event in self.events))
+        invalid = self.combined_plan()
+        invalid["calculation"] = {"PLAN": invalid["calculation"], "unhandled_conditions": ["extra condition"]}
+        self.read.reset_mock()
+        with self.assertRaisesRegex(ValueError, "calculation plan"):
+            self.execute(invalid)
+        self.read.assert_not_called()
+
     def test_sql_extraction_is_not_implicitly_truncated_to_chat_preview_size(self):
         with self.engine.begin() as connection:
             pd.DataFrame({"Department": ["A"] * 151, "Amount": list(range(151))}).to_sql(
@@ -273,6 +289,24 @@ class SourceQueryTests(unittest.TestCase):
         self.assertIn(":filter_0", sql)
         self.assertEqual(parameters, {"filter_0": "a"})
         self.assertNotIn("'a'", sql)
+
+    def test_sql_metrics_accept_only_equivalent_workbook_aliases_and_case_variants(self):
+        for function, column, expected_name, expected_value in (
+            ("COUNT", "*", "row_count", 3),
+            ("count_rows", "*", "row_count", 3),
+            ("average", "Amount", "average_Amount", 125),
+            ("SUM", "Amount", "sum_Amount", 375),
+        ):
+            with self.subTest(function=function):
+                result, _ = self.execute(data_plan(sql=[{"source": self.actual, "query": query(
+                    columns=[], metrics=[{"function": function, "column": column}],
+                )}]))
+                self.assertEqual(result.columns.tolist(), [expected_name])
+                self.assertEqual(result.iloc[0, 0], expected_value)
+        with self.assertRaisesRegex(ValueError, "count_rows"):
+            self.execute(data_plan(sql=[{"source": self.actual, "query": query(
+                columns=[], metrics=[{"function": "count_rows", "column": "Amount"}],
+            )}]))
 
     def test_discovered_boolean_columns_use_typed_parameters(self):
         with self.engine.begin() as connection:

@@ -149,6 +149,10 @@ explicit Excel/workbook-only questions do not inspect SQL. A plan that selects
 different source kinds from those explicitly requested is rejected before any
 data query runs. Without an explicit source, the planner selects the relevant
 source(s) from the question and available schemas.
+The planner's equivalent `count_rows`/`average` SQL aggregate names are normalized
+to `count('*')`/`avg`, and an extra single `PLAN` wrapper around a calculation is
+unwrapped before full validation. Unsupported operations, extra conditions and
+unknown sources/columns are still rejected; no model-written SQL or Python runs.
 
 The configured Azure planner receives SQL schema metadata and Excel sample rows
 (at most three per sheet; sample strings are shortened to 160 characters), not
