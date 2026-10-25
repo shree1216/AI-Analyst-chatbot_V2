@@ -158,6 +158,20 @@ optionally adding scalar source labels; its 50,000-row/5-million-cell limits are
 checked before concatenation. Only genuinely missing essential data or
 unresolved materially different metrics/periods/relationships need one targeted
 clarification. The planner must not invent joins or substitute targets for actuals.
+Highest/lowest group questions first aggregate the requested measure, then retain
+both extremes and all ties using a native `extrema` step. Middle-ranked rows and
+missing measures are excluded; equal totals are labeled highest and lowest.
+Common equivalent JSON spellings are supported:
+column-only selections keep their original names, and finite scalar function
+arguments are literal values (never column references or executable code).
+The executor still validates every function, column, literal, shape and data limit.
+
+If an automatic/SQL-only calculation plan fails validation, the app requests one
+corrected plan internally using the original question, unchanged schemas and
+validator feedback. The corrected plan passes the same checks; invalid data or
+requested conditions must not be skipped. A second failure is shown explicitly,
+with no unbounded retry or fabricated answer. Plan attempts and repairs remain in
+backend diagnostics, with shorthand literals redacted like explicit literals.
 Each answer names the actual sources used and offers an Excel export. The interface
 keeps only **Sources used** captions; request IDs, timing, preview counts and
 technical routing details remain in backend diagnostics rather than faded helper text.

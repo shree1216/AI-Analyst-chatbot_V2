@@ -80,6 +80,20 @@ class BackendDiagnosticTests(unittest.TestCase):
         self.assertEqual(result["Absolute Revenue"].tolist(), [10])
         self.assertEqual(events[-1]["event"], "step_completed")
 
+    def test_shorthand_expression_literals_are_redacted_without_changing_the_plan(self):
+        expression = {"function": "if", "args": [
+            {"function": "eq", "args": [{"column": "Name"}, "PRIVATE_PERSON"]},
+            "PRIVATE_LABEL", None,
+        ]}
+        events = []
+        diagnostics.BackendTrace(events).record("planner_received", plan={"expression": expression})
+        rendered = diagnostics.diagnostic_log(events)
+        self.assertNotIn("PRIVATE_PERSON", rendered)
+        self.assertNotIn("PRIVATE_LABEL", rendered)
+        self.assertIn('"column": "Name"', rendered)
+        self.assertEqual(events[0]["plan"]["expression"]["args"][1:], ["[REDACTED]", "[REDACTED]"])
+        self.assertEqual(expression["args"][0]["args"][1], "PRIVATE_PERSON")
+
     def test_separate_request_logs_are_isolated_and_bounded(self):
         first, second = [], []
         one, two = diagnostics.BackendTrace(first), diagnostics.BackendTrace(second)

@@ -50,11 +50,18 @@ def diagnostic_sql(sql: str) -> str:
 
 def diagnostic_plan(value: Any) -> Any:
     if isinstance(value, dict):
-        return {
-            key: "[REDACTED]" if key not in PLAN_FIELDS
-            else diagnostic_plan(item)
-            for key, item in value.items()
-        }
+        result = {}
+        for key, item in value.items():
+            if key not in PLAN_FIELDS:
+                result[key] = "[REDACTED]"
+            elif key == "args":
+                result[key] = [
+                    diagnostic_plan(argument) if isinstance(argument, dict) else "[REDACTED]"
+                    for argument in item
+                ] if isinstance(item, list) else "[REDACTED]"
+            else:
+                result[key] = diagnostic_plan(item)
+        return result
     if isinstance(value, list):
         return [diagnostic_plan(item) for item in value]
     return value

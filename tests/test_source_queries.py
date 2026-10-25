@@ -504,6 +504,46 @@ class SourceQueryTests(unittest.TestCase):
             self.assertNotIn("excel_workbook", app.session_state)
             self.assertEqual(client.chat.completions.create.call_count, 1)
 
+    def test_invalid_model_plan_is_repaired_automatically_once_and_result_is_cached(self):
+        invalid = data_plan(excel=["excel_0"], calculation={
+            "understood": True, "unhandled_conditions": [], "sheet": "excel_0",
+            "steps": [{"op": "aggregate", "metrics": [{"name": "Total Budget", "function": "unsupported", "column": "Budget"}]}],
+        })
+        valid = data_plan(excel=["excel_0"], calculation={
+            "understood": True, "unhandled_conditions": [], "sheet": "excel_0",
+            "steps": [{"op": "aggregate", "metrics": [{"name": "Total Budget", "function": "sum", "column": "Budget"}]}],
+        })
+        for corrected, expected_calls in ((valid, 2), (invalid, 2)):
+            client = Mock()
+            client.chat.completions.create.side_effect = [
+                SimpleNamespace(choices=[
+                    SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=json.dumps(proposed))),
+                ]) for proposed in (invalid, corrected)
+            ]
+            with self.subTest(repaired=corrected is valid), patch.dict(
+                os.environ, {"AZURE_OPENAI_DEPLOYMENT_MINI": "test"},
+            ), patch.object(self.chatbot, "get_azure_openai_client", return_value=client), patch.object(
+                self.chatbot, "get_engine", side_effect=AssertionError("Excel question must not inspect SQL"),
+            ):
+                message = {"question": "What is the total budget in Excel?", "workbook_content": workbook_bytes()}
+                self.chatbot.display_automatic_message(message, "repair")
+                self.assertEqual(client.chat.completions.create.call_count, expected_calls)
+                self.assertTrue(any(event["event"] == "planner_repair_requested" for event in message["backend_log"]))
+                repair_messages = client.chat.completions.create.call_args.kwargs["messages"]
+                self.assertIn("unsupported", repair_messages[-2]["content"])
+                self.assertIn("That summary function is not supported", repair_messages[-1]["content"])
+                self.assertIn("Preserve every requested condition", repair_messages[-1]["content"])
+                if corrected is valid:
+                    self.assertNotIn("error", message)
+                    self.assertEqual(message["result"].iloc[0, 0], 570)
+                    self.assertIn("excel_download", message)
+                    self.chatbot.display_automatic_message(message, "repair")
+                    self.assertEqual(client.chat.completions.create.call_count, expected_calls)
+                else:
+                    self.assertIn("error", message)
+                    self.assertNotIn("answer", message)
+                    self.assertEqual(message["backend_log"][-1]["event"], "request_failed")
+
     def test_excel_only_can_answer_when_sql_is_unavailable_with_an_explicit_warning(self):
         client = Mock()
         client.chat.completions.create.return_value = SimpleNamespace(choices=[

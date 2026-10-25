@@ -29,6 +29,7 @@ from openai import (
     APIConnectionError, APIStatusError, APITimeoutError, AuthenticationError,
     AzureOpenAI, BadRequestError, NotFoundError, PermissionDeniedError, RateLimitError,
 )
+from openai.types.chat import ChatCompletionMessageParam
 from PIL import Image
 from reportlab.graphics.charts.barcharts import HorizontalBarChart, VerticalBarChart
 from reportlab.graphics.charts.linecharts import HorizontalLineChart
@@ -2955,6 +2956,7 @@ def query_excel_workbook(
         "sort:{op:'sort',by:[{column,direction:'asc'|'desc'}]}; "
         "limit:{op:'limit',count:integer}; rank:{op:'rank',column,name,direction:'asc'|'desc',group_by?:[headers],"
         "method?:'min'|'max'|'dense'|'first'|'average'}; "
+        "extrema:{op:'extrema',column,which:'highest'|'lowest'|'both',name:label_header}; "
         "pivot:{op:'pivot',index:[headers],columns:header,values:header,function,fill_value?:number|null}; "
         "lookup:{op:'lookup',sheet,left_on:[headers],right_on:[headers],columns:[{column,name}],keep?:'first'|'last'}; "
         "join:{op:'join',sheet,left_on:[headers],right_on:[headers],columns:[{column,name}],how:'left'|'inner'|'right'|'outer'}. "
@@ -2968,6 +2970,10 @@ def query_excel_workbook(
         "No approximate or wildcard lookups. Joins match null keys; text comparisons and keys ignore case and surrounding spaces. "
         "EXPR is exactly {column:header}, {literal:JSON scalar or bounded list for IN}, "
         "or {function:NAME,args:[EXPR,...],where?:EXPR}. "
+        "Use explicit literal objects for IF labels/numbers/null; scalar function arguments are treated as "
+        "literal values, never column references. For highest/lowest groups first aggregate totals by group, "
+        "then use extrema to return only the requested extremes and all ties, not middle rows with empty labels. "
+        "Equal totals are both highest and lowest. "
         "Aggregate functions: sum,average,min,max,median,count,counta,count_rows,count_distinct. "
         "Aggregate EXPR takes one argument except count_rows takes zero; optional where applies before aggregation. "
         "Metric column is '*' only for count_rows. COUNT counts numeric/date cells, COUNTA counts non-null, "
@@ -3401,6 +3407,45 @@ def display_employee_message(
             st.warning(message["backend_log_error"])
 
 
+def generate_source_plan(
+    client: AzureOpenAI, deployment: str, system_prompt: str, question: str, trace: BackendTrace,
+    *, previous_plan: dict[str, Any] | None = None, validation_error: str | None = None,
+) -> dict[str, Any]:
+    messages: list[ChatCompletionMessageParam] = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": question},
+    ]
+    if previous_plan is not None:
+        messages.extend([
+            {"role": "assistant", "content": json.dumps(previous_plan)},
+            {"role": "user", "content": (
+                "The calculation validator rejected this plan: " + (validation_error or "Invalid calculation")
+                + ". Correct the plan structure using the same available schemas and original question. "
+                "Preserve every requested condition, source requirement and calculation. Do not skip invalid "
+                "data, invent values, remove safeguards or substitute general advice to force an answer. "
+                "Return a complete valid data plan, or one essential clarification if no valid answer is possible."
+            )},
+        ])
+    try:
+        completion = client.chat.completions.create(
+            model=deployment, max_completion_tokens=6000, timeout=60.0,
+            response_format={"type": "json_object"}, messages=messages,
+        )
+    except (APIConnectionError, APIStatusError) as error:
+        trace.record("planner_failed", route="automatic", error_type=type(error).__name__, status="failed")
+        raise ValueError(ai_service_error_message(error)) from error
+    if not completion.choices or completion.choices[0].finish_reason != "stop":
+        raise ValueError("The source-selection plan was incomplete. Simplify the question and try again.")
+    try:
+        plan = json.loads(completion.choices[0].message.content or "")
+    except (ValueError, TypeError) as error:
+        raise ValueError("The AI returned an invalid source-selection plan. Please try again.") from error
+    if not isinstance(plan, dict) or set(plan) != {"mode", "message", "sql", "excel", "calculation"}:
+        raise ValueError("The source-selection plan has unexpected fields. Please rephrase the question.")
+    trace.record("planner_received", route="automatic", status="validating", plan=plan)
+    return plan
+
+
 def display_automatic_message(
     message: dict[str, Any], render_key: str, prior_turns: tuple[tuple[str, str], ...] = (),
 ) -> str | None:
@@ -3450,34 +3495,18 @@ def display_automatic_message(
             message["source_warnings"] = [
                 item for item in unavailable if not item.startswith("No Excel workbook")
             ]
-            trace.record("planner_requested", route="automatic", source_sheets=[source.label for source in sources.values()])
-            try:
-                completion = client.chat.completions.create(
-                    model=deployment, max_completion_tokens=6000, timeout=60.0,
-                    response_format={"type": "json_object"},
-                    messages=[
-                        {"role": "system", "content": source_planner_prompt(sources, unavailable)
-                         + (f" The user explicitly requested these source kinds: {sorted(requested_kinds)}."
-                            if requested_kinds else "")
-                         + (" Employee database mode covers every discovered SQL table, not only Employees. "
-                            "Use a data plan for questions about these tables or their columns; "
-                            "do not substitute SQL instructions or a general conversation answer."
-                            if sql_only else "")},
-                        {"role": "user", "content": message["question"]},
-                    ],
-                )
-            except (APIConnectionError, APIStatusError) as error:
-                trace.record("planner_failed", route="automatic", error_type=type(error).__name__, status="failed")
-                raise ValueError(ai_service_error_message(error)) from error
-            if not completion.choices or completion.choices[0].finish_reason != "stop":
-                raise ValueError("The source-selection plan was incomplete. Simplify the question and try again.")
-            try:
-                plan = json.loads(completion.choices[0].message.content or "")
-            except (ValueError, TypeError) as error:
-                raise ValueError("The AI returned an invalid source-selection plan. Please try again.") from error
-            if not isinstance(plan, dict) or set(plan) != {"mode", "message", "sql", "excel", "calculation"}:
-                raise ValueError("The source-selection plan has unexpected fields. Please rephrase the question.")
-            trace.record("planner_received", route="automatic", status="validating", plan=plan)
+            trace.record_code("planner_requested", generate_source_plan, route="automatic",
+                              source_sheets=[source.label for source in sources.values()])
+            system_prompt = (
+                source_planner_prompt(sources, unavailable)
+                + (f" The user explicitly requested these source kinds: {sorted(requested_kinds)}."
+                   if requested_kinds else "")
+                + (" Employee database mode covers every discovered SQL table, not only Employees. "
+                   "Use a data plan for questions about these tables or their columns; "
+                   "do not substitute SQL instructions or a general conversation answer."
+                   if sql_only else "")
+            )
+            plan = generate_source_plan(client, deployment, system_prompt, message["question"], trace)
             if plan["mode"] in {"conversation", "clarification"}:
                 if plan["sql"] != [] or plan["excel"] != [] or plan["calculation"] is not None:
                     raise ValueError("A conversation or clarification must not select or query data sources.")
@@ -3502,14 +3531,27 @@ def display_automatic_message(
                             message["request"] = report_request
                             message.pop("pending_query", None)
                             return display_employee_message(message, render_key, prior_turns)
-                result, labels = execute_source_plan(
-                    plan, sources,
-                    lambda query, schema, table: compile_data_plan(
-                        query, schema, table, DATA_MODE == "demo", max_rows=50_001,
-                    ),
-                    run_query, trace,
-                    required_kinds=requested_kinds,
-                )
+                def execute_plan(proposed: dict[str, Any]) -> tuple[pd.DataFrame, list[str]]:
+                    return execute_source_plan(
+                        proposed, sources,
+                        lambda query, schema, table: compile_data_plan(
+                            query, schema, table, DATA_MODE == "demo", max_rows=50_001,
+                        ),
+                        run_query, trace, required_kinds=requested_kinds,
+                    )
+
+                try:
+                    result, labels = execute_plan(plan)
+                except ValueError as error:
+                    trace.record("planner_repair_requested", route="automatic",
+                                 error_type=type(error).__name__, status="retrying")
+                    repaired = generate_source_plan(
+                        client, deployment, system_prompt, message["question"], trace,
+                        previous_plan=plan, validation_error=str(error),
+                    )
+                    if repaired["mode"] == "clarification" and isinstance(repaired["message"], str) and repaired["message"].strip():
+                        raise ValueError(repaired["message"][:1500]) from error
+                    result, labels = execute_plan(repaired)
                 message["result"] = result
                 message["source_labels"] = labels
                 if DATA_MODE != "demo":

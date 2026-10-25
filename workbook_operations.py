@@ -109,6 +109,10 @@ def _validate_expression(
     budget = [0] if budget is None else budget
     budget[0] += 1
     _require(depth <= 12 and budget[0] <= 200, "The requested formula is too complex. Split it into smaller calculations.")
+    if depth > 0 and not isinstance(node, dict):
+        _require(_literal(node) and (allow_list or not isinstance(node, list)),
+                 "Function arguments must be expressions or finite JSON literals; lists are only valid for IN.")
+        return
     _require(isinstance(node, dict), "A calculation expression must be a structured object.")
     if set(node) == {"column"}:
         _require(_name(node["column"]) in columns, "A requested calculation column is not available.")
@@ -158,9 +162,11 @@ def _aggregate(function: str, value: Any, frame: pd.DataFrame, mask: pd.Series) 
     return getattr(values, "mean" if function == "average" else function)()
 
 
-def _evaluate(node: dict[str, Any], frame: pd.DataFrame, active: pd.Series) -> Any:
+def _evaluate(node: Any, frame: pd.DataFrame, active: pd.Series) -> Any:
     if not active.any():
         return None
+    if not isinstance(node, dict):
+        return node
     if "literal" in node:
         return node["literal"]
     if "column" in node:
@@ -393,25 +399,49 @@ def _join(frame: pd.DataFrame, step: dict[str, Any], sheets: dict[str, pd.DataFr
     return output.drop(columns=temporary_keys)
 
 
+def _extrema(frame: pd.DataFrame, step: dict[str, Any]) -> pd.DataFrame:
+    _keys(step, {"column", "which", "name"}, {"column"})
+    column = _columns([step["column"]], frame)[0]
+    which = step.get("which", "both")
+    _require(isinstance(which, str) and which in {"highest", "lowest", "both"},
+             "Choose highest, lowest, or both extremes.")
+    name = _name(step.get("name", "Position"))
+    _require(name not in frame.columns, "The extrema label would overwrite an existing column.")
+    values = frame[column].dropna()
+    try:
+        highest, lowest = values.max(), values.min()
+    except TypeError as error:
+        raise ValueError("The highest/lowest values need comparable data types.") from error
+    high = frame[column].eq(highest).fillna(False)
+    low = frame[column].eq(lowest).fillna(False)
+    selected = high if which == "highest" else low if which == "lowest" else high | low
+    result = frame.loc[selected].copy()
+    result[name] = "Highest" if which == "highest" else "Lowest" if which == "lowest" else (
+        "Highest and lowest" if not values.empty and highest == lowest else
+        pd.Series("Lowest", index=result.index).where(~high.loc[result.index], "Highest")
+    )
+    return result
+
+
 def _select(frame: pd.DataFrame, selections: Any) -> pd.DataFrame:
     if not (isinstance(selections, list) and selections and all(isinstance(item, dict) for item in selections)):
         return frame[_columns(selections, frame)]
     _require(isinstance(selections, list) and 1 <= len(selections) <= MAX_COLUMNS,
              "Choose a bounded list of output columns.")
     for selection in selections:
-        _require(isinstance(selection, dict) and set(selection) in ({"column", "name"}, {"literal", "name"}),
+        _require(isinstance(selection, dict) and set(selection) in ({"column"}, {"column", "name"}, {"literal", "name"}),
                  "Name each selected source or constant and output column.")
         if "column" in selection:
             _columns([selection["column"]], frame)
         else:
             _require(_literal(selection["literal"]) and not isinstance(selection["literal"], list),
                      "A selected constant must be a finite JSON scalar.")
-    names = [_name(selection["name"]) for selection in selections]
+    names = [_name(selection["name"] if "name" in selection else selection["column"]) for selection in selections]
     _require(len(set(names)) == len(names), "Selected output names must be unique.")
     _require(len(frame) * len(names) <= MAX_CELLS, "The selected output would contain too many cells.")
     output = pd.DataFrame(index=frame.index)
-    for selection in selections:
-        output[selection["name"]] = frame[selection["column"]] if "column" in selection else selection["literal"]
+    for selection, name in zip(selections, names):
+        output[name] = frame[selection["column"]] if "column" in selection else selection["literal"]
     return output
 
 
@@ -443,13 +473,13 @@ def execute_workbook_plan(
              "A workbook question must contain between 1 and 20 calculation steps.")
     if trace:
         trace.record_code("source_selected", execute_workbook_plan, evaluate_expression, _evaluate,
-                          _aggregate_frame, _aggregate, _join, _select, _append,
+                          _aggregate_frame, _aggregate, _join, _extrema, _select, _append,
                           sheet=sheet, rows=len(sheets[sheet]), columns=len(sheets[sheet].columns))
     frame = _bounded(sheets[sheet].copy(deep=True))
     for step_number, step in enumerate(steps, start=1):
         _require(isinstance(step, dict) and isinstance(step.get("op"), str), "A workbook calculation step is invalid.")
         operation = step["op"]
-        _require(operation in {"filter", "calculate", "aggregate", "join", "lookup", "append", "select", "sort", "limit", "rank", "pivot"},
+        _require(operation in {"filter", "calculate", "aggregate", "join", "lookup", "append", "extrema", "select", "sort", "limit", "rank", "pivot"},
                  "That workbook operation is not supported. No calculation was performed.")
         if trace:
             trace.record("step_started", step=step_number, operation=operation, rows=len(frame),
@@ -468,6 +498,8 @@ def execute_workbook_plan(
         elif operation == "aggregate":
             _keys(step, {"group_by", "metrics"}, {"metrics"})
             frame = _aggregate_frame(frame, _columns(step.get("group_by", []), frame, empty=True), step["metrics"])
+        elif operation == "extrema":
+            frame = _extrema(frame, step)
         elif operation in {"join", "lookup"}:
             frame = _join(frame, step, sheets)
         elif operation == "append":

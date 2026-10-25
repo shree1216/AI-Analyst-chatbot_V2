@@ -108,6 +108,44 @@ class WorkbookOperationTests(unittest.TestCase):
         guarded = evaluate_expression(fn("if", fn("eq", col("Cost"), lit(0)), lit(0),
                                           fn("divide", col("Sales"), col("Cost"))), self.sales)
         self.assertEqual(guarded.tolist(), [0, 3, 4, 0])
+
+    def test_highest_and_lowest_grouped_sales_accept_planner_literal_shorthand(self):
+        self.sheets["Sales"] = pd.DataFrame({
+            "Region": ["North", "North", "South", "West", "East", "East"],
+            "amount": [2000, 3000, 5000, 1000, 2000, 2500],
+        })
+        result = self.run_plan(
+            {"op": "aggregate", "group_by": ["Region"], "metrics": [metric("Total Sales", "sum", "amount")]},
+            {"op": "calculate", "columns": [
+                {"name": "Max Sales", "expression": fn("max", col("Total Sales"))},
+                {"name": "Min Sales", "expression": fn("min", col("Total Sales"))},
+                {"name": "Rank", "expression": fn(
+                    "if", fn("eq", col("Total Sales"), col("Max Sales")), "Highest",
+                    fn("if", fn("eq", col("Total Sales"), col("Min Sales")), "Lowest", None),
+                )},
+            ]},
+            {"op": "filter", "where": fn("not", fn("is_blank", col("Rank")))},
+            {"op": "select", "columns": [{"column": "Region"}, {"column": "Total Sales"}, {"column": "Rank"}]},
+        )
+        self.assertEqual(result.to_dict("records"), [
+            {"Region": "North", "Total Sales": 5000, "Rank": "Highest"},
+            {"Region": "South", "Total Sales": 5000, "Rank": "Highest"},
+            {"Region": "West", "Total Sales": 1000, "Rank": "Lowest"},
+        ])
+
+    def test_shorthand_literals_are_values_not_column_names_or_executable_code(self):
+        expression = fn("if", fn("gt", col("Sales"), 15), "Region", "__import__('os').system('do-not-run')")
+        result = evaluate_expression(expression, self.sales)
+        self.assertEqual(result.iloc[1], "Region")
+        self.assertEqual(result.iloc[0], "__import__('os').system('do-not-run')")
+        self.assertEqual(evaluate_expression(fn("in", col("Region"), ["north"]), self.sales).tolist(),
+                         [True, True, False, False])
+        for expression in (
+            "Highest", None, fn("add", 1, float("inf")), fn("add", 1, 10 ** 400),
+            fn("if", True, "Valid", {"execute": "bad"}), fn("concat", "A", ["B"]),
+        ):
+            with self.subTest(expression=expression), self.assertRaises(ValueError):
+                evaluate_expression(expression, self.sales)
         with self.assertRaisesRegex(ValueError, "divide by zero"):
             evaluate_expression(fn("divide", col("Sales"), col("Cost")), self.sales)
 
@@ -332,6 +370,32 @@ class WorkbookOperationTests(unittest.TestCase):
         ):
             with self.subTest(expression=expression), self.assertRaises(ValueError):
                 evaluate_expression(expression, self.sales)
+
+    def test_extrema_returns_only_requested_groups_with_all_ties_and_equal_totals(self):
+        self.sheets["Summary"] = pd.DataFrame({
+            "Region": ["North", "South", "East", "West", "Missing"], "Total": [5000, 5000, 4500, 1000, None],
+        })
+        for which, regions in (
+            ("both", ["North", "South", "West"]), ("highest", ["North", "South"]), ("lowest", ["West"]),
+        ):
+            result = self.run_plan(
+                {"op": "extrema", "column": "Total", "which": which, "name": "Position"}, sheet="Summary",
+            )
+            self.assertEqual(result["Region"].tolist(), regions)
+        self.assertEqual(result["Position"].tolist(), ["Lowest"])
+        self.sheets["Summary"] = pd.DataFrame({"Total": [100, 100, None]})
+        result = self.run_plan({"op": "extrema", "column": "Total"}, sheet="Summary")
+        self.assertEqual(result["Position"].tolist(), ["Highest and lowest"] * 2)
+        self.sheets["Summary"] = pd.DataFrame({"Total": pd.Series(dtype=float)})
+        result = self.run_plan({"op": "extrema", "column": "Total"}, sheet="Summary")
+        self.assertTrue(result.empty)
+        for step in (
+            {"op": "extrema", "column": "Unknown"},
+            {"op": "extrema", "column": "Total", "which": "middle"},
+            {"op": "extrema", "column": "Total", "name": "Total"},
+        ):
+            with self.subTest(step=step), self.assertRaises(ValueError):
+                self.run_plan(step, sheet="Summary")
 
     def test_calculated_columns_preserve_input_and_can_be_used_by_later_steps(self):
         original = self.sales.copy(deep=True)
