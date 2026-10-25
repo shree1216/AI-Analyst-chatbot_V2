@@ -83,7 +83,11 @@ def excel_sheet_names(content: bytes | str | Path) -> list[str]:
         workbook.close()
 
 
-def read_excel_sheet(content: bytes | str | Path, sheet: str) -> pd.DataFrame:
+def read_excel_sheet(
+    content: bytes | str | Path, sheet: str, *, preview_rows: int | None = None,
+) -> pd.DataFrame:
+    if preview_rows is not None and (type(preview_rows) is not int or not 1 <= preview_rows <= MAX_EXCEL_ROWS):
+        raise ValueError("Choose a preview size between 1 and 50,000 rows.")
     workbook = open_excel_workbook(content)
     try:
         if sheet not in [worksheet.title for worksheet in workbook.worksheets]:
@@ -116,6 +120,7 @@ def read_excel_sheet(content: bytes | str | Path, sheet: str) -> pd.DataFrame:
                 f"Repeated headers are at {', '.join(cells)}. Give them distinct names, save, and upload again."
             )
         values = []
+        populated_rows = 0
         for row_number, row in enumerate(rows, start=2):
             if len(row) > len(columns) and any(value is not None for value in row[len(columns):]):
                 column = next(index for index, value in enumerate(row, start=1) if index > len(columns) and value is not None)
@@ -126,6 +131,10 @@ def read_excel_sheet(content: bytes | str | Path, sheet: str) -> pd.DataFrame:
             if len(values) >= MAX_EXCEL_ROWS:
                 raise ValueError("A worksheet can contain at most 50,000 data rows.")
             values.append(tuple(row[:len(columns)]) + (None,) * max(0, len(columns) - len(row)))
+            if any(value is not None for value in row):
+                populated_rows += 1
+            if preview_rows is not None and populated_rows >= preview_rows:
+                break
         frame = pd.DataFrame(values, columns=columns).dropna(how="all").reset_index(drop=True)
         if frame.empty:
             raise ValueError("The selected worksheet has no data rows.")

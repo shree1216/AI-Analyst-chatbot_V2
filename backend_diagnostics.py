@@ -1,12 +1,14 @@
 from datetime import datetime, timezone
 from functools import lru_cache
+import inspect
 import json
 import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+import re
 from threading import Lock
 from time import perf_counter
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 
@@ -16,7 +18,45 @@ LOG_FIELDS = {
     "route", "sheet", "source_sheets", "unavailable_sheets", "rows", "columns",
     "schemas", "operation", "step", "status", "error_type", "reason_count",
     "workbook_id", "preview_rows",
+    "sql", "parameters", "plan", "details", "duration_ms", "result_columns",
+    "response_kind", "attempt",
+    "source_id",
+    "implementation",
 }
+
+# Preserve identifiers/placeholders while removing SQL comments and literal values.
+SQL_TOKENS = re.compile(
+    r"(?P<identifier>\[(?:[^\]]|\]\])*\]|\"(?:[^\"]|\"\")*\"|`(?:[^`]|``)*`)"
+    r"|(?P<comment>--[^\r\n]*|/\*[\s\S]*?\*/)"
+    r"|(?P<literal>N?'(?:[^']|'')*'|(?<![\w:])(?:0x[0-9a-f]+|\d+(?:\.\d*)?(?:e[+-]?\d+)?)(?!\w))",
+    re.IGNORECASE,
+)
+PLAN_FIELDS = {
+    "understood", "sheet", "steps", "op", "columns", "metrics", "filter",
+    "all", "any", "group_by", "order_by", "limit", "per_group", "limit_per_group",
+    "where", "function", "args", "column", "name", "expression", "by", "direction",
+    "left_on", "right_on", "how", "keep", "count", "method", "index", "values",
+}
+
+
+def diagnostic_sql(sql: str) -> str:
+    return SQL_TOKENS.sub(
+        lambda match: match.group() if match.lastgroup == "identifier"
+        else " " if match.lastgroup == "comment" else "?",
+        sql,
+    )
+
+
+def diagnostic_plan(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: "[REDACTED]" if key not in PLAN_FIELDS
+            else diagnostic_plan(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [diagnostic_plan(item) for item in value]
+    return value
 
 
 class StrictFileHandler(RotatingFileHandler):
@@ -44,7 +84,7 @@ def backend_logger() -> logging.Logger:
 
 
 def _metadata(value: Any, depth: int = 0) -> Any:
-    if depth > 4:
+    if depth > 32:
         raise ValueError("Backend log metadata is too deeply nested.")
     if isinstance(value, str):
         return value[:256]
@@ -64,15 +104,45 @@ class BackendTrace:
         self.started = perf_counter()
         self.file_error: str | None = None
 
+    def record_code(self, event: str, *functions: Callable[..., Any], **fields: Any) -> None:
+        implementation = []
+        for function in functions:
+            try:
+                lines, first_line = inspect.getsourcelines(function)
+                file = inspect.getsourcefile(function)
+                if file is None:
+                    raise OSError("Source file is unavailable.")
+                implementation.append({
+                    "function": function.__qualname__, "file": Path(file).name,
+                    "line": first_line, "language": "python", "status": "available",
+                    "code": "".join(lines),
+                })
+            except (OSError, TypeError) as error:
+                implementation.append({
+                    "status": "unavailable", "error_type": type(error).__name__,
+                })
+                logging.getLogger(__name__).warning("Backend implementation source unavailable: %s", type(error).__name__)
+        self.record(event, implementation=implementation, **fields)
+
     def record(self, event: str, **fields: Any) -> None:
         if set(fields) - LOG_FIELDS:
-            raise ValueError("Backend logs must not include questions, cell values, credentials, or query literals.")
+            raise ValueError("Backend logs must not include unapproved fields, questions, cell values, or credentials.")
+        if "sql" in fields:
+            fields["sql"] = diagnostic_sql(fields["sql"])
+        if "parameters" in fields:
+            fields["parameters"] = {
+                name: {"type": type(value).__name__, "value": "[REDACTED]"}
+                for name, value in fields["parameters"].items()
+            }
+        for key in ("plan", "details"):
+            if key in fields:
+                fields[key] = diagnostic_plan(fields[key])
         entry = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "request_id": self.request_id,
             "event": event,
             "elapsed_ms": round((perf_counter() - self.started) * 1000, 2),
-            **{key: _metadata(value) for key, value in fields.items()},
+            **{key: value if key in {"sql", "implementation"} else _metadata(value) for key, value in fields.items()},
         }
         self.events.append(entry)
         if len(self.events) > 200:

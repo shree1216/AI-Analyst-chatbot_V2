@@ -1,4 +1,5 @@
 import base64
+from contextlib import nullcontext
 from contextvars import ContextVar
 from datetime import datetime
 from email.message import EmailMessage
@@ -15,6 +16,7 @@ from hashlib import sha256
 from html import escape
 from pathlib import Path
 from threading import Lock
+from time import perf_counter
 from typing import Any
 import wave
 
@@ -48,6 +50,9 @@ from excel_support import (
 )
 from workbook_operations import MAX_SHEETS, execute_workbook_plan
 from backend_diagnostics import BackendTrace, diagnostic_log
+from source_queries import (
+    discover_excel_sources, discover_sql_sources, execute_source_plan, source_planner_prompt,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -1105,8 +1110,11 @@ def get_demo_query_lock() -> Lock:
 
 def run_query(sql: str, parameters: dict[str, Any] | None = None) -> pd.DataFrame:
     trace = SQL_TRACE.get()
+    started = perf_counter()
     if trace:
-        trace.record("query_started", route="sqlite_demo" if DATA_MODE == "demo" else "sql_server", operation="read")
+        trace.record_code("query_started", run_query, compile_data_plan,
+                         route="sqlite_demo" if DATA_MODE == "demo" else "sql_server",
+                     operation="read", sql=sql, parameters=parameters or {}, attempt=1)
     try:
         if DATA_MODE == "demo":
             # StaticPool shares one SQLite connection across all Streamlit sessions.
@@ -1119,16 +1127,19 @@ def run_query(sql: str, parameters: dict[str, Any] | None = None) -> pd.DataFram
                     result = pd.read_sql(text(sql), connection, params=parameters or {})
             except SQLAlchemyError as error:
                 if trace:
-                    trace.record("query_retry", error_type=type(error).__name__, status="reconnecting")
+                    trace.record("query_retry", error_type=type(error).__name__, status="reconnecting", attempt=2)
                 get_engine.clear()
                 with get_engine().connect() as connection:
                     result = pd.read_sql(text(sql), connection, params=parameters or {})
     except SQLAlchemyError as error:
         if trace:
-            trace.record("query_failed", error_type=type(error).__name__, status="failed")
+            trace.record("query_failed", error_type=type(error).__name__, status="failed",
+                         duration_ms=round((perf_counter() - started) * 1000, 2))
         raise
     if trace:
-        trace.record("query_completed", rows=len(result), columns=len(result.columns), status="success")
+        trace.record("query_completed", rows=len(result), columns=len(result.columns), status="success",
+                     result_columns=[str(column) for column in result.columns],
+                     duration_ms=round((perf_counter() - started) * 1000, 2))
     return result
 
 
@@ -1154,6 +1165,7 @@ def compile_employee_plan(plan: dict[str, Any]) -> SqlRequest:
 
 def compile_data_plan(
     plan: dict[str, Any], schema: dict[str, str], table: str, sqlite: bool,
+    *, max_rows: int = MAX_ROWS,
 ) -> SqlRequest:
     allowed_keys = {"understood", "unhandled_conditions", "columns", "metrics", "filter", "group_by", "order_by", "limit", "per_group", "limit_per_group"}
     if not isinstance(plan, dict) or set(plan) - allowed_keys:
@@ -1172,6 +1184,9 @@ def compile_data_plan(
         if kind == "number":
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
                 raise ValueError("Expected a finite number")
+        elif kind == "boolean":
+            if not isinstance(value, bool):
+                raise ValueError("Expected a boolean value")
         elif not isinstance(value, str) or len(value) > 500:
             raise ValueError("Expected a text or date value")
         elif kind == "date":
@@ -1276,8 +1291,8 @@ def compile_data_plan(
         if column not in columns + aliases or direction not in {"asc", "desc"}:
             raise ValueError("Invalid ordering column or direction")
         sort_sql.append(f"[{column}] {direction.upper()}")
-    limit = plan.get("limit", MAX_ROWS)
-    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_ROWS:
+    limit = plan.get("limit", max_rows)
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= max_rows:
         raise ValueError("Invalid row limit")
     where_sql, description = compile_filter(plan.get("filter"))
     where_sql = f" WHERE {where_sql}" if where_sql else ""
@@ -1339,7 +1354,7 @@ def generate_employee_query(question: str) -> SqlRequest | None:
     cache_key = (os.getenv("AZURE_OPENAI_ENDPOINT"), os.getenv("AZURE_OPENAI_DEPLOYMENT_MINI"), question.strip())
     if cache_key in plan_cache:
         if trace:
-            trace.record("cache_hit", route="azure_employee", status="validated_plan")
+            trace.record("cache_hit", route="azure_employee", status="validated_plan", plan=plan_cache[cache_key])
         return compile_employee_plan(plan_cache[cache_key])
     if trace:
         trace.record("planner_requested", route="azure_employee")
@@ -1422,7 +1437,7 @@ def generate_employee_query(question: str) -> SqlRequest | None:
         plan_cache.pop(next(iter(plan_cache)))
     plan_cache[cache_key] = plan
     if trace:
-        trace.record("planner_completed", route="azure_employee", status="validated")
+        trace.record("planner_completed", route="azure_employee", status="validated", plan=plan)
     return request
 
 
@@ -2655,8 +2670,13 @@ def local_excel_result(question: str, frame: pd.DataFrame) -> pd.DataFrame | Non
 
 
 def query_excel_sheet(question: str, frame: pd.DataFrame) -> pd.DataFrame:
+    trace = SQL_TRACE.get()
     local = local_excel_result(question, frame)
     if local is not None:
+        if trace:
+            trace.record_code("route_selected", local_excel_result, query_sales_total,
+                         route="local_spreadsheet", rows=len(local),
+                         result_columns=[str(column) for column in local.columns])
         return local.head(MAX_ROWS).copy()
     data, schema, names = spreadsheet_schema(frame)
     client = get_azure_openai_client()
@@ -2667,6 +2687,8 @@ def query_excel_sheet(question: str, frame: pd.DataFrame) -> pd.DataFrame:
             "You can still ask 'count rows', 'preview', or a simple total-sales question without AI."
         )
     try:
+        if trace:
+            trace.record("planner_requested", route="azure_spreadsheet", schemas=schema)
         completion = client.chat.completions.create(
             model=deployment, max_completion_tokens=3500, timeout=60.0,
             response_format={"type": "json_object"},
@@ -2696,13 +2718,16 @@ def query_excel_sheet(question: str, frame: pd.DataFrame) -> pd.DataFrame:
         )
     except (APIConnectionError, APIStatusError) as error:
         logger.warning("Spreadsheet planner unavailable: %s", type(error).__name__)
+        if trace:
+            trace.record("planner_failed", error_type=type(error).__name__, status="failed")
         raise ValueError(ai_service_error_message(error)) from error
     if not completion.choices or completion.choices[0].finish_reason != "stop":
         raise ValueError("The AI service returned an incomplete spreadsheet plan. Please try again.")
     try:
-        request = compile_data_plan(
-            json.loads(completion.choices[0].message.content or ""), schema, "spreadsheet", True,
-        )
+        plan = json.loads(completion.choices[0].message.content or "")
+        request = compile_data_plan(plan, schema, "spreadsheet", True)
+        if trace:
+            trace.record("planner_completed", route="azure_spreadsheet", status="validated", plan=plan)
     except (ValueError, TypeError) as error:
         logger.warning("Invalid spreadsheet query plan: %s", type(error).__name__)
         raise ValueError(
@@ -2710,10 +2735,25 @@ def query_excel_sheet(question: str, frame: pd.DataFrame) -> pd.DataFrame:
             "Specify columns, filters, and a supported count, sum, average, minimum, or maximum."
         ) from error
     engine = create_engine("sqlite://")
+    started = perf_counter()
     try:
         with engine.begin() as connection:
+            if trace:
+                trace.record("source_loading", route="sqlite_spreadsheet", rows=len(data), columns=len(data.columns))
             data.to_sql("spreadsheet", connection, index=False, if_exists="replace")
+            if trace:
+                trace.record_code("query_started", query_excel_sheet, route="sqlite_spreadsheet", sql=request.sql,
+                             parameters=request.parameters, operation="read", attempt=1)
             result = pd.read_sql(text(request.sql), connection, params=request.parameters)
+            if trace:
+                trace.record("query_completed", rows=len(result), columns=len(result.columns),
+                             result_columns=[str(column) for column in result.columns], status="success",
+                             duration_ms=round((perf_counter() - started) * 1000, 2))
+    except SQLAlchemyError as error:
+        if trace:
+            trace.record("query_failed", error_type=type(error).__name__, status="failed",
+                         duration_ms=round((perf_counter() - started) * 1000, 2))
+        raise
     finally:
         engine.dispose()
     labels = dict(names)
@@ -2788,7 +2828,8 @@ def query_excel_workbook(
         if local is not None:
             local.attrs["source_sheets"] = [selected_sheet]
             if trace:
-                trace.record("route_selected", route="preview_default", source_sheets=[selected_sheet], rows=len(frame))
+                trace.record_code("route_selected", local_excel_result,
+                                  route="preview_default", source_sheets=[selected_sheet], rows=len(frame))
             return local
     sheet_names = excel_sheet_names(content)
     if len(sheet_names) > MAX_SHEETS:
@@ -2834,7 +2875,8 @@ def query_excel_workbook(
             result = pd.DataFrame({"row_count": [len(sheets[target])]})
             result.attrs["source_sheets"] = [target]
             if trace:
-                trace.record("route_selected", route="named_row_count", source_sheets=[target], rows=len(sheets[target]))
+                trace.record_code("route_selected", query_excel_workbook,
+                                  route="named_row_count", source_sheets=[target], rows=len(sheets[target]))
             return result
     monthly = monthly_workbook_plan(question, schemas)
     if monthly:
@@ -2854,7 +2896,8 @@ def query_excel_workbook(
         if local is not None:
             local.attrs["source_sheets"] = [source]
             if trace:
-                trace.record("route_selected", route="sales_summary", source_sheets=[source], rows=len(sheets[source]))
+                trace.record_code("route_selected", local_excel_result, query_sales_total,
+                                  route="sales_summary", source_sheets=[source], rows=len(sheets[source]))
             return local
     client = get_azure_openai_client()
     deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT_MINI")
@@ -2951,7 +2994,7 @@ def query_excel_workbook(
             workbook_columns_message(schemas, unavailable) + " Use the available column names or clarify the worksheet."
         )
     if trace:
-        trace.record("planner_received", status="validating")
+        trace.record("planner_received", status="validating", plan=plan)
     if isinstance(plan, dict):
         sources = [plan]
         if isinstance(plan.get("steps"), list):
@@ -2981,6 +3024,7 @@ def display_excel_response(message: dict[str, Any], render_key: str) -> str | No
         elif "result" in message:
             trace.record("cache_hit", status="previous_result")
     if "result" not in message and not message.get("error"):
+        token = SQL_TRACE.set(trace)
         try:
             if "excel_content" in message:
                 message["result"] = query_excel_workbook(
@@ -2993,6 +3037,7 @@ def display_excel_response(message: dict[str, Any], render_key: str) -> str | No
             trace.record("request_failed", error_type=type(error).__name__, status="failed")
             message["error"] = str(error) if isinstance(error, ValueError) else "The spreadsheet query failed. Please try again."
         finally:
+            SQL_TRACE.reset(token)
             message.pop("excel_frame", None)
             message.pop("excel_content", None)
             message.pop("excel_sheet", None)
@@ -3020,6 +3065,8 @@ def display_excel_response(message: dict[str, Any], render_key: str) -> str | No
         "Download Excel includes all result rows. Calculations use all matching source rows."
     )
     answer = spreadsheet_answer(preview)
+    if new_trace:
+        trace.record_code("answer_rendered", spreadsheet_answer, rows=len(result), preview_rows=len(preview))
     if len(result) > MAX_ROWS:
         answer += (
             f"\n\nShowing the first {MAX_ROWS:,} of {len(result):,} result rows. "
@@ -3030,13 +3077,14 @@ def display_excel_response(message: dict[str, Any], render_key: str) -> str | No
         st.dataframe(preview, hide_index=True, width="stretch")
     new_download = "excel_download" not in message
     if new_download:
-        trace.record("export_started", rows=len(result), columns=len(result.columns))
+        trace.record_code("export_started", generate_excel_download, rows=len(result), columns=len(result.columns))
     display_excel_download([("Results", result)], render_key, message)
     if new_download:
         trace.record("export_completed", rows=len(result), columns=len(result.columns))
     if new_trace:
         trace.record("request_completed", source_sheets=result.attrs.get("source_sheets", []),
-                     rows=len(result), preview_rows=len(preview), status="success")
+                     rows=len(result), preview_rows=len(preview), status="success",
+                     result_columns=[str(column) for column in result.columns])
     if trace.file_error:
         message["backend_log_error"] = trace.file_error
     if message.get("backend_log_error"):
@@ -3050,7 +3098,8 @@ def display_excel_download(
     if "excel_download" not in cache:
         trace = SQL_TRACE.get()
         if trace:
-            trace.record("export_started", operation="excel", rows=sum(len(table) for _, table in tables))
+            trace.record_code("export_started", generate_excel_download,
+                              operation="excel", rows=sum(len(table) for _, table in tables))
         cache["excel_download"] = generate_excel_download(tables)
         if trace:
             trace.record("export_completed", operation="excel", rows=sum(len(table) for _, table in tables))
@@ -3063,6 +3112,10 @@ def display_excel_download(
 def natural_language_response(
     result: pd.DataFrame, request: SqlRequest, question: str | None
 ) -> str:
+    trace = SQL_TRACE.get()
+    if trace:
+        trace.record_code("answer_rendering", natural_language_response, deterministic_response, format_value,
+                          rows=len(result), columns=len(result.columns))
     fallback = deterministic_response(result, request)
     if (
         not question
@@ -3090,7 +3143,7 @@ def display_business_report(
     if "business_report" not in cache:
         trace = SQL_TRACE.get()
         if trace:
-            trace.record("report_started", operation="business_report", rows=len(result))
+            trace.record_code("report_started", build_business_report, operation="business_report", rows=len(result))
         cache["business_report"] = build_business_report(question, result)
         if trace:
             trace.record("report_completed", operation="business_report")
@@ -3154,7 +3207,7 @@ def display_business_report(
     if "pdf_report" not in cache:
         trace = SQL_TRACE.get()
         if trace:
-            trace.record("export_started", operation="pdf")
+            trace.record_code("export_started", generate_business_report_pdf, operation="pdf")
         cache["pdf_report"] = generate_business_report_pdf(question, report, chart)
         if trace:
             trace.record("export_completed", operation="pdf")
@@ -3296,7 +3349,7 @@ def display_employee_message(
                 trace.record("planning_completed", status=(
                     "read_query" if request and request.sql else
                     request.response_kind if request else "general_conversation"
-                ))
+                ), response_kind=request.response_kind if request else "general_conversation")
         if message["request"] is None and message.get("answer"):
             if trace:
                 trace.record("cache_hit", status="previous_answer")
@@ -3320,6 +3373,131 @@ def display_employee_message(
         st.caption(f"Backend request ID: {message['request_id']}. Download the backend log from the sidebar.")
         if message.get("backend_log_error"):
             st.warning(message["backend_log_error"])
+
+
+def display_automatic_message(
+    message: dict[str, Any], render_key: str, prior_turns: tuple[tuple[str, str], ...] = (),
+) -> str | None:
+    if "answer" not in message and "error" not in message:
+        trace = BackendTrace(message.setdefault("backend_log", []))
+        message["request_id"] = trace.request_id
+        trace.record("request_started", route="automatic", operation="source_selection")
+        token = SQL_TRACE.set(trace)
+        completed = False
+        try:
+            client = get_azure_openai_client()
+            deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT_MINI")
+            if client is None or not deployment:
+                raise ValueError(
+                    "Automatic source selection needs Azure OpenAI configuration. "
+                    "Choose Employee database or Excel workbook for supported offline questions."
+                )
+            sources = {}
+            unavailable = []
+            try:
+                with get_demo_query_lock() if DATA_MODE == "demo" else nullcontext():
+                    sql_sources, sql_unavailable = discover_sql_sources(get_engine(), trace)
+                sources.update(sql_sources)
+                unavailable.extend(sql_unavailable)
+            except SQLAlchemyError as error:
+                trace.record("schema_discovery_failed", route="sql", error_type=type(error).__name__, status="unavailable")
+                unavailable.append("SQL is unavailable. SQL actual values cannot be queried or compared.")
+            content = message.get("workbook_content")
+            if content is not None:
+                excel_sources, excel_unavailable = discover_excel_sources(content, trace)
+                sources.update(excel_sources)
+                unavailable.extend(excel_unavailable)
+            else:
+                unavailable.append("No Excel workbook is uploaded. Excel targets, budgets and lookups are unavailable.")
+            message["source_warnings"] = [
+                item for item in unavailable if not item.startswith("No Excel workbook")
+            ]
+            trace.record("planner_requested", route="automatic", source_sheets=[source.label for source in sources.values()])
+            try:
+                completion = client.chat.completions.create(
+                    model=deployment, max_completion_tokens=6000, timeout=60.0,
+                    response_format={"type": "json_object"},
+                    messages=[
+                        {"role": "system", "content": source_planner_prompt(sources, unavailable)},
+                        {"role": "user", "content": message["question"]},
+                    ],
+                )
+            except (APIConnectionError, APIStatusError) as error:
+                trace.record("planner_failed", route="automatic", error_type=type(error).__name__, status="failed")
+                raise ValueError(ai_service_error_message(error)) from error
+            if not completion.choices or completion.choices[0].finish_reason != "stop":
+                raise ValueError("The source-selection plan was incomplete. Simplify the question and try again.")
+            try:
+                plan = json.loads(completion.choices[0].message.content or "")
+            except (ValueError, TypeError) as error:
+                raise ValueError("The AI returned an invalid source-selection plan. Please try again.") from error
+            if not isinstance(plan, dict) or set(plan) != {"mode", "message", "sql", "excel", "calculation"}:
+                raise ValueError("The source-selection plan has unexpected fields. Please rephrase the question.")
+            trace.record("planner_received", route="automatic", status="validating")
+            if plan["mode"] in {"conversation", "clarification"}:
+                if plan["sql"] != [] or plan["excel"] != [] or plan["calculation"] is not None:
+                    raise ValueError("A conversation or clarification must not select or query data sources.")
+                if plan["mode"] == "clarification":
+                    detail = plan["message"]
+                    raise ValueError(detail[:1500] if isinstance(detail, str) and detail.strip()
+                                     else "Specify the SQL table, Excel worksheet, and matching keys needed for this question.")
+                message["answer"] = answer_general_question(message["question"], prior_turns)
+            else:
+                result, labels = execute_source_plan(
+                    plan, sources,
+                    lambda query, schema, table: compile_data_plan(
+                        query, schema, table, DATA_MODE == "demo", max_rows=50_001,
+                    ),
+                    run_query, trace,
+                )
+                message["result"] = result
+                message["source_labels"] = labels
+                preview = result.head(MAX_ROWS)
+                message["answer"] = spreadsheet_answer(preview)
+                trace.record_code("answer_rendered", spreadsheet_answer, rows=len(result), preview_rows=len(preview))
+                if len(result) > MAX_ROWS:
+                    message["answer"] += (
+                        f"\n\nShowing the first {MAX_ROWS:,} of {len(result):,} result rows. "
+                        "Download Excel includes all result rows."
+                    )
+                trace.record_code("export_started", generate_excel_download, operation="excel", rows=len(result))
+                message["excel_download"] = generate_excel_download([("Results", result)])
+                trace.record("export_completed", operation="excel", rows=len(result))
+                trace.record("result_ready", rows=len(result), columns=len(result.columns),
+                             result_columns=[str(column) for column in result.columns], preview_rows=len(preview))
+            completed = True
+        except (ValueError, SQLAlchemyError) as error:
+            trace.record("request_failed", error_type=type(error).__name__, status="failed")
+            message["error"] = str(error) if isinstance(error, ValueError) else (
+                "A selected SQL source could not be read. Check table permissions and the database connection."
+            )
+        finally:
+            SQL_TRACE.reset(token)
+            message.pop("workbook_content", None)
+            if completed:
+                trace.record("request_completed", route="automatic", status="success")
+            if trace.file_error:
+                message["backend_log_error"] = trace.file_error
+    for warning in message.get("source_warnings", []):
+        st.warning(warning)
+    if message.get("source_labels"):
+        st.caption("Sources used: " + "; ".join(message["source_labels"]) + ".")
+    if message.get("request_id"):
+        st.caption(f"Backend request ID: {message['request_id']}. Download the backend log from the sidebar.")
+    if message.get("backend_log_error"):
+        st.warning(message["backend_log_error"])
+    if message.get("error"):
+        st.warning(message["error"])
+        return None
+    answer = message["answer"]
+    st.write(answer)
+    if "result" in message:
+        result = message["result"]
+        st.caption(f"Showing {min(MAX_ROWS, len(result)):,} of {len(result):,} result rows. Calculations use all matching rows.")
+        with st.expander("Supporting data"):
+            st.dataframe(result.head(MAX_ROWS), hide_index=True, width="stretch")
+        display_excel_download([("Results", result)], render_key, message)
+    return answer
 
 
 st.set_page_config(
@@ -3994,7 +4172,8 @@ apply_theme()
 history = st.session_state.setdefault("chat_history", [])
 workbook_action = st.session_state.pop("pending_workbook_action", None)
 if workbook_action:
-    st.session_state["data_source"] = "Employee database" if workbook_action["action"] == "close" else "Excel workbook"
+    if st.session_state.get("data_source") != "Automatic (SQL + Excel)":
+        st.session_state["data_source"] = "Employee database" if workbook_action["action"] == "close" else "Excel workbook"
     if workbook_action["action"] == "close":
         st.session_state.pop("excel_workbook", None)
         st.session_state["excel_uploader_version"] = st.session_state.get("excel_uploader_version", 0) + 1
@@ -4010,6 +4189,7 @@ voice_recorder_version = st.session_state.setdefault("voice_recorder_version", 0
 excel_frame = None
 excel_source = None
 excel_selected = False
+automatic_selected = False
 excel_load_error = "Upload a valid Excel workbook and choose a worksheet before asking a question."
 
 
@@ -4041,13 +4221,24 @@ with st.sidebar:
         st.session_state.pop("employee_connection_log_error", None)
         st.rerun()
 
-    data_source = st.radio("Data source", ["Employee database", "Excel workbook"], key="data_source")
-    st.caption("Chat commands: open Excel, open Sales, close Excel. Ask \"what's the last question?\" to recall it.")
+    data_source = st.radio(
+        "Data source", ["Automatic (SQL + Excel)", "Employee database", "Excel workbook"], key="data_source",
+    )
     excel_selected = data_source == "Excel workbook"
+    automatic_selected = data_source == "Automatic (SQL + Excel)"
+    if automatic_selected:
+        st.caption(
+            "Automatically chooses SQL tables, Excel worksheets, or both. "
+            "SQL schemas and up to three sample rows per Excel sheet are sent to the configured Azure AI planner. "
+            "Only selected sources are queried; comparisons need an uploaded workbook."
+        )
     if not excel_selected:
         backend = "SQLite demo (not SQL Server)" if DATA_MODE == "demo" else "SQL Server"
         st.caption(f"Active backend: {backend}")
-        st.caption(f"Employee source: {SOURCE_LABEL}")
+        st.caption(
+            "SQL discovery: all visible user tables in the configured database."
+            if automatic_selected else f"Employee source: {SOURCE_LABEL}"
+        )
         if st.button("Test employee data connection", key="test_employee_connection"):
             connection_trace = BackendTrace([])
             st.session_state["employee_connection_log"] = connection_trace.events
@@ -4093,17 +4284,11 @@ with st.sidebar:
                     f"Verified {backend}: {connection_status['count']:,} employee rows "
                     f"(last checked {connection_status['checked_at']})."
                 )
-    if excel_selected:
+    if excel_selected or automatic_selected:
         upload = st.file_uploader(
             "Upload Excel workbook", type=["xlsx"], max_upload_size=10,
             key=f"excel_upload_{st.session_state.get('excel_uploader_version', 0)}",
             on_change=clear_excel_workbook,
-        )
-        st.caption(
-            "Choose one worksheet with unique text headers in row 1. "
-            "The selector controls the preview/default for generic row questions; other questions "
-            "automatically choose matching worksheets across the workbook. "
-            "Up to 50,000 rows and 100 columns. Formula cells use their saved values."
         )
         remembered_workbook = st.session_state.get("excel_workbook")
         if upload is not None or (remembered_workbook and remembered_workbook.get("content") is not None):
@@ -4133,16 +4318,32 @@ with st.sidebar:
                 )
                 workbook_cache["preview_sheet"] = sheet
                 excel_source = f"{file_name} / {sheet}"
-                if workbook_cache.get("sheet") != sheet:
-                    workbook_cache["frame"] = read_excel_sheet(content, sheet)
+                if (
+                    workbook_cache.get("sheet") != sheet
+                    or workbook_cache.get("frame_preview_only", False) != automatic_selected
+                ):
+                    workbook_cache["frame"] = read_excel_sheet(
+                        content, sheet, preview_rows=10 if automatic_selected else None,
+                    )
                     workbook_cache["sheet"] = sheet
+                    workbook_cache["frame_preview_only"] = automatic_selected
                 excel_frame = workbook_cache["frame"]
                 excel_source = f"{file_name} / {sheet}"
-                st.caption(f"Active source: Excel workbook | {excel_source}")
-                st.caption(f"{len(excel_frame):,} rows | {len(excel_frame.columns)} columns")
+                st.caption(
+                    f"Workbook preview: {excel_source}" if automatic_selected
+                    else f"Active source: Excel workbook | {excel_source}"
+                )
+                st.caption(
+                    f"Preview: {len(excel_frame):,} rows | {len(excel_frame.columns)} columns. "
+                    "Full worksheets load only when selected for a question."
+                    if automatic_selected else f"{len(excel_frame):,} rows | {len(excel_frame.columns)} columns"
+                )
                 with st.expander("Worksheet preview"):
                     st.dataframe(excel_frame.head(10), hide_index=True, width="stretch")
                 st.caption(
+                    "Try 'Compare SQL actuals against the Excel department budgets and show the variance'. "
+                    "Automatic source selection needs Azure OpenAI."
+                    if automatic_selected else
                     "Try 'What are the total sales by region?', 'count rows', or "
                     "'What are the total sales for the North region?'. "
                     "More complex questions need Azure OpenAI."
@@ -4276,9 +4477,13 @@ if submitted_question:
         cached_workbook = st.session_state.get("excel_workbook")
         pending_action = {"action": action}
         if action == "close":
+            mode_notice = (
+                "Automatic mode can still query SQL tables. " if automatic_selected
+                else "Employee database mode is active. "
+            )
             command_answer = (
-                "The active Excel workbook is closed and unloaded. Employee database mode is active. "
-                "Previous answers remain in this chat; your original file was not changed."
+                "The active Excel workbook is closed and unloaded. "
+                + mode_notice + "Previous answers remain in this chat; your original file was not changed."
             )
         elif action == "open":
             command_answer = (
@@ -4304,6 +4509,12 @@ if submitted_question:
         if pending_action is not None:
             st.session_state["pending_workbook_action"] = pending_action
             st.rerun()
+    elif automatic_selected:
+        available_workbook = st.session_state.get("excel_workbook")
+        history.append({
+            "kind": "automatic", "question": submitted_question,
+            "workbook_content": available_workbook["content"] if available_workbook else None,
+        })
     elif excel_selected:
         available_workbook = st.session_state.get("excel_workbook")
         if not available_workbook or available_workbook.get("content") is None:
@@ -4328,7 +4539,7 @@ if image_uploads or submitted_question:
     render_recent_chats(recent_chats_placeholder)
 
 st.markdown(
-    '<div class="disclaimer">Answers use the selected data source. Please verify important data.</div>',
+    '<div class="disclaimer">Answers identify the sources used. Please verify important data.</div>',
     unsafe_allow_html=True,
 )
 
@@ -4354,6 +4565,9 @@ for index, message in enumerate(history):
                 answer = display_excel_response(message, str(index))
             if answer:
                 message["answer"] = answer
+        elif message.get("kind") == "automatic":
+            with st.spinner("Selecting sources and calculating..."):
+                answer = display_automatic_message(message, str(index), conversation_context(history[:index]))
         elif message.get("kind") == "image":
             answer = message.get("answer")
             if message.get("error"):
@@ -4384,9 +4598,12 @@ backend_events = sorted(
 with st.sidebar.expander("Backend diagnostics"):
     if backend_events:
         st.caption(
-            "SQL Server / SQLite planning, queries and exports; Excel routing, worksheet schemas, "
-            "processing steps, row counts and failures. "
-            "Question text, cell values, raw SQL, query literals and connection secrets are excluded. "
+            "SQL Server / SQLite statements, parameter names/types, query durations, retries and exports; "
+            "Excel routing, worksheet schemas, calculation plans, processing steps, result columns and failures. "
+            "Implementation entries include the Python source of the invoked query/calculation functions, "
+            "not generated code or runtime variable values. "
+            "SQL literals, parameter/filter values, question text, cell values and connection secrets are redacted or excluded. "
+            "Excel workbook calculations use pandas, so their steps appear instead of SQL. Logs are private. "
             "The server also writes rotating logs to logs/backend.log."
         )
         session_log = diagnostic_log(backend_events)

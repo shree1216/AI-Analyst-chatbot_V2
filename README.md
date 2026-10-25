@@ -87,6 +87,8 @@ are not a replacement for database permissions or access controls.
 
 ## Features
 
+- Automatically discover SQL tables and Excel worksheets, select only the sources
+  needed for a question, and compare SQL actuals with Excel targets/budgets/lookups.
 - Ask natural-language questions about employees, departments, salaries, cities,
   employment status, and joining dates.
 - Generate workforce breakdowns and interactive charts.
@@ -97,7 +99,8 @@ are not a replacement for database permissions or access controls.
 - Download query results and report summaries, breakdowns, and source data as Excel workbooks.
 - Look up employee details such as department, city, email, and phone number.
 - Azure OpenAI support for structured column queries; results are rendered directly
-    from the database without displaying SQL or internal filter expressions.
+    from the database without displaying SQL or internal filter expressions in chat
+    answers. Backend diagnostics separately include redacted SQL and calculation details.
 - Optional Azure Speech support for voice input and spoken responses.
 - Optional SMTP support for emailing PDF reports.
 - General answers use the last six exchanges in the current chat, with long
@@ -114,9 +117,60 @@ Image analysis allows 60 seconds and up to 2,000 completion tokens per request.
 Images must be smaller than 4 MB; high-detail vision
 is used for readability, but extracted text and numbers should still be checked.
 
+### Automatic SQL + Excel questions
+
+**Automatic (SQL + Excel)** is the default data-source mode. It requires Azure
+OpenAI. The app reads the live table/column schema and SQL types for all visible
+user tables in the configured database (not just the employee table), plus the
+uploaded workbook's worksheet names, column names/types, and up to three sample
+rows per worksheet. SQL row data is not fetched for source discovery. The Excel
+preview/samples do not substitute for the full data used in calculations.
+
+For each question the planner chooses the smallest necessary source set:
+
+| Question | Sources used |
+| --- | --- |
+| `What is the total actual amount by department in SQL?` | Relevant SQL table(s) only |
+| `What is the total budget in the Targets worksheet?` | Relevant Excel worksheet(s) only |
+| `Compare SQL actual amounts against the Excel department budgets and show the variance.` | SQL actuals and Excel budgets, joined by the specified matching keys |
+| `Use the Excel lookup to label the SQL results.` | Relevant SQL table and Excel lookup |
+
+Only selected SQL queries execute, and only selected Excel worksheets are loaded
+in full. SQL plans are validated against the discovered columns and compiled to
+read-only, parameterized SELECT statements; model-written SQL/code is never
+executed. SQL data can be filtered/grouped before matching to Excel. Combined
+results use the existing bounded pandas join, lookup and calculation engine.
+Targets must be matched at the correct grain (for example, department and month).
+Ambiguous source names, keys, periods or missing sources request clarification
+instead of inventing a join or silently substituting Excel targets for SQL actuals.
+Each answer names the actual sources used and offers an Excel export.
+
+The configured Azure planner receives SQL schema metadata and Excel sample rows
+(at most three per sheet; sample strings are shortened to 160 characters), not
+SQL result rows. Upload only workbooks that may be processed by your configured
+Azure service. Sample cell values are excluded from backend logs.
+
+Discovery supports at most 200 visible SQL tables and 20 Excel worksheets.
+Each selected SQL result and Excel worksheet may contain up to 50,000 rows;
+combined input is limited to 100,000 rows and 5 million cells. SQL reads request
+one overflow-detection row and reject oversized results rather than silently
+calculating totals from a 100-row preview. Explicit top/limit questions may use
+a smaller limit. Chat previews still show at most 100 rows; exports retain the
+full result. Database permissions remain the authority: use an account with
+SELECT access only to the tables that should be available.
+
+Source inspection/query failures are visible in diagnostics. A SQL outage does
+not prevent an Excel-only answer, but it is explicitly reported and SQL-based
+comparisons cannot be completed. Results and traces are cached with each answer;
+rerunning the UI does not repeat queries. **New chat** clears those snapshots.
+
+The existing **Employee database** and **Excel workbook** modes remain available
+for explicit single-source workflows, including supported questions without AI.
+Workbook `open`/`close` commands retain Automatic mode when it is active.
+
 ### Excel workbooks
 
-In the sidebar, choose **Data source > Excel workbook**, upload an `.xlsx` file,
+For the explicit Excel-only workflow, choose **Data source > Excel workbook** in the sidebar, upload an `.xlsx` file,
 and select a **Worksheet**. A sheet named **Sales** is selected by default when
 present; you can choose any other worksheet. The selected sheet is the default
 source for new text and voice questions. Questions can explicitly name other
@@ -290,23 +344,47 @@ Open **Backend diagnostics** in the sidebar after asking an employee database or
 select **Download backend log**. This downloads JSON-lines text as
 `chatbot_backend.log` for this chat only. Each answer shows a request ID to match
 against UTC timestamps, elapsed milliseconds, worksheet schemas/unavailable
-sheets, automatic routing, planner status, calculation steps, row/column counts,
+sheets, automatic routing, planner status and structured plans, calculation step
+details (columns, metrics, grouping, sorting, joins and filter structure), row/column counts,
 export events and failures. Cached answers do not rerun or duplicate their traces.
 For SQL Server and the hosted SQLite demo, the same log records the backend,
 local planning, Azure planner requests/validation or plan-cache hits, read-query
-start/completion/failure, SQL Server reconnect retries, result dimensions, and
+start/completion/failure, readable SQL statements, parameter names/types (with values redacted),
+query duration in milliseconds, SQL Server reconnect retry attempts, result column names/dimensions, and
 Excel/PDF generation. Elapsed timestamps show where time is spent. Queries made
 during employee-name resolution are included in the same request. The connection
 test button also logs its latest check. Preparing an export is not proof that a
 user downloaded it. General conversation is identified separately and does not
-produce a database query event.
+produce a database query event. Most Excel workbook calculations execute in pandas,
+not SQL: their calculation steps show what was executed instead of inventing a SQL
+query. The single-sheet SQLite query path also logs its SQL and source loading.
+
+Query/source-selection events also include an `implementation` array containing
+the Python source of the invoked query or calculation functions: function name,
+source filename, first line number, language, and complete code (not shortened to
+256 characters). This covers SQL execution, local Excel counts/previews/sales,
+workbook expression/aggregation/join execution, and combined-source processing.
+The log also includes the SQL plan compiler, Excel formula evaluator/aggregate
+helpers, answer-formatting functions, and result-export implementation used by
+SQL and Excel responses.
+These are application implementation snapshots, not model-generated Python or
+a line-by-line execution replay. Runtime arguments, locals and cell values are
+not dumped. The validated plan and processing events identify the operations
+used for that request. If source cannot be inspected, its entry explicitly
+reports `status: "unavailable"`. Both the session download and rotating server log
+contain the implementation entries; treat these files as private application code.
+Existing cached answers keep their original logs; ask a new question to capture
+implementation entries.
 
 The app also writes a server-side `logs/backend.log`, with 2 MB rotation and
 three backups (up to approximately 8 MB total). When running locally, this folder
 is beside the application. On Streamlit Cloud it is on the hosting server, not
 your computer; use the sidebar download there. Server logs contain metadata from
 all users and must remain administrator-only; the app never exposes that shared
-file as a download. Question text, data-cell values, filter/query literals, SQL,
+file as a download. SQL structure is included without the old 256-character
+metadata truncation; SQL string/numeric literals and comments are redacted.
+Bound parameter values and plan filter literals are redacted; names and types
+remain visible. Question text, data-cell values,
 credentials and raw exception details are excluded. Sheet/column names are
 included, so still treat logs as private.
 
@@ -435,6 +513,7 @@ the new **Data source** controls appear; local tests alone do not update it.
 | `excel_support.py` | Bounded Excel parsing, worksheet schema inference, and literal-safe workbook exports |
 | `workbook_operations.py` | Bounded, read-only workbook calculations, expressions, lookups, joins, rankings, and pivots |
 | `backend_diagnostics.py` | Privacy-safe request traces, rotating server log files, and session log downloads |
+| `source_queries.py` | Live SQL/Excel source discovery, source-plan validation, and bounded cross-source execution |
 | `employee_dataset.xlsx` | Synthetic 150-employee sample dataset |
 | `generate_employee_dataset.py` | Recreates the sample Excel dataset |
 | `import_employees_data.py` | Creates `EmployeeDB` and imports `dbo.Employees` |
@@ -446,6 +525,7 @@ the new **Data source** controls appear; local tests alone do not update it.
 | `tests/test_excel_support.py` | Workbook validation, arbitrary-column queries, Excel exports, and source-selection regression tests |
 | `tests/test_workbook_operations.py` | Calculation semantics, cross-sheet operations, invalid plans, and expansion limits |
 | `tests/test_backend_diagnostics.py` | Log rotation, isolation, metadata restrictions, failure handling, and step traces |
+| `tests/test_source_queries.py` | Source discovery, SQL-only/Excel-only/combined execution, limits, parameterization, ambiguity, outages, and automatic-mode UI |
 | `.github/workflows/tests.yml` | Windows and Linux / Python 3.14 CI workflow |
 | `docs/` | Screenshots and a sample PDF report |
 

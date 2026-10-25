@@ -13,6 +13,14 @@ from backend_diagnostics import BackendTrace, diagnostic_log
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def employee_app():
+    app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py"))
+    app.session_state["data_source"] = "Employee database"
+    return app
+
+
 TEST_ENVIRONMENT = {
     name: value for name, value in os.environ.items()
     if not name.upper().startswith(("AZURE_", "SMTP_", "WORKFORCE_"))
@@ -105,7 +113,7 @@ class DemoDatabaseTests(unittest.TestCase):
         )
 
     def test_salary_typo_ui_shows_only_the_correct_answer(self):
-        app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+        app = employee_app().run(timeout=30)
         for question in ("avrage salry of sales", "give avrage salry of sales"):
             app.chat_input[0].set_value(question).run(timeout=30)
             self.assertEqual(len(app.exception), 0)
@@ -115,7 +123,9 @@ class DemoDatabaseTests(unittest.TestCase):
         self.assertEqual(len(app.exception), 0)
         self.assertIn("couldn't identify", app.session_state["chat_history"][-1]["answer"])
         self.assertEqual(len(app.code), 1)
-        self.assertNotIn("filter_", app.code[0].value)
+        self.assertEqual(len(app.sidebar.code), 1)
+        self.assertIn(":filter_0", app.sidebar.code[0].value)
+        self.assertFalse(any("filter_" in message["answer"] for message in app.session_state["chat_history"]))
         self.assertFalse(any("filter_" in caption.value or "department =" in caption.value for caption in app.caption))
 
     def test_compound_salary_count_excludes_boundary_males_and_missing_values(self):
@@ -236,7 +246,7 @@ class DemoDatabaseTests(unittest.TestCase):
         self.assertGreater(len(pdf), 1000)
 
     def test_cloud_demo_ui_answers_without_sql_server_or_azure(self):
-        app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+        app = employee_app().run(timeout=30)
         self.assertEqual(len(app.exception), 0)
         self.assertFalse(any("portfolio demo" in caption.value.lower() for caption in app.caption))
         self.assertFalse(any("credentials" in caption.value.lower() for caption in app.caption))
@@ -267,11 +277,13 @@ class DemoDatabaseTests(unittest.TestCase):
         events = [json.loads(line) for line in app.code[0].value.splitlines()]
         self.assertEqual(len({event["request_id"] for event in events}), 3)
         self.assertNotIn("80000", app.code[0].value)
-        self.assertNotIn("SELECT", app.code[0].value)
+        self.assertEqual(len(app.sidebar.code), 1)
+        self.assertIn("SELECT", app.sidebar.code[0].value)
+        self.assertFalse(any("SELECT" in message["answer"] for message in app.session_state["chat_history"]))
         self.assertTrue(any(button.label == "Download backend log" for button in app.get("download_button")))
 
     def test_backend_status_and_connection_check_show_real_demo_count(self):
-        app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+        app = employee_app().run(timeout=30)
         self.assertTrue(any("SQLite demo (not SQL Server)" in caption.value for caption in app.caption))
         app.button(key="test_employee_connection").click().run(timeout=30)
         self.assertEqual(len(app.exception), 0)
@@ -289,7 +301,7 @@ class DemoDatabaseTests(unittest.TestCase):
         self.assertTrue(any(event["event"] == "query_failed" for event in app.session_state["employee_connection_log"]))
         self.assertNotIn("private connection details", app.code[0].value)
 
-    def test_sql_server_trace_retries_without_logging_sql_parameters_or_cells(self):
+    def test_sql_server_trace_includes_sql_and_retry_without_parameter_values_or_cells(self):
         events = []
         token = self.chatbot.SQL_TRACE.set(BackendTrace(events))
         self.addCleanup(self.chatbot.SQL_TRACE.reset, token)
@@ -305,18 +317,32 @@ class DemoDatabaseTests(unittest.TestCase):
         get_engine.clear.assert_called_once()
         self.assertEqual([event["event"] for event in events], ["query_started", "query_retry", "query_completed"])
         self.assertEqual(events[0]["route"], "sql_server")
+        self.assertEqual(events[0]["implementation"][0]["function"], "run_query")
+        self.assertIn("pd.read_sql", events[0]["implementation"][0]["code"])
+        self.assertEqual(events[0]["sql"], "SELECT :private_literal")
+        self.assertEqual(events[0]["parameters"]["private_literal"], {"type": "str", "value": "[REDACTED]"})
+        self.assertEqual(events[1]["attempt"], 2)
+        self.assertGreaterEqual(events[-1]["duration_ms"], 0)
+        self.assertEqual(events[-1]["result_columns"], ["private_column"])
         log = diagnostic_log(events)
-        for secret in ("PRIVATE_CONNECTION_STRING", "PRIVATE_RESULT", "PRIVATE_PARAMETER", "SELECT", "private_literal"):
+        for secret in ("PRIVATE_CONNECTION_STRING", "PRIVATE_RESULT", "PRIVATE_PARAMETER"):
             self.assertNotIn(secret, log)
 
-    def test_employee_trace_is_compatible_with_existing_logger_metadata_fields(self):
+    def test_employee_trace_includes_sql_and_result_details(self):
         message = {"question": "How many employees?", "request": None, "pending_query": True}
-        with patch("backend_diagnostics.LOG_FIELDS", {
-            "route", "operation", "status", "rows", "columns", "error_type",
-        }):
-            self.assertIn("150 employees", self.chatbot.display_employee_message(message, "existing_log_schema"))
+        self.assertIn("150 employees", self.chatbot.display_employee_message(message, "detailed_log_schema"))
         self.assertEqual(message["backend_log"][0]["route"], "sqlite_demo")
         self.assertEqual(message["backend_log"][-1]["event"], "request_completed")
+        queries = [event for event in message["backend_log"] if event["event"] == "query_started"]
+        self.assertTrue(queries)
+        self.assertTrue(all("SELECT" in event["sql"] for event in queries))
+        implementation = {
+            item["function"]: item["code"]
+            for event in message["backend_log"] for item in event.get("implementation", [])
+        }
+        for function in ("run_query", "compile_data_plan", "deterministic_response", "generate_excel_download"):
+            self.assertIn(function, implementation)
+            self.assertIn(f"def {function}(", implementation[function])
 
     def test_sql_failure_is_friendly_traced_and_context_is_reset(self):
         message = {"question": "How many employees?", "request": None, "pending_query": True}
@@ -367,7 +393,7 @@ class DemoDatabaseTests(unittest.TestCase):
 
     def test_cloud_voice_controls_enable_when_speech_settings_are_present(self):
         with patch.dict(os.environ, {"AZURE_SPEECH_KEY": "test-key", "AZURE_SPEECH_REGION": "eastus"}):
-            app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+            app = employee_app().run(timeout=30)
         self.assertEqual(len(app.exception), 0)
         self.assertFalse(app.get("audio_input")[0].disabled)
         self.assertFalse(app.toggle[0].disabled)

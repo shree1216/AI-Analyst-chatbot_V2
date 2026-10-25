@@ -406,7 +406,9 @@ def execute_workbook_plan(
     _require(isinstance(steps, list) and 1 <= len(steps) <= MAX_STEPS,
              "A workbook question must contain between 1 and 20 calculation steps.")
     if trace:
-        trace.record("source_selected", sheet=sheet, rows=len(sheets[sheet]), columns=len(sheets[sheet].columns))
+        trace.record_code("source_selected", execute_workbook_plan, evaluate_expression, _evaluate,
+                          _aggregate_frame, _aggregate, _join,
+                          sheet=sheet, rows=len(sheets[sheet]), columns=len(sheets[sheet].columns))
     frame = _bounded(sheets[sheet].copy(deep=True))
     for step_number, step in enumerate(steps, start=1):
         _require(isinstance(step, dict) and isinstance(step.get("op"), str), "A workbook calculation step is invalid.")
@@ -414,7 +416,8 @@ def execute_workbook_plan(
         _require(operation in {"filter", "calculate", "aggregate", "join", "lookup", "select", "sort", "limit", "rank", "pivot"},
                  "That workbook operation is not supported. No calculation was performed.")
         if trace:
-            trace.record("step_started", step=step_number, operation=operation, rows=len(frame), columns=len(frame.columns))
+            trace.record("step_started", step=step_number, operation=operation, rows=len(frame),
+                         columns=len(frame.columns), details=step)
         if operation == "filter":
             _keys(step, {"where"}, {"where"})
             frame = frame.loc[_truth(evaluate_expression(step["where"], frame), frame)]
@@ -496,5 +499,6 @@ def execute_workbook_plan(
                 frame = frame.reset_index()
         frame = _bounded(frame)
         if trace:
-            trace.record("step_completed", step=step_number, operation=operation, rows=len(frame), columns=len(frame.columns))
+            trace.record("step_completed", step=step_number, operation=operation, rows=len(frame),
+                         columns=len(frame.columns), result_columns=[str(column) for column in frame.columns])
     return frame

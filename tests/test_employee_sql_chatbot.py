@@ -13,6 +13,14 @@ from streamlit.testing.v1 import AppTest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def employee_app():
+    app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py"))
+    app.session_state["data_source"] = "Employee database"
+    return app
+
+
 PAY_QUESTION = "Create a PDF report comparing the highest and lowest department pay"
 TEST_ENVIRONMENT = {
     name: value for name, value in os.environ.items()
@@ -896,7 +904,7 @@ class WorkforceTests(unittest.TestCase):
                 choice.message.content = "A red square."
                 choice.message.refusal = None
                 choice.finish_reason = "stop"
-                app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+                app = employee_app().run(timeout=30)
                 app.session_state["chat_history"] = [{
                     "kind": "image", "image_name": "test.png", "image_bytes": image.getvalue(),
                     "question": "Describe it", "answer": None, "error": "Azure image analysis timed out.",
@@ -1119,7 +1127,7 @@ class WorkforceTests(unittest.TestCase):
 
     def test_report_screen_puts_chart_before_expandable_details(self):
         with patch("sqlalchemy.engine.Engine.connect"), patch("pandas.read_sql", return_value=self.result):
-            app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+            app = employee_app().run(timeout=30)
             app.chat_input[0].set_value(PAY_QUESTION).run(timeout=30)
             self.assertEqual(len(app.exception), 0)
             self.assertTrue(any("report-metrics" in item.value for item in app.markdown))
@@ -1214,7 +1222,7 @@ class WorkforceTests(unittest.TestCase):
 
     def test_chat_recall_survives_rerun_and_new_chat_clears_context(self):
         with patch("sqlalchemy.engine.Engine.connect"), patch("pandas.read_sql", return_value=self.result):
-            app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+            app = employee_app().run(timeout=30)
             app.chat_input[0].set_value(PAY_QUESTION).run(timeout=30)
             app.chat_input[0].set_value("do you remember what i asked you before").run(timeout=30)
             self.assertEqual(len(app.exception), 0)
@@ -1231,7 +1239,7 @@ class WorkforceTests(unittest.TestCase):
 
     def test_repeated_reports_have_independent_widgets(self):
         with patch("sqlalchemy.engine.Engine.connect"), patch("pandas.read_sql", return_value=self.result):
-            app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+            app = employee_app().run(timeout=30)
             for _ in range(2):
                 app.chat_input[0].set_value(PAY_QUESTION).run(timeout=30)
                 self.assertEqual(len(app.exception), 0)
@@ -1259,7 +1267,7 @@ class WorkforceTests(unittest.TestCase):
 
     def test_old_messages_reuse_results_but_new_questions_query_fresh_data(self):
         with patch("sqlalchemy.engine.Engine.connect"), patch("pandas.read_sql", return_value=pd.DataFrame({"employee_count": [1]})) as read_sql:
-            app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+            app = employee_app().run(timeout=30)
             app.chat_input[0].set_value("How many employees do we have?").run(timeout=30)
             first_answer = app.session_state["chat_history"][0]["answer"]
             self.assertEqual(read_sql.call_count, 1)

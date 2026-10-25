@@ -21,6 +21,14 @@ from excel_support import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def employee_app():
+    app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py"))
+    app.session_state["data_source"] = "Employee database"
+    return app
+
+
 TEST_ENVIRONMENT = {
     key: value for key, value in os.environ.items()
     if not key.upper().startswith(("AZURE_", "SMTP_", "WORKFORCE_"))
@@ -378,6 +386,23 @@ class ExcelChatTests(unittest.TestCase):
         self.assertIn("Revenue", prompt)
         self.assertNotIn("West", prompt)
 
+    def test_single_sheet_sql_trace_has_plan_statement_and_redacted_parameters(self):
+        events = []
+        token = self.chatbot.SQL_TRACE.set(self.chatbot.BackendTrace(events))
+        self.addCleanup(self.chatbot.SQL_TRACE.reset, token)
+        result = self.ask("Filtered revenue", plan(
+            columns=["c1"], metrics=[], filter={"column": "c0", "op": "eq", "value": "West"},
+        ))
+        self.assertEqual(result["Revenue"].tolist(), [10, 30])
+        self.assertEqual([event["event"] for event in events], [
+            "planner_requested", "planner_completed", "source_loading", "query_started", "query_completed",
+        ])
+        self.assertIn("SELECT", events[-2]["sql"])
+        self.assertEqual(events[-2]["route"], "sqlite_spreadsheet")
+        self.assertTrue(events[-2]["parameters"])
+        self.assertGreaterEqual(events[-1]["duration_ms"], 0)
+        self.assertNotIn("West", self.chatbot.diagnostic_log(events))
+
     def test_dates_nulls_top_per_group_and_hostile_headers(self):
         result = self.ask("Missing dates", plan(filter={"column": "c2", "op": "is_null", "value": None}))
         self.assertEqual(result.iloc[0, 0], 1)
@@ -453,7 +478,7 @@ class ExcelChatTests(unittest.TestCase):
         ]}))
         upload.name = "complete.xlsx"
         with patch("streamlit.file_uploader", return_value=upload):
-            app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+            app = employee_app().run(timeout=30)
             app.radio(key="data_source").set_value("Excel workbook").run(timeout=30)
             app.chat_input[0].set_value("show all data").run(timeout=30)
             self.assertEqual(len(app.exception), 0)
@@ -475,7 +500,7 @@ class ExcelChatTests(unittest.TestCase):
         }))
         upload.name = "headers.xlsx"
         with patch("streamlit.file_uploader", return_value=upload):
-            app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+            app = employee_app().run(timeout=30)
             app.radio(key="data_source").set_value("Excel workbook").run(timeout=30)
             app.chat_input[0].set_value("count rows").run(timeout=30)
             self.assertEqual(len(app.exception), 0)
@@ -595,7 +620,7 @@ class ExcelChatTests(unittest.TestCase):
         }))
         upload.name = "private-workbook.xlsx"
         with patch("streamlit.file_uploader", return_value=upload):
-            app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+            app = employee_app().run(timeout=30)
             app.radio(key="data_source").set_value("Excel workbook").run(timeout=30)
             app.selectbox[0].select("products").run(timeout=30)
             app.chat_input[0].set_value("Total Revenue by year and month of Order Date.").run(timeout=30)
@@ -635,7 +660,7 @@ class ExcelChatTests(unittest.TestCase):
             "AZURE_OPENAI_ENDPOINT": "https://example.test", "AZURE_OPENAI_API_KEY": "test",
             "AZURE_OPENAI_API_VERSION": "2024-10-21",
         }), patch.object(self.chatbot, "get_engine", side_effect=AssertionError("Employee DB accessed")):
-            app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+            app = employee_app().run(timeout=30)
             app.radio(key="data_source").set_value("Excel workbook").run(timeout=30)
             app.chat_input[0].set_value("What is the median Stock in Inventory?").run(timeout=30)
             self.assertEqual(len(app.exception), 0)
@@ -712,15 +737,27 @@ class ExcelChatTests(unittest.TestCase):
         with patch("streamlit.file_uploader", return_value=upload), patch(
             "socket.create_connection", side_effect=AssertionError("Unexpected network"),
         ):
-            app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+            app = employee_app().run(timeout=30)
             app.radio(key="data_source").set_value("Excel workbook").run(timeout=30)
             self.assertEqual(app.selectbox[0].value, "Sales")
+            self.assertFalse(any("Chat commands:" in caption.value or "Choose one worksheet" in caption.value
+                                 for caption in app.sidebar.caption))
             app.chat_input[0].set_value("What are the total sales for the North region?").run(timeout=30)
             self.assertEqual(len(app.exception), 0)
             message = app.session_state["chat_history"][-1]
             self.assertEqual(message["answer"], "The total sales for the North region is 1,500.75.")
             self.assertTrue(any(message["answer"] == item.value for item in app.markdown))
             self.assertEqual(pd.read_excel(BytesIO(message["excel_download"])).iloc[0, 0], 1500.75)
+            route = next(event for event in message["backend_log"] if event["event"] == "route_selected")
+            functions = {item["function"] for item in route["implementation"]}
+            self.assertEqual(functions, {"local_excel_result", "query_sales_total"})
+            implementation = {
+                item["function"]: item["code"]
+                for event in message["backend_log"] for item in event.get("implementation", [])
+            }
+            for function in ("query_sales_total", "spreadsheet_answer", "generate_excel_download"):
+                self.assertIn(function, implementation)
+                self.assertIn(f"def {function}(", implementation[function])
             app.run(timeout=30)
             self.assertEqual(app.session_state["chat_history"][-1]["answer"], message["answer"])
 
@@ -730,7 +767,7 @@ class ExcelChatTests(unittest.TestCase):
         with patch("streamlit.file_uploader", return_value=upload), patch.object(
             self.chatbot, "get_engine", side_effect=AssertionError("Employee DB accessed"),
         ):
-            app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+            app = employee_app().run(timeout=30)
             app.radio(key="data_source").set_value("Excel workbook").run(timeout=30)
             app.chat_input[0].set_value("count rows").run(timeout=30)
             self.assertEqual(len(app.exception), 0)
@@ -752,7 +789,7 @@ class ExcelChatTests(unittest.TestCase):
         with patch("streamlit.file_uploader", return_value=None), patch.object(
             self.chatbot, "get_engine", side_effect=AssertionError("Employee DB accessed"),
         ):
-            app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+            app = employee_app().run(timeout=30)
             app.radio(key="data_source").set_value("Excel workbook").run(timeout=30)
             app.chat_input[0].set_value("count rows").run(timeout=30)
             self.assertEqual(len(app.exception), 0)
@@ -777,7 +814,7 @@ class ExcelChatTests(unittest.TestCase):
         upload = BytesIO(workbook_bytes())
         upload.name = "sample.xlsx"
         with patch("streamlit.file_uploader", return_value=upload):
-            app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+            app = employee_app().run(timeout=30)
             app.radio(key="data_source").set_value("Excel workbook").run(timeout=30)
             create = next(button for button in app.button if button.label == "Create Region_Summary")
             self.assertTrue(create.disabled)
@@ -804,7 +841,7 @@ class ExcelChatTests(unittest.TestCase):
         }))
         upload.name = "existing.xlsx"
         with patch("streamlit.file_uploader", return_value=upload):
-            app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+            app = employee_app().run(timeout=30)
             app.radio(key="data_source").set_value("Excel workbook").run(timeout=30)
             app.checkbox[0].check().run(timeout=30)
             create = next(button for button in app.button if button.label == "Create Region_Summary")
@@ -817,7 +854,7 @@ class ExcelChatTests(unittest.TestCase):
         upload = BytesIO(workbook_bytes({"Inventory": [("Product",), ("Widget",)]}))
         upload.name = "inventory.xlsx"
         with patch("streamlit.file_uploader", return_value=upload):
-            app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+            app = employee_app().run(timeout=30)
             app.radio(key="data_source").set_value("Excel workbook").run(timeout=30)
             self.assertEqual(len(app.exception), 0)
             self.assertTrue(any("doesn't have a Sales sheet" in info.value for info in app.info))
@@ -833,7 +870,7 @@ class ExcelChatTests(unittest.TestCase):
 
     def test_workbook_commands_open_and_close_controls_without_a_file(self):
         with patch("streamlit.file_uploader", return_value=None):
-            app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+            app = employee_app().run(timeout=30)
             app.chat_input[0].set_value("open Excel").run(timeout=30)
             self.assertEqual(len(app.exception), 0)
             self.assertEqual(app.radio(key="data_source").value, "Excel workbook")
@@ -851,7 +888,7 @@ class ExcelChatTests(unittest.TestCase):
         upload = BytesIO(workbook_bytes())
         upload.name = "sample.xlsx"
         with patch("streamlit.file_uploader", return_value=upload):
-            app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+            app = employee_app().run(timeout=30)
             app.chat_input[0].set_value("open Excel").run(timeout=30)
             app.chat_input[0].set_value("open Inventory").run(timeout=30)
             self.assertEqual(len(app.exception), 0)
@@ -880,7 +917,7 @@ class ExcelChatTests(unittest.TestCase):
         upload = BytesIO(workbook_bytes())
         upload.name = "remembered.xlsx"
         with patch("streamlit.file_uploader", return_value=upload):
-            app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+            app = employee_app().run(timeout=30)
             app.radio(key="data_source").set_value("Excel workbook").run(timeout=30)
             app.radio(key="data_source").set_value("Employee database").run(timeout=30)
         with patch("streamlit.file_uploader", return_value=None):
@@ -895,7 +932,7 @@ class ExcelChatTests(unittest.TestCase):
 
     def test_last_question_works_with_invalid_headers_and_without_a_workbook(self):
         with patch("streamlit.file_uploader", return_value=None):
-            app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+            app = employee_app().run(timeout=30)
             app.radio(key="data_source").set_value("Excel workbook").run(timeout=30)
             app.chat_input[0].set_value("whats the last question?").run(timeout=30)
             self.assertEqual(len(app.exception), 0)
@@ -937,7 +974,7 @@ class ExcelChatTests(unittest.TestCase):
         }))
         upload.name = "command-forms.xlsx"
         with patch("streamlit.file_uploader", return_value=upload):
-            app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+            app = employee_app().run(timeout=30)
             app.chat_input[0].set_value("open Excel").run(timeout=30)
             for question, expected in (
                 ("open worksheet staff", "staff"),
