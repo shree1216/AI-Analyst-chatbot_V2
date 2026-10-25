@@ -86,6 +86,49 @@ class WorkbookOperationTests(unittest.TestCase):
                                {"op": "aggregate", "metrics": [metric("Total", "sum", "Sales")]})
         self.assertEqual(result.iloc[0, 0], 4000)
 
+    def test_text_min_max_support_grouped_scalar_and_conditional_aggregates(self):
+        self.sheets["Sales"] = pd.DataFrame({
+            "Region": ["North", "North", "South", "South"],
+            "Product": ["Zebra", "Apple", None, "Pear"],
+        })
+        metrics = [metric("First", "min", "Product"), metric("Last", "max", "Product")]
+        grouped = self.run_plan({"op": "aggregate", "group_by": ["Region"], "metrics": metrics})
+        self.assertEqual(grouped.to_dict("list"), {
+            "Region": ["North", "South"], "First": ["Apple", "Pear"], "Last": ["Zebra", "Pear"],
+        })
+        scalar = self.run_plan({"op": "aggregate", "metrics": metrics})
+        self.assertEqual(scalar.iloc[0].tolist(), ["Apple", "Zebra"])
+        expression = fn("min", col("Product"), where=fn("eq", col("Region"), "South"))
+        self.assertEqual(evaluate_expression(expression, self.sheets["Sales"]), "Pear")
+        conditional = self.run_plan({"op": "aggregate", "group_by": ["Region"], "metrics": [
+            metric("First", "min", "Product", where=fn("eq", col("Region"), "South")),
+        ]})
+        self.assertTrue(pd.isna(conditional["First"].iloc[0]))
+        self.assertEqual(conditional["First"].iloc[1], "Pear")
+        self.sheets["Sales"]["Product"] = None
+        self.assertIsNone(self.run_plan({"op": "aggregate", "metrics": metrics}).iloc[0, 0])
+
+    def test_coalesce_fills_nulls_without_hiding_invalid_arithmetic(self):
+        expression = fn("coalesce", col("Sales"), fn("divide", 8, 2), 0)
+        self.assertEqual(evaluate_expression(expression, self.sales).tolist(), [10, 30, 20, 4])
+        self.assertEqual(evaluate_expression(fn("coalesce", 1, fn("divide", 1, 0)), self.sales).tolist(), [1] * 4)
+        with self.assertRaisesRegex(ValueError, "divide by zero"):
+            evaluate_expression(fn("coalesce", col("Sales"), fn("divide", 1, 0)), self.sales)
+        with self.assertRaisesRegex(ValueError, "not supported"):
+            evaluate_expression(fn("coalesce", 1, fn("execute_python", "bad")), self.sales)
+        self.assertEqual(evaluate_expression(fn("coalesce", "", "fallback"), self.sales).tolist(), [""] * 4)
+
+    def test_sql_style_join_does_not_match_missing_identity_keys(self):
+        self.sheets["Sales"] = pd.DataFrame({"Code": ["a", None, ""], "Sales": [10, 20, 30]})
+        self.sheets["Products"] = pd.DataFrame({"Code": ["A", None, " "], "Name": ["Apple", "Null", "Blank"]})
+        steps = plan({"op": "join", "sheet": "Products", "left_on": ["Code"], "right_on": ["Code"],
+                      "columns": [{"column": "Name", "name": "Product"}], "how": "left"})
+        result = execute_workbook_plan(steps, self.sheets, match_null_keys=False)
+        self.assertEqual(result["Product"].iloc[0], "Apple")
+        self.assertTrue(result["Product"].iloc[1:].isna().all())
+        legacy = execute_workbook_plan(steps, self.sheets)
+        self.assertEqual(legacy["Product"].tolist(), ["Apple", "Null", "Blank"])
+
     def test_empty_filtered_results_and_empty_aggregates(self):
         steps = [{"op": "filter", "where": fn("gt", col("Sales"), lit(1000))}]
         self.assertTrue(self.run_plan(*steps).empty)

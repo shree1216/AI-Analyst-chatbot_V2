@@ -59,11 +59,16 @@ class BackendDiagnosticTests(unittest.TestCase):
         events = []
         condition = {"column": "Region", "op": "eq", "value": "PRIVATE_REGION"}
         plan = {"filter": {"all": [{"any": [condition]}]}, "metrics": [{"function": "sum", "column": "Revenue"}],
+                "having": {"column": "sum_Revenue", "op": "gt", "value": 987654321},
                 "unexpected_output": "PRIVATE_MODEL_TEXT"}
         diagnostics.BackendTrace(events).record("planner_completed", plan=plan)
         self.assertEqual(events[0]["plan"]["metrics"], plan["metrics"])
         self.assertNotIn("PRIVATE_REGION", diagnostics.diagnostic_log(events))
         self.assertNotIn("PRIVATE_MODEL_TEXT", diagnostics.diagnostic_log(events))
+        self.assertEqual(events[0]["plan"]["having"], {
+            "column": "sum_Revenue", "op": "gt", "value": "[REDACTED]",
+        })
+        self.assertNotIn("987654321", diagnostics.diagnostic_log(events))
         self.assertEqual(condition["value"], "PRIVATE_REGION")
 
     def test_logging_supports_maximum_valid_workbook_expression_depth(self):

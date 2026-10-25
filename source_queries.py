@@ -22,6 +22,29 @@ class SourceMatchError(ValueError):
     pass
 
 
+def allows_unmatched_sources(question: str, *, prior_questions: tuple[str, ...] = ()) -> bool:
+    def is_followup(text: str) -> bool:
+        return bool(re.fullmatch(
+            r"(?:(?:use|using)\s+)?both(?:\s+(?:the\s+)?(?:sources|sql\s+and\s+excel))?|"
+            r"(?:you\s+can\s+)?(?:match|join|merge)(?:\s+(?:it|them|the\s+sources))?"
+            r"\s+(?:on|using|by)\s+[\w ]{1,80}",
+            text.strip().rstrip(".!?"), re.IGNORECASE,
+        ))
+
+    unmatched = bool(re.search(
+        r"\b(?:unmatched|missing|unsold)\b|\bnot\s+(?:present\s+)?in\b|"
+        r"\b(?:no|without)\s+(?:a\s+)?match(?:ing)?\b|"
+        r"\b(?:zero|0|no|without)\s+(?:(?:any|recorded|matching|actual)\s+)*"
+        r"(?:sales?|transactions?|orders?|purchases?|activity)\b|"
+        r"\b(?:never|not)\s+(?:been\s+)?sold\b",
+        question, re.IGNORECASE,
+    ))
+    if unmatched or not is_followup(question):
+        return unmatched
+    previous = next((text for text in reversed(prior_questions[-6:]) if not is_followup(text)), "")
+    return allows_unmatched_sources(previous) if previous else False
+
+
 def requested_source_kinds(question: str) -> set[str]:
     question = re.sub(
         r"\b(?:not|without|ignore|exclude|excluding)\s+(?:(?:from|using|use|the)\s+)*"
@@ -188,7 +211,8 @@ def compile_source_query(
             raise ValueError("SQL filters must be structured conditions.")
         result = dict(value)
         if "column" in result:
-            result["column"] = column(result["column"])
+            name = result["column"]
+            result["column"] = order_names[name] if isinstance(name, str) and name in order_names else column(name)
         for key in ("all", "any"):
             if key in result:
                 if not isinstance(result[key], list):
@@ -208,9 +232,10 @@ def compile_source_query(
         raise ValueError("SQL metrics must be a list.")
     translated_metrics = []
     order_names = dict(ids)
+    output_names = set(query.get("columns", []))
     for metric in metrics:
-        if not isinstance(metric, dict) or set(metric) != {"function", "column"}:
-            raise ValueError("Each SQL metric needs a function and column.")
+        if not isinstance(metric, dict) or not {"function", "column"} <= set(metric) <= {"function", "column", "name"}:
+            raise ValueError("Each SQL metric needs a function, column, and optional output name.")
         function, name = metric["function"], metric["column"]
         if not isinstance(function, str):
             raise ValueError("SQL metric functions must be names.")
@@ -223,14 +248,23 @@ def compile_source_query(
             function = "avg"
         identifier = "*" if name == "*" else column(name)
         prefix = "average" if function == "avg" else function
-        alias = "row_count" if name == "*" else f"{prefix}_{name}"
+        default_alias = "row_count" if name == "*" else f"{prefix}_{name}"
+        alias = metric.get("name", default_alias)
+        if not isinstance(alias, str) or not alias.strip() or len(alias) > 256 or alias in ids or alias in output_names:
+            raise ValueError("SQL metric output names must be nonempty, unique, and distinct from source columns.")
+        output_names.add(alias)
         internal_alias = "row_count" if name == "*" else f"{prefix}_{identifier}"
+        if any(label in order_names and order_names[label] != internal_alias for label in (alias, default_alias)):
+            raise ValueError("SQL metric names conflict with another source or metric name.")
         labels[internal_alias] = alias
         order_names[alias] = internal_alias
+        order_names[default_alias] = internal_alias
         translated_metrics.append({"function": function, "column": identifier})
     translated["metrics"] = translated_metrics
     if "filter" in translated:
         translated["filter"] = condition(translated["filter"])
+    if "having" in translated:
+        translated["having"] = condition(translated["having"])
     if "order_by" in translated:
         orders = translated["order_by"]
         if not isinstance(orders, list):
@@ -339,7 +373,7 @@ def execute_source_plan(
             raise ValueError("The selected sources exceed 100,000 rows or 5 million cells. Aggregate or filter SQL data first.")
     joins: list[JoinDiagnostic] = []
     result = frames[chosen[0]].copy() if calculation is None else execute_workbook_plan(
-        calculation, frames, trace=trace, join_diagnostics=joins,
+        calculation, frames, trace=trace, join_diagnostics=joins, match_null_keys=not bool(sql_entries),
     )
     source_matches = []
     for join in joins:
@@ -383,6 +417,8 @@ def source_planner_prompt(sources: dict[str, DataSource], unavailable: list[str]
         "Prefer an entity master/catalog sheet for entity counts or catalog prices over a transaction sheet "
         "repeating the same entities; use a sales sheet when sales, quantities, regions or transactions are needed. "
         "Do not ask the user to confirm tables, sheets, obvious shared keys, case handling or blank exclusion. "
+        "Earlier user requests provide context for short follow-ups such as 'both' or 'match on code'. "
+        "The latest question overrides earlier source/metric choices; unrelated history adds no conditions. "
         "For matching entities, prefer a shared stable ID/code; otherwise use a shared entity-name column. "
         "A request for 'both sources', 'all sources', or 'combine the sources' requires BOTH SQL and Excel. "
         "Combining sources means actually matching related records or appending compatible entities, not "
@@ -394,6 +430,26 @@ def source_planner_prompt(sources: dict[str, DataSource], unavailable: list[str]
         "return Excel-only rows with every SQL field blank as a successful combined answer. "
         "Unmatched-record investigations are valid when explicitly requested. Partial matches must remain "
         "visible, and requesting top N never permits inventing extra people when fewer valid rows exist. "
+        "ZERO/NO SALES: use the product catalog as the complete product population, then LEFT JOIN sales "
+        "on the shared code. Include catalog products with no transaction rows AND products whose sales "
+        "sum is zero. A complete lack of matches is a valid result for this specific unmatched query, "
+        "not an enrichment failure. Aggregate transactions at the product-key grain before joining when "
+        "possible; otherwise aggregate after the join without counting the catalog placeholder as a sale. "
+        "Fill missing joined sales totals with coalesce(total,0), but do not replace unknown amounts in "
+        "existing transactions with fabricated zeros. Do not filter transactions to zero before summing, "
+        "and do not use an inner join, which removes the very products requested. "
+        "Track transaction presence and known amounts SEPARATELY: counta(joined_sales_code) is Transactions "
+        "and counta(joined_amount) is Known Amounts. Zero-sales products satisfy Transactions=0 OR "
+        "(Total Sales=0 AND Known Amounts=Transactions). A null total with Transactions>0 is UNKNOWN, "
+        "not zero. Apply this filter BEFORE coalesce(total,0). Never coalesce all null totals to zero "
+        "before deciding whether sales are zero, and never append catalog zeros into transaction amounts "
+        "without preserving transaction/known-amount counts. "
+        "Multiple catalog sources must be deduplicated by normalized code before joining transactions. "
+        "SQL joins between tables are supported by selecting each SQL source and using calculation join "
+        "steps. LEFT/INNER/RIGHT/FULL OUTER joins use how left/inner/right/outer. "
+        "HAVING means filter AFTER aggregate; WHERE means filter BEFORE aggregate. Multi-column grouping, "
+        "conditional aggregates, distinct counts, ranking and sorting use calculation steps when needed. "
+        "Never claim joins or grouping are unavailable merely because they require several steps. "
         "Ignore case and outer whitespace in text identity keys; exclude null/blank identity keys from distinct counts. "
         "For 'distinct products in SQL and Excel' default to ONE combined distinct count across the best relevant "
         "SQL table and Excel sheet. Use append to combine their identity columns, then normalize and count distinct; "
@@ -412,16 +468,20 @@ def source_planner_prompt(sources: dict[str, DataSource], unavailable: list[str]
         "Ask only the single missing essential detail, not a questionnaire. Never invent a column, relationship "
         "or value, and never ignore an explicit condition. Clarification uses sql=[],excel=[],calculation=null. "
         "For ordinary non-data conversation use mode='conversation' and no sources. "
-        "QUERY keys: understood:true,unhandled_conditions:[],columns:[exact original headers],metrics:[{function,column}],"
+        "QUERY keys: understood:true,unhandled_conditions:[],columns:[exact original headers],metrics:[{function,column,name?:output_label}],"
         "filter:null or {column,op,value} or {all:[filters]}/{any:[filters]},group_by:[],order_by:[{column,direction}],"
-        "optional limit (only for explicitly requested top/bottom/preview), per_group,limit_per_group. "
+        "optional having (same filter shape, using aggregate output names or grouped columns), "
+        "limit (only for explicitly requested top/bottom/preview), per_group,limit_per_group. "
         "SQL metric functions MUST use count,count_distinct,avg,sum,min,max; '*' only for count. "
         "Use count (NOT the Excel count_rows function) for SQL row counts; use avg (NOT average) for SQL averages. "
         "Filters eq,ne,gt,gte,lt,lte,in,not_in,between,contains,starts_with,ends_with,is_null,not_null,missing,not_missing. "
         "Use JSON numeric values for number columns, true/false for boolean columns, YYYY-MM-DD for dates. Selected columns must equal group_by "
         "when metrics exist. Aggregate SQL BEFORE joining to budgets/targets at the SAME grain to avoid repeated targets. "
         "SQL outputs use original headers for selected columns; metrics use function_header, avg uses average_header, "
-        "count('*') uses row_count. No implicit SQL row limit: calculations must include all matching data up to 50,000 rows. "
+        "count('*') uses row_count, unless an explicit metric name is provided. "
+        "Use these exact output names in having, order_by and subsequent calculation steps. "
+        "Put aggregate conditions in having, not filter; they execute before ordering and row limits. "
+        "No implicit SQL row limit: calculations must include all matching data up to 50,000 rows. "
         "The direct calculation object keys are: understood:true,unhandled_conditions:[],sheet:source_id,steps:[...]. "
         "For example, an Excel count uses calculation:{\"understood\":true,\"unhandled_conditions\":[],"
         "\"sheet\":\"excel_0\",\"steps\":[{\"op\":\"aggregate\",\"metrics\":[{\"name\":\"Rows\","
@@ -445,18 +505,40 @@ def source_planner_prompt(sources: dict[str, DataSource], unavailable: list[str]
         "first select the identity columns needed, append the other source's matching columns, then calculate "
         "normalized keys with lower(trim(column)), filter not(is_blank(key)), and aggregate count_distinct. "
         "lookup:{op,sheet:source_id,left_on:[headers],right_on:[headers],columns:[{column,name}],keep:'first'|'last'}. "
-        "Retrieved column aliases must not collide. Exact text keys ignore case/outer whitespace; null keys match. "
+        "Retrieved column aliases must not collide. Exact text keys ignore case/outer whitespace. "
+        "SQL and combined-source joins never match null/blank identity keys; worksheet-only joins retain null matching. "
+        "For RIGHT/OUTER joins select the right key with a distinct alias and coalesce(left_key,right_key) "
+        "so right-only records keep their identity. "
         "Use join when duplicate keys matter; lookup intentionally keeps one match only when requested. "
         "EXPR is {column:header}, {literal:JSON scalar/bounded list}, or {function,args:[EXPR,...],where?:EXPR}. "
         "Prefer explicit literal objects for IF labels, numbers, booleans and null, e.g. "
         "if(eq(column,total_max),{literal:'Highest'},{literal:null}); bare JSON scalar arguments are also "
         "accepted as literal VALUES, never as column names or executable formulas. "
         "Functions: add,subtract,multiply,divide,power,abs,number,text,trim,lower,upper,length,year,month,day,"
-        "eq,ne,gt,gte,lt,lte,in,contains,starts_with,ends_with,and,or,not,if,concat,date,datediff,today,is_blank,"
+        "eq,ne,gt,gte,lt,lte,in,contains,starts_with,ends_with,and,or,not,if,coalesce,concat,date,datediff,today,is_blank,"
         "sum,average,min,max,median,count,counta,count_rows,count_distinct. "
         "Aggregate metric column '*' only for count_rows; count counts numeric/date values; counta counts non-null. "
+        "min/max accept numeric values, dates and text labels; sum/average/median require numeric values. "
+        "coalesce accepts 2..20 expressions and returns the first non-null value per row. "
         "COUNT DISTINCT uses count_distinct. At most 20 steps. Use all matching rows, not only samples. "
         "Sample rows help interpret columns and join keys; they are not the answer. "
+        "ZERO-SALES EXAMPLE (hypothetical IDs/headers: replace with actual discovered names): "
+        '{"mode":"data","message":"","sql":[{"source":"sql_catalog","query":{"understood":true,'
+        '"unhandled_conditions":[],"columns":["code","product"],"metrics":[],"filter":null,"group_by":[],"order_by":[]}}],'
+        '"excel":["excel_sales"],"calculation":{"understood":true,"unhandled_conditions":[],"sheet":"sql_catalog","steps":['
+        '{"op":"join","sheet":"excel_sales","left_on":["code"],"right_on":["Code"],"how":"left",'
+        '"columns":[{"column":"Code","name":"Sales Code"},{"column":"amount","name":"Sales Amount"}]},'
+        '{"op":"aggregate","group_by":["code","product"],"metrics":['
+        '{"name":"Total Sales","function":"sum","column":"Sales Amount"},'
+        '{"name":"Transactions","function":"counta","column":"Sales Code"},'
+        '{"name":"Known Amounts","function":"counta","column":"Sales Amount"}]},'
+        '{"op":"filter","where":{"function":"or","args":['
+        '{"function":"eq","args":[{"column":"Transactions"},0]},'
+        '{"function":"and","args":[{"function":"eq","args":[{"column":"Total Sales"},0]},'
+        '{"function":"eq","args":[{"column":"Known Amounts"},{"column":"Transactions"}]}]}]}},'
+        '{"op":"calculate","columns":[{"name":"Total Sales","expression":'
+        '{"function":"coalesce","args":[{"column":"Total Sales"},0]}}]},'
+        '{"op":"select","columns":["code","product","Total Sales"]}]}}. '
         "SEPARATE-COUNT EXAMPLE (hypothetical IDs sql_example/excel_example and header code: replace these "
         "with actual discovered IDs/headers, and use this pattern only when separate counts are requested): "
         '{"mode":"data","message":"","sql":[{"source":"sql_example","query":{"understood":true,'

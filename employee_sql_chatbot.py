@@ -56,7 +56,7 @@ from excel_support import (
 from workbook_operations import MAX_SHEETS, execute_workbook_plan
 from backend_diagnostics import BackendTrace, diagnostic_log
 from source_queries import (
-    SourceMatchError, discover_excel_sources, discover_sql_sources, execute_source_plan,
+    SourceMatchError, allows_unmatched_sources, discover_excel_sources, discover_sql_sources, execute_source_plan,
     requested_source_kinds, source_planner_prompt,
 )
 
@@ -1192,12 +1192,14 @@ def compile_data_plan(
     plan: dict[str, Any], schema: dict[str, str], table: str, sqlite: bool,
     *, max_rows: int = MAX_ROWS,
 ) -> SqlRequest:
-    allowed_keys = {"understood", "unhandled_conditions", "columns", "metrics", "filter", "group_by", "order_by", "limit", "per_group", "limit_per_group"}
+    allowed_keys = {"understood", "unhandled_conditions", "columns", "metrics", "filter", "having", "group_by", "order_by", "limit", "per_group", "limit_per_group"}
     if not isinstance(plan, dict) or set(plan) - allowed_keys:
         raise ValueError("Unexpected query plan fields")
     if plan.get("understood") is not True or plan.get("unhandled_conditions") != []:
         raise ValueError("Question was not fully understood")
     parameters: dict[str, Any] = {}
+    filter_schema = schema
+    filter_expressions: dict[str, str] = {}
 
     def column_sql(column: str) -> str:
         if not isinstance(column, str) or column not in schema:
@@ -1205,7 +1207,7 @@ def compile_data_plan(
         return f"[{column}]"
 
     def bind_value(column: str, value: Any) -> str:
-        kind = schema[column]
+        kind = filter_schema[column]
         if kind == "number":
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
                 raise ValueError("Expected a finite number")
@@ -1237,8 +1239,10 @@ def compile_data_plan(
         if set(condition) - {"column", "op", "value"}:
             raise ValueError("Unexpected filter fields")
         column = condition.get("column")
-        raw_expression = column_sql(column)
-        expression = f"LOWER(LTRIM(RTRIM({raw_expression})))" if schema[column] == "text" else raw_expression
+        if not isinstance(column, str) or column not in filter_schema:
+            raise ValueError("Unknown filter column; HAVING may only use aggregates and grouped columns")
+        raw_expression = filter_expressions[column] if column in filter_expressions else column_sql(column)
+        expression = f"LOWER(LTRIM(RTRIM({raw_expression})))" if filter_schema[column] == "text" else raw_expression
         operator = condition.get("op")
         value = condition.get("value")
         label = column.replace("_", " ")
@@ -1246,7 +1250,7 @@ def compile_data_plan(
             if value is not None:
                 raise ValueError("Null checks do not accept a value")
             missing = f"{raw_expression} IS NULL"
-            if operator in {"missing", "not_missing"} and schema[column] == "text":
+            if operator in {"missing", "not_missing"} and filter_schema[column] == "text":
                 missing = f"({missing} OR {expression} = '')"
             sql = f"NOT ({missing})" if operator in {"not_null", "not_missing"} else missing
             return sql, f"{label} {operator.replace('_', ' ')}"
@@ -1265,7 +1269,7 @@ def compile_data_plan(
             else:
                 sql = f"{expression} {'NOT IN' if operator == 'not_in' else 'IN'} ({', '.join(placeholders)})"
             return sql, f"{label} {operator.replace('_', ' ')} {value}"
-        if operator in {"contains", "starts_with", "ends_with"} and schema[column] == "text":
+        if operator in {"contains", "starts_with", "ends_with"} and filter_schema[column] == "text":
             parameter = bind_value(column, value)
             key = parameter[1:]
             literal = parameters[key].replace("!", "!!").replace("%", "!%").replace("_", "!_").replace("[", "![")
@@ -1285,6 +1289,8 @@ def compile_data_plan(
     partitioning = [column_sql(column) for column in per_group]
     aliases = []
     metric_sql = []
+    aggregate_expressions: dict[str, str] = {}
+    aggregate_schema: dict[str, str] = {}
     for metric in metrics:
         if not isinstance(metric, dict) or set(metric) != {"function", "column"}:
             raise ValueError("Invalid aggregate")
@@ -1300,10 +1306,10 @@ def compile_data_plan(
         if alias in aliases or alias in columns:
             raise ValueError("Duplicate result column")
         aliases.append(alias)
-        metric_sql.append(
-            f"COUNT(DISTINCT {expression}) AS [{alias}]" if function == "count_distinct"
-            else f"{function.upper()}({expression}) AS [{alias}]"
-        )
+        aggregate = f"COUNT(DISTINCT {expression})" if function == "count_distinct" else f"{function.upper()}({expression})"
+        metric_sql.append(f"{aggregate} AS [{alias}]")
+        aggregate_expressions[alias] = aggregate
+        aggregate_schema[alias] = "number" if function in {"count", "count_distinct", "avg", "sum"} else schema[column]
     if metrics and set(columns) != set(groups) or groups and not metrics:
         raise ValueError("Selected dimensions must match grouping")
     if not selected and not metric_sql:
@@ -1319,8 +1325,42 @@ def compile_data_plan(
     limit = plan.get("limit", max_rows)
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= max_rows:
         raise ValueError("Invalid row limit")
-    where_sql, description = compile_filter(plan.get("filter"))
+    def split_filter(condition: Any, depth: int = 0) -> tuple[Any, Any]:
+        if condition is None and depth == 0:
+            return None, None
+        if not isinstance(condition, dict) or depth > 6:
+            raise ValueError("Invalid filter")
+        for group in ("all", "any"):
+            if group in condition:
+                children = condition[group]
+                if set(condition) != {group} or not isinstance(children, list) or not 1 <= len(children) <= 20:
+                    raise ValueError("Invalid filter group")
+                parts = [split_filter(child, depth + 1) for child in children]
+                if group == "any":
+                    return (None, condition) if any(having is not None for _, having in parts) else (condition, None)
+                combined = []
+                for index in (0, 1):
+                    values = [part[index] for part in parts if part[index] is not None]
+                    combined.append({"all": values} if len(values) > 1 else values[0] if values else None)
+                return combined[0], combined[1]
+        column = condition.get("column")
+        return (None, condition) if isinstance(column, str) and column in aggregate_expressions else (condition, None)
+
+    where, implicit_having = split_filter(plan.get("filter"))
+    where_sql, description = compile_filter(where)
     where_sql = f" WHERE {where_sql}" if where_sql else ""
+    having = plan.get("having")
+    if implicit_having is not None:
+        having = {"all": [implicit_having, having]} if having is not None else implicit_having
+    having_sql = ""
+    if having is not None:
+        if not metrics or per_group:
+            raise ValueError("HAVING requires aggregate metrics and cannot be combined with row ranking")
+        filter_schema = {**{column: schema[column] for column in groups}, **aggregate_schema}
+        filter_expressions = aggregate_expressions
+        having_sql, having_description = compile_filter(having)
+        having_sql = f" HAVING {having_sql}"
+        description += f"; having {having_description}"
     projection = ", ".join(selected + metric_sql)
     if per_group:
         rank_limit = plan.get("limit_per_group")
@@ -1338,6 +1378,7 @@ def compile_data_plan(
         sql = f"SELECT {projection} FROM {table}{where_sql}"
         if groups:
             sql += f" GROUP BY {', '.join(grouping)}"
+        sql += having_sql
     if sort_sql:
         sql += f" ORDER BY {', '.join(sort_sql)}"
     elif not metrics and "emp_id" in columns:
@@ -2976,12 +3017,21 @@ def query_excel_workbook(
         "then use extrema to return only the requested extremes and all ties, not middle rows with empty labels. "
         "Equal totals are both highest and lowest. "
         "Aggregate functions: sum,average,min,max,median,count,counta,count_rows,count_distinct. "
+        "MIN/MAX also accept text labels and dates; SUM/AVERAGE/MEDIAN require numeric values. "
+        "For zero/no-sales questions retain the product catalog with a LEFT join, sum sales per product, "
+        "then filter zero totals or absent transactions. Do not remove nonzero sales before summing. "
+        "Use coalesce(total,0) for missing joined totals, not to invent amounts in existing transactions. "
+        "Track counta(joined sales key) as Transactions and counta(amount) as Known Amounts. "
+        "Zero sales requires Transactions=0 OR (Total=0 AND Known Amounts=Transactions); "
+        "filter before coalescing missing totals to zero. Never classify unknown amounts as zero sales. "
+        "Filters after aggregate implement HAVING; filters before aggregate implement WHERE. "
         "Aggregate EXPR takes one argument except count_rows takes zero; optional where applies before aggregation. "
         "Metric column is '*' only for count_rows. COUNT counts numeric/date cells, COUNTA counts non-null, "
         "count_rows counts all matching rows. SUMIF(S)/COUNTIF(S)/AVERAGEIF(S) use metric where; "
         "combine multiple conditions with and/or/not. For counts of matching rows use count_rows, not count. "
         "Other functions/arities: add,subtract,multiply,divide,power (2); abs,number,text (1); "
         "eq,ne,gt,gte,lt,lte,in (2); and/or (2..20), not (1), if (3), is_blank (1); "
+        "coalesce (2..20, first non-null value per row, evaluated only where needed); "
         "contains,starts_with,ends_with (2, constant text second argument); "
         "left/right (2, constant nonnegative integer second argument); concat (2..20); trim,lower,upper,length (1); "
         "date (1 ISO text argument, or 3 integer year/month/day arguments); year,month,day (1); "
@@ -3411,11 +3461,13 @@ def display_employee_message(
 def generate_source_plan(
     client: AzureOpenAI, deployment: str, system_prompt: str, question: str, trace: BackendTrace,
     *, previous_plan: dict[str, Any] | None = None, validation_error: str | None = None,
+    prior_turns: tuple[tuple[str, str], ...] = (),
 ) -> dict[str, Any]:
-    messages: list[ChatCompletionMessageParam] = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": question},
-    ]
+    messages: list[ChatCompletionMessageParam] = [{"role": "system", "content": system_prompt}]
+    for role, content in prior_turns[-12:]:
+        if role == "user" and content:
+            messages.append({"role": "user", "content": content[:4000]})
+    messages.append({"role": "user", "content": question})
     if previous_plan is not None:
         messages.extend([
             {"role": "assistant", "content": json.dumps(previous_plan)},
@@ -3507,7 +3559,9 @@ def display_automatic_message(
                    "do not substitute SQL instructions or a general conversation answer."
                    if sql_only else "")
             )
-            plan = generate_source_plan(client, deployment, system_prompt, message["question"], trace)
+            plan = generate_source_plan(
+                client, deployment, system_prompt, message["question"], trace, prior_turns=prior_turns,
+            )
             if plan["mode"] in {"conversation", "clarification"}:
                 if plan["sql"] != [] or plan["excel"] != [] or plan["calculation"] is not None:
                     raise ValueError("A conversation or clarification must not select or query data sources.")
@@ -3532,6 +3586,12 @@ def display_automatic_message(
                             message["request"] = report_request
                             message.pop("pending_query", None)
                             return display_employee_message(message, render_key, prior_turns)
+                allow_unmatched = allows_unmatched_sources(
+                    message["question"], prior_questions=tuple(
+                        content for role, content in prior_turns if role == "user"
+                    ),
+                )
+
                 def execute_plan(proposed: dict[str, Any]) -> tuple[pd.DataFrame, list[str]]:
                     return execute_source_plan(
                         proposed, sources,
@@ -3539,11 +3599,7 @@ def display_automatic_message(
                             query, schema, table, DATA_MODE == "demo", max_rows=50_001,
                         ),
                         run_query, trace, required_kinds=requested_kinds,
-                        allow_unmatched=bool(re.search(
-                            r"\b(?:unmatched|missing)\b|\bnot\s+(?:present\s+)?in\b|"
-                            r"\b(?:no|without)\s+(?:a\s+)?match(?:ing)?\b",
-                            message["question"], re.IGNORECASE,
-                        )),
+                        allow_unmatched=allow_unmatched,
                     )
 
                 try:
@@ -3554,6 +3610,7 @@ def display_automatic_message(
                     repaired = generate_source_plan(
                         client, deployment, system_prompt, message["question"], trace,
                         previous_plan=plan, validation_error=str(error),
+                        prior_turns=prior_turns,
                     )
                     if isinstance(error, SourceMatchError) and repaired["mode"] != "data":
                         raise error
@@ -3562,7 +3619,7 @@ def display_automatic_message(
                     result, labels = execute_plan(repaired)
                 message["result"] = result
                 for match in result.attrs.get("source_matches", []):
-                    if match["unmatched_rows"]:
+                    if match["unmatched_rows"] and not allow_unmatched:
                         message["source_warnings"].append(
                             f"Matching to {match['source']}: {match['matched_rows']:,} records matched; "
                             f"{match['unmatched_rows']:,} had no matching key. "

@@ -36,7 +36,7 @@ FUNCTION_ARITY = {
     )},
     **{name: (1, 1) for name in AGGREGATES - {"count_rows"}},
     "count_rows": (0, 0), "and": (2, 20), "or": (2, 20), "if": (3, 3),
-    "concat": (2, 20), "date": (1, 3), "datediff": (3, 3), "today": (0, 0),
+    "concat": (2, 20), "coalesce": (2, 20), "date": (1, 3), "datediff": (3, 3), "today": (0, 0),
 }
 
 
@@ -149,6 +149,18 @@ def _validate_expression(
         _validate_expression(node["where"], columns, depth + 1, budget)
 
 
+def _aggregate_values(function: str, series: pd.Series, frame: pd.DataFrame, mask: pd.Series) -> pd.Series:
+    if function in {"min", "max"}:
+        if pd.api.types.is_datetime64_any_dtype(series):
+            return series.where(mask)
+        selected = series.loc[mask].dropna()
+        if not selected.empty and selected.map(lambda item: isinstance(item, str)).all() and (
+            pd.to_numeric(selected, errors="coerce").isna().any()
+        ):
+            return series.where(mask).astype("string")
+    return _numeric(series, frame, mask).where(mask)
+
+
 def _aggregate(function: str, value: Any, frame: pd.DataFrame, mask: pd.Series) -> Any:
     if function == "count_rows":
         return int(mask.sum())
@@ -162,10 +174,7 @@ def _aggregate(function: str, value: Any, frame: pd.DataFrame, mask: pd.Series) 
         return int(selected.map(
             lambda item: isinstance(item, (Real, date, datetime)) and not isinstance(item, bool) and not pd.isna(item)
         ).sum())
-    if function in {"min", "max"} and pd.api.types.is_datetime64_any_dtype(series):
-        values = series.loc[mask]
-    else:
-        values = _numeric(series, frame, mask).loc[mask]
+    values = _aggregate_values(function, series, frame, mask).loc[mask]
     if values.empty:
         return 0 if function == "sum" else None
     if not values.notna().any():
@@ -185,6 +194,16 @@ def _evaluate(node: Any, frame: pd.DataFrame, active: pd.Series) -> Any:
     if "column" in node:
         return frame[node["column"]]
     function, args = node["function"], node["args"]
+    if function == "coalesce":
+        result = _series(_evaluate(args[0], frame, active), frame).astype(object)
+        for arg in args[1:]:
+            missing = result.isna()
+            remaining = active & missing
+            if not remaining.any():
+                break
+            fallback = _series(_evaluate(arg, frame, remaining), frame)
+            result = result.where(~missing, fallback)
+        return result.infer_objects()
     if function == "if":
         condition = _truth(_evaluate(args[0], frame, active), frame)
         yes = _series(_evaluate(args[1], frame, active & condition), frame)
@@ -329,10 +348,8 @@ def _aggregate_frame(frame: pd.DataFrame, groups: list[str], metrics: Any) -> pd
                                 and not pd.isna(item)).astype(int).where(mask, 0)
         elif function in {"count_rows", "counta"}:
             values = values.notna().astype(int).where(mask, 0)
-        elif function not in {"count_distinct"} and not (
-            function in {"min", "max"} and pd.api.types.is_datetime64_any_dtype(values)
-        ):
-            values = _numeric(values, frame, mask).where(mask)
+        elif function != "count_distinct":
+            values = _aggregate_values(function, values, frame, mask)
         else:
             values = values.where(mask)
         work = frame[groups].copy()
@@ -356,7 +373,9 @@ def _aggregate_frame(frame: pd.DataFrame, groups: list[str], metrics: Any) -> pd
     return output
 
 
-def _join(frame: pd.DataFrame, step: dict[str, Any], sheets: dict[str, pd.DataFrame]) -> tuple[pd.DataFrame, int]:
+def _join(
+    frame: pd.DataFrame, step: dict[str, Any], sheets: dict[str, pd.DataFrame], *, match_null_keys: bool = True,
+) -> tuple[pd.DataFrame, int]:
     lookup = step["op"] == "lookup"
     allowed = {"sheet", "left_on", "right_on", "columns", "how", "keep"} if lookup else {
         "sheet", "left_on", "right_on", "columns", "how",
@@ -392,11 +411,21 @@ def _join(frame: pd.DataFrame, step: dict[str, Any], sheets: dict[str, pd.DataFr
     for left_key, right_key in zip(left_keys, temporary_keys):
         left[right_key] = left[left_key].map(lambda value: value.strip().casefold() if isinstance(value, str) else value)
         right[right_key] = right[right_key].map(lambda value: value.strip().casefold() if isinstance(value, str) else value)
+    if not match_null_keys:
+        temporary = "__workbook_join_valid"
+        while temporary in left or temporary in right:
+            temporary += "_"
+        for table, marker in ((left, 1), (right, 2)):
+            valid = table[temporary_keys].notna().all(axis=1)
+            for key in temporary_keys:
+                valid &= table[key].map(lambda value: not isinstance(value, str) or bool(value.strip()))
+            table[temporary] = (~valid).astype(int) * marker
+        temporary_keys.append(temporary)
     if lookup:
         keep = step.get("keep", "first")
         _require(isinstance(keep, str) and keep in {"first", "last"}, "Exact lookups support the first or last matching row.")
         right = right.drop_duplicates(temporary_keys, keep=keep)
-    keys = [f"k{index}" for index in range(len(left_keys))]
+    keys = [f"k{index}" for index in range(len(temporary_keys))]
     left_counts = left[temporary_keys].set_axis(keys, axis=1).value_counts(dropna=False).rename("left_count").reset_index()
     right_counts = right[temporary_keys].set_axis(keys, axis=1).value_counts(dropna=False).rename("right_count").reset_index()
     try:
@@ -480,7 +509,7 @@ def _append(frame: pd.DataFrame, step: dict[str, Any], sheets: dict[str, pd.Data
 
 def execute_workbook_plan(
     plan: Any, sheets: dict[str, pd.DataFrame], *, trace: BackendTrace | None = None,
-    join_diagnostics: list[JoinDiagnostic] | None = None,
+    join_diagnostics: list[JoinDiagnostic] | None = None, match_null_keys: bool = True,
 ) -> pd.DataFrame:
     _require(isinstance(plan, dict) and set(plan) == {"understood", "unhandled_conditions", "sheet", "steps"},
              "The workbook interpretation is invalid. Please specify the columns and calculation.")
@@ -493,7 +522,7 @@ def execute_workbook_plan(
              "A workbook question must contain between 1 and 20 calculation steps.")
     if trace:
         trace.record_code("source_selected", execute_workbook_plan, evaluate_expression, _evaluate,
-                          _aggregate_frame, _aggregate, _join, _extrema, _select, _append,
+                          _aggregate_frame, _aggregate, _aggregate_values, _join, _extrema, _select, _append,
                           sheet=sheet, rows=len(sheets[sheet]), columns=len(sheets[sheet].columns))
     frame = _bounded(sheets[sheet].copy(deep=True))
     frame_sources = {sheet}
@@ -523,7 +552,7 @@ def execute_workbook_plan(
             frame = _extrema(frame, step)
         elif operation in {"join", "lookup"}:
             left_rows = len(frame)
-            frame, matched_rows = _join(frame, step, sheets)
+            frame, matched_rows = _join(frame, step, sheets, match_null_keys=match_null_keys)
             diagnostic = JoinDiagnostic(
                 frozenset(frame_sources), step["sheet"], tuple(step["left_on"]), tuple(step["right_on"]),
                 left_rows, matched_rows,

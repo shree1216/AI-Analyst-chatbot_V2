@@ -165,6 +165,33 @@ Common equivalent JSON spellings are supported:
 column-only selections keep their original names, and finite scalar function
 arguments are literal values (never column references or executable code).
 The executor still validates every function, column, literal, shape and data limit.
+Grouped and scalar `MIN`/`MAX` support text labels as well as numeric values and
+dates; numeric calculations still reject nonnumeric input. `coalesce` selects the
+first non-null value per row and evaluates fallback expressions only where needed.
+Recent user requests are included when planning short follow-ups such as **both**
+or **match on code**, including automatic correction attempts. Previous answer
+rows are not sent back to the source planner.
+
+SQL-only multi-table joins and combined SQL/Excel joins use the same validated
+calculation steps: inner, left, right and full outer joins, multi-column grouping,
+conditional summaries, distinct counts and ranking. Post-aggregation filters
+implement `HAVING`; pre-aggregation filters implement `WHERE`. Right/full joins
+can retain right-only identities using an aliased right key and `coalesce`.
+SQL queries also support native, parameterized `having` conditions before
+ordering/row limits, and optional validated metric `name` aliases. Aggregate
+conditions emitted in `filter` are separated into `HAVING`; row conditions joined
+with `AND` stay in `WHERE`. Mixed `OR` conditions must reference grouped columns
+or aggregates, otherwise validation rejects them rather than changing their meaning.
+SQL and combined-source joins do not match null/blank identity keys; existing
+worksheet-only null-key behavior is unchanged.
+
+For **zero/no-sales products**, the planner retains the product catalog with a
+left join, includes missing transactions and zero totals, and filters after
+aggregation rather than discarding nonzero transactions before summing. Products
+with unknown amounts in existing transactions must not be reported as zero sales.
+A zero-overlap join is valid for these explicitly unmatched-record questions.
+Expected nonmatches in these questions are logged, not shown as enrichment
+warnings. Ordinary enrichment questions still warn when only some records match.
 
 If an automatic/SQL-only calculation plan fails validation, the app requests one
 corrected plan internally using the original question, unchanged schemas and

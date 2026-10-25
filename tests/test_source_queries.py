@@ -17,7 +17,7 @@ from streamlit.testing.v1 import AppTest
 from backend_diagnostics import BackendTrace, diagnostic_log
 from excel_support import read_excel_sheet
 from source_queries import (
-    compile_source_query, discover_excel_sources, discover_sql_sources,
+    allows_unmatched_sources, compile_source_query, discover_excel_sources, discover_sql_sources,
     execute_source_plan, requested_source_kinds, source_planner_prompt,
 )
 
@@ -406,6 +406,176 @@ class SourceQueryTests(unittest.TestCase):
         self.assertEqual(
             next(event for event in self.events if event["event"] == "sources_selected")["route"], "combined",
         )
+
+    def test_sql_table_joins_grouping_text_metrics_and_having(self):
+        with self.engine.begin() as connection:
+            connection.execute(text('INSERT INTO "Actuals" VALUES (:department, :amount)'), {"department": "D", "amount": 25})
+            pd.DataFrame({"Department": ["A", "B", "C"], "Label": ["Alpha", "Beta", "Gamma"]}).to_sql(
+                "Departments", connection, index=False,
+            )
+        self.sources, _ = discover_sql_sources(self.engine, self.trace)
+        catalog = next(key for key, value in self.sources.items() if value.label.endswith(".Departments"))
+        for how, expected in (("inner", {"A", "B"}), ("left", {"A", "B", "D"}),
+                              ("right", {"A", "B", "C"}), ("outer", {"A", "B", "C", "D"})):
+            proposed = data_plan(sql=[
+                {"source": self.actual, "query": query()},
+                {"source": catalog, "query": query(columns=["Department", "Label"])},
+            ], calculation={"understood": True, "unhandled_conditions": [], "sheet": self.actual, "steps": [
+                {"op": "join", "sheet": catalog, "left_on": ["Department"], "right_on": ["Department"], "how": how,
+                 "columns": [{"column": "Department", "name": "Catalog Department"}, {"column": "Label", "name": "Label"}]},
+                {"op": "calculate", "columns": [{"name": "Department", "expression": {
+                    "function": "coalesce", "args": [{"column": "Department"}, {"column": "Catalog Department"}],
+                }}]},
+                {"op": "aggregate", "group_by": ["Department"], "metrics": [
+                    {"name": "Total", "function": "sum", "column": "Amount"},
+                    {"name": "Label", "function": "min", "column": "Label"},
+                ]},
+            ]})
+            with self.subTest(how=how):
+                result, labels = self.execute(proposed)
+                self.assertEqual(set(result["Department"]), expected)
+                self.assertEqual(result.loc[result["Department"].eq("A"), "Total"].iloc[0], 300)
+                self.assertEqual(result.loc[result["Department"].eq("A"), "Label"].iloc[0], "Alpha")
+                self.assertTrue(all(label.startswith("SQL:") for label in labels))
+                proposed["calculation"]["steps"].append({
+                    "op": "filter", "where": {"function": "gt", "args": [{"column": "Total"}, 80]},
+                })
+                having, _ = self.execute(proposed)
+                self.assertEqual(having["Department"].tolist(), ["A"])
+
+    def test_sql_metric_names_and_aggregate_filters_compile_as_parameterized_having(self):
+        proposed = query(
+            columns=["Department"], group_by=["Department"],
+            metrics=[{"function": "count", "column": "*", "name": "Employee Count"},
+                     {"function": "avg", "column": "Amount", "name": "Average Amount"}],
+            filter={"all": [{"column": "Amount", "op": "gt", "value": 50},
+                            {"column": "Employee Count", "op": "gt", "value": 1}]},
+            order_by=[{"column": "Average Amount", "direction": "desc"}],
+        )
+        result, _ = self.execute(data_plan(sql=[{"source": self.actual, "query": proposed}]))
+        self.assertEqual(result.to_dict("records"), [{"Department": "A", "Employee Count": 2, "Average Amount": 150}])
+        self.assertIn(" HAVING COUNT(*) > :filter_1", self.read.call_args.args[0])
+        self.assertIn(" WHERE ", self.read.call_args.args[0])
+        self.assertEqual(self.read.call_args.args[1], {"filter_0": 50, "filter_1": 1})
+        proposed["filter"] = None
+        proposed["having"] = {"column": "Employee Count", "op": "eq", "value": 1}
+        proposed["order_by"] = [{"column": "Department", "direction": "asc"}]
+        proposed["limit"] = 1
+        result, _ = self.execute(data_plan(sql=[{"source": self.actual, "query": proposed}]))
+        self.assertEqual(result["Department"].tolist(), ["B"])
+        request, labels = compile_source_query(
+            proposed, self.sources[self.actual],
+            lambda plan, schema, table: self.chatbot.compile_data_plan(plan, schema, table, False, max_rows=50_001),
+        )
+        self.assertIn("SELECT TOP 1", request.sql)
+        self.assertIn("HAVING COUNT(*) = :filter_0", request.sql)
+        self.assertEqual(labels["row_count"], "Employee Count")
+        proposed["having"] = None
+        proposed["limit"] = 2
+        proposed["filter"] = {"any": [{"column": "Department", "op": "eq", "value": "B"},
+                                     {"column": "Employee Count", "op": "gt", "value": 1}]}
+        result, _ = self.execute(data_plan(sql=[{"source": self.actual, "query": proposed}]))
+        self.assertEqual(result["Department"].tolist(), ["A", "B"])
+        for invalid_filter in (
+            {"any": [{"column": "Amount", "op": "gt", "value": 0},
+                     {"column": "Employee Count", "op": "gt", "value": 1}]},
+            {"all": [None, {"column": "Department", "op": "eq", "value": "A"}]},
+        ):
+            proposed["filter"] = invalid_filter
+            with self.subTest(filter=invalid_filter), self.assertRaises(ValueError):
+                self.execute(data_plan(sql=[{"source": self.actual, "query": proposed}]))
+        proposed["filter"] = None
+        for metric in (
+            {"function": "count", "column": "*", "name": None},
+            {"function": "count", "column": "*", "name": "Department"},
+            {"function": "count", "column": "*", "name": "Rows", "execute": "bad"},
+        ):
+            proposed["metrics"] = [metric]
+            with self.subTest(metric=metric), self.assertRaises(ValueError):
+                self.execute(data_plan(sql=[{"source": self.actual, "query": proposed}]))
+
+    def test_zero_sales_combines_catalog_and_transactions_including_entirely_unmatched_sales(self):
+        with self.engine.begin() as connection:
+            pd.DataFrame({"code": ["A", "B", "C", "D", "E", "F"], "product": [
+                "Returned", "Sold", "Zero", "Unsold", "Unknown amount", "Partly unknown",
+            ]}).to_sql("sql_products", connection, index=False)
+        self.sources, _ = discover_sql_sources(self.engine, self.trace)
+        catalog = next(key for key, value in self.sources.items() if value.label.endswith(".sql_products"))
+        proposed = data_plan(
+            sql=[{"source": catalog, "query": query(columns=["code", "product"])}], excel=["excel_0"],
+            calculation={"understood": True, "unhandled_conditions": [], "sheet": catalog, "steps": [
+                {"op": "join", "sheet": "excel_0", "left_on": ["code"], "right_on": ["Code"], "how": "left",
+                 "columns": [{"column": "Code", "name": "Sales Code"}, {"column": "amount", "name": "Sales Amount"}]},
+                {"op": "aggregate", "group_by": ["code"], "metrics": [
+                    {"name": "Product", "function": "min", "column": "product"},
+                    {"name": "Total Sales", "function": "sum", "column": "Sales Amount"},
+                    {"name": "Transactions", "function": "counta", "column": "Sales Code"},
+                    {"name": "Known Amounts", "function": "counta", "column": "Sales Amount"},
+                ]},
+                {"op": "filter", "where": {"function": "or", "args": [
+                    {"function": "and", "args": [
+                        {"function": "eq", "args": [{"column": "Total Sales"}, 0]},
+                        {"function": "eq", "args": [{"column": "Known Amounts"}, {"column": "Transactions"}]},
+                    ]},
+                    {"function": "eq", "args": [{"column": "Transactions"}, 0]},
+                ]}},
+                {"op": "calculate", "columns": [{"name": "Total Sales", "expression": {
+                    "function": "coalesce", "args": [{"column": "Total Sales"}, 0],
+                }}]},
+            ]},
+        )
+        for codes, amounts, expected in (
+            ([" a ", "A", "B", "C", "E", "F", "F"], [10, -10, 5, 0, None, 0, None], {"A", "C", "D"}),
+            (["Unrelated"], [100], {"A", "B", "C", "D", "E", "F"}),
+        ):
+            output = BytesIO()
+            pd.DataFrame({"Code": codes, "amount": amounts}).to_excel(output, sheet_name="Sales", index=False)
+            client = Mock()
+            client.chat.completions.create.return_value = SimpleNamespace(choices=[
+                SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=json.dumps(proposed))),
+            ])
+            with self.subTest(codes=codes), patch.dict(os.environ, {"AZURE_OPENAI_DEPLOYMENT_MINI": "test"}), patch.object(
+                self.chatbot, "get_azure_openai_client", return_value=client,
+            ), patch.object(self.chatbot, "get_engine", return_value=self.engine):
+                message = {"question": "Which products have zero sales, combine data from both sources?" if len(codes) > 1 else "both",
+                           "workbook_content": output.getvalue()}
+                self.chatbot.display_automatic_message(message, "zero_sales", (
+                    ("user", "Which products have zero sales, combine data from both sources?"),
+                    ("user", "You can match on code"),
+                ))
+                self.assertNotIn("error", message)
+                self.assertEqual(set(message["result"]["code"]), expected)
+                self.assertTrue(message["result"]["Total Sales"].eq(0).all())
+                self.assertEqual(len(message["source_labels"]), 2)
+                self.assertIn("excel_download", message)
+                self.assertEqual(message["source_warnings"], [])
+                client.chat.completions.create.assert_called_once()
+        for question in ("Show unsold products", "Products without any sales", "Products never sold",
+                         "Products with no recorded transactions", "Employees missing in Excel"):
+            self.assertTrue(allows_unmatched_sources(question), question)
+        for question in ("Top salespeople", "Employees with zero salary", "Join product prices"):
+            self.assertFalse(allows_unmatched_sources(question), question)
+        self.assertFalse(allows_unmatched_sources("both", prior_questions=(
+            "Which products have zero sales?", "Show top salespeople",
+        )))
+
+    def test_planner_uses_followup_context_without_sending_prior_result_rows(self):
+        client = Mock()
+        client.chat.completions.create.return_value = SimpleNamespace(choices=[
+            SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=json.dumps(data_plan()))),
+        ])
+        history = (("user", "Which products have zero sales?"), ("assistant", "PRIVATE_SQL_RESULT"),
+                   ("user", "You can match on code"))
+        for repair in (False, True):
+            self.chatbot.generate_source_plan(
+                client, "test", "Use the current schemas", "both", self.trace, prior_turns=history,
+                previous_plan=data_plan() if repair else None, validation_error="Invalid calculation",
+            )
+            messages = client.chat.completions.create.call_args.kwargs["messages"]
+            self.assertIn({"role": "user", "content": "You can match on code"}, messages)
+            self.assertIn({"role": "user", "content": "Which products have zero sales?"}, messages)
+            self.assertNotIn("PRIVATE_SQL_RESULT", json.dumps(messages))
+            self.assertIn({"role": "user", "content": "both"}, messages)
 
     def test_equivalent_planner_calculation_wrapper_is_unwrapped_then_fully_validated(self):
         for key in ("PLAN", "plan"):

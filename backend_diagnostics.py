@@ -33,7 +33,7 @@ SQL_TOKENS = re.compile(
     re.IGNORECASE,
 )
 PLAN_FIELDS = {
-    "understood", "sheet", "steps", "op", "columns", "metrics", "filter",
+    "understood", "sheet", "steps", "op", "columns", "metrics", "filter", "having",
     "all", "any", "group_by", "order_by", "limit", "per_group", "limit_per_group",
     "where", "function", "args", "column", "name", "expression", "by", "direction",
     "left_on", "right_on", "how", "keep", "count", "method", "index", "values",
