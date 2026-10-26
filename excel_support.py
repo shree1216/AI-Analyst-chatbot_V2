@@ -197,6 +197,44 @@ def region_sales_totals(frame: pd.DataFrame, metric: str = "sales") -> pd.DataFr
     return pd.DataFrame({"Region": display_labels.to_numpy(), "Total Sales": totals.to_numpy()})
 
 
+def regional_sales_plan(question: str, schemas: dict[str, dict[str, str]]) -> dict[str, Any] | None:
+    match = re.fullmatch(
+        r"(?:which|what)\s+regions?\s+(?:had|has|have)\s+(?:the\s+)?"
+        r"(?P<extreme>highest|lowest)\s+(?:total\s+)?sales"
+        r"(?P<count>,?\s+and\s+how\s+many\s+(?:sales|transactions)"
+        r"\s+(?:did|does|do)\s+(?:it|they)\s+have)?",
+        question.strip().rstrip("?.!").strip(), flags=re.IGNORECASE,
+    )
+    if match is None:
+        return None
+    candidates = []
+    for sheet, schema in schemas.items():
+        regions = [name for name in schema if name.strip().casefold() == "region"]
+        headers = {name: re.sub(r"[_\s]+", " ", name).strip().casefold() for name in schema}
+        amounts = [name for name, header in headers.items()
+                   if header in {"amount", "sales amount", "salesamount", "revenue"}]
+        if not amounts:
+            amounts = [name for name, header in headers.items() if header == "sales"]
+        if len(regions) == 1 and amounts:
+            candidates.append((sheet, regions[0], amounts))
+    if len(candidates) != 1 or len(candidates[0][2]) != 1:
+        return None
+    sheet, region, amounts = candidates[0]
+    amount = amounts[0]
+    metrics = [{"name": "Total Sales", "function": "sum", "column": amount}]
+    columns = [region, "Total Sales"]
+    if match["count"]:
+        metrics.append({"name": "Sales Transactions", "function": "count_rows", "column": "*"})
+        columns.append("Sales Transactions")
+    return {
+        "understood": True, "unhandled_conditions": [], "sheet": sheet, "steps": [
+            {"op": "aggregate", "group_by": [region], "metrics": metrics},
+            {"op": "extrema", "column": "Total Sales", "which": match["extreme"].casefold()},
+            {"op": "select", "columns": columns},
+        ],
+    }
+
+
 def query_sales_total(question: str, frame: pd.DataFrame) -> pd.DataFrame | None:
     match = re.fullmatch(
         r"(?:(?:what (?:are|is)|show(?: me)?|give(?: me)?)\s+)?(?:the\s+)?"

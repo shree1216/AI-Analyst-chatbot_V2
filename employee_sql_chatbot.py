@@ -51,13 +51,14 @@ refresh_backend_modules()
 
 from excel_support import (
     EXCEL_MIME, excel_sheet_names, generate_excel_download, query_sales_total, read_excel_sheet,
-    spreadsheet_answer, spreadsheet_schema, write_region_summary,
+    regional_sales_plan, spreadsheet_answer, spreadsheet_schema, write_region_summary,
 )
 from workbook_operations import MAX_SHEETS, execute_workbook_plan
 from backend_diagnostics import BackendTrace, diagnostic_log, execution_code_log
 from source_queries import (
     SALES_PLANNING_RULES, SourceMatchError, allows_unmatched_sources, discover_excel_sources, discover_sql_sources, execute_source_plan,
-    requested_source_kinds, source_mode_for_question, source_planner_prompt,
+    local_source_plan, requested_source_kinds, source_mode_for_question, source_planner_prompt,
+    source_planning_questions,
 )
 
 
@@ -2944,6 +2945,14 @@ def query_excel_workbook(
                 trace.record_code("route_selected", query_excel_workbook,
                                   route="named_row_count", source_sheets=[target], rows=len(sheets[target]))
             return result
+    regional = regional_sales_plan(question, schemas)
+    if regional:
+        if trace:
+            trace.record_code("route_selected", regional_sales_plan, route="regional_sales",
+                              source_sheets=[regional["sheet"]])
+        result = execute_workbook_plan(regional, sheets, trace=trace)
+        result.attrs["source_sheets"] = [regional["sheet"]]
+        return result
     monthly = monthly_workbook_plan(question, schemas)
     if monthly:
         plan, interpretation = monthly
@@ -3465,9 +3474,9 @@ def generate_source_plan(
     prior_turns: tuple[tuple[str, str], ...] = (),
 ) -> dict[str, Any]:
     messages: list[ChatCompletionMessageParam] = [{"role": "system", "content": system_prompt}]
-    for role, content in prior_turns[-12:]:
-        if role == "user" and content:
-            messages.append({"role": "user", "content": content[:4000]})
+    questions = tuple(content for role, content in prior_turns[-12:] if role == "user" and content)
+    for content in source_planning_questions(question, questions):
+        messages.append({"role": "user", "content": content[:4000]})
     messages.append({"role": "user", "content": question})
     if previous_plan is not None:
         messages.extend([
@@ -3549,8 +3558,6 @@ def display_automatic_message(
             message["source_warnings"] = [
                 item for item in unavailable if not item.startswith("No Excel workbook")
             ]
-            trace.record_code("planner_requested", generate_source_plan, route="automatic",
-                              source_sheets=[source.label for source in sources.values()])
             system_prompt = (
                 source_planner_prompt(sources, unavailable)
                 + (f" The user explicitly requested these source kinds: {sorted(requested_kinds)}."
@@ -3560,9 +3567,16 @@ def display_automatic_message(
                    "do not substitute SQL instructions or a general conversation answer."
                    if sql_only else "")
             )
-            plan = generate_source_plan(
-                client, deployment, system_prompt, message["question"], trace, prior_turns=prior_turns,
-            )
+            plan = local_source_plan(message["question"], sources, requested_kinds)
+            if plan is not None:
+                trace.record_code("planner_received", local_source_plan, regional_sales_plan,
+                                  route="local_regional_sales", status="validating", plan=plan)
+            else:
+                trace.record_code("planner_requested", generate_source_plan, route="automatic",
+                                  source_sheets=[source.label for source in sources.values()])
+                plan = generate_source_plan(
+                    client, deployment, system_prompt, message["question"], trace, prior_turns=prior_turns,
+                )
             planning_repaired = False
             if (
                 plan["mode"] == "clarification" and plan["sql"] == [] and plan["excel"] == []

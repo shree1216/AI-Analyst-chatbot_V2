@@ -170,7 +170,20 @@ dates; numeric calculations still reject nonnumeric input. `coalesce` selects th
 first non-null value per row and evaluates fallback expressions only where needed.
 Recent user requests are included when planning short follow-ups such as **both**
 or **match on code**, including automatic correction attempts. Previous answer
-rows are not sent back to the source planner.
+rows are not sent back to the source planner. Self-contained new questions do
+not inherit an earlier request to use both sources. Follow-up context starts at
+the most recent independent question, rather than carrying unrelated requests
+across the conversation.
+
+Simple highest/lowest regional-sales questions use a local validated plan when
+exactly one discovered source has a Region column and an unambiguous recorded
+transaction amount (amount, sales amount, revenue, or sales). If that source is
+Excel, Automatic mode does not query SQL rows or join a product catalog just to
+calculate regional totals. Requested sales counts count transaction rows, not
+quantities or cached summary columns; all tied regions are retained. Excel
+workbook mode uses the same calculation. Explicit SQL/both-source requests,
+additional filters, ambiguous sources or measures, and other question forms
+remain with the schema-aware planner; they are never silently simplified.
 
 SQL-only multi-table joins and combined SQL/Excel joins use the same validated
 calculation steps: inner, left, right and full outer joins, multi-column grouping,

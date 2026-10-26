@@ -10,7 +10,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
 from backend_diagnostics import BackendTrace
-from excel_support import excel_sheet_names, read_excel_sheet, spreadsheet_schema
+from excel_support import excel_sheet_names, read_excel_sheet, regional_sales_plan, spreadsheet_schema
 from workbook_operations import JoinDiagnostic, MAX_CELLS, MAX_ROWS, MAX_SHEETS, execute_workbook_plan
 
 
@@ -32,14 +32,34 @@ class SourceMatchError(ValueError):
     pass
 
 
+def is_source_followup(question: str) -> bool:
+    text = question.strip().rstrip(".!?")
+    return bool(re.fullmatch(
+        r"(?:(?:use|using)\s+)?both(?:\s+(?:the\s+)?(?:sources|sql\s+and\s+excel))?|"
+        r"(?:you\s+can\s+)?(?:match|join|merge)(?:\s+(?:it|them|the\s+sources))?"
+        r"\s+(?:on|using|by)\s+[\w ]{1,80}|"
+        r"(?:use|using|from)\s+(?:sql(?:\s+server)?|excel|the\s+database|the\s+workbook)"
+        r"(?:\s+(?:only|instead))?|"
+        r"(?:sql|excel|continue|try again|yes|no)|"
+        r"(?:(?:show|give)(?:\s+me)?\s+)?(?:the\s+)?(?:top|bottom)\s+\d+(?:\s+only)?",
+        text, re.IGNORECASE,
+    ) or re.match(
+        r"^(?:and|also|instead|again|same|what about|how about|do that|do it|"
+        r"for|in|by|now use|then use)\b", text, re.IGNORECASE,
+    ))
+
+
+def source_planning_questions(question: str, prior_questions: tuple[str, ...]) -> tuple[str, ...]:
+    if not is_source_followup(question):
+        return ()
+    recent = prior_questions[-6:]
+    for index in range(len(recent) - 1, -1, -1):
+        if not is_source_followup(recent[index]):
+            return recent[index:]
+    return recent
+
+
 def allows_unmatched_sources(question: str, *, prior_questions: tuple[str, ...] = ()) -> bool:
-    def is_followup(text: str) -> bool:
-        return bool(re.fullmatch(
-            r"(?:(?:use|using)\s+)?both(?:\s+(?:the\s+)?(?:sources|sql\s+and\s+excel))?|"
-            r"(?:you\s+can\s+)?(?:match|join|merge)(?:\s+(?:it|them|the\s+sources))?"
-            r"\s+(?:on|using|by)\s+[\w ]{1,80}",
-            text.strip().rstrip(".!?"), re.IGNORECASE,
-        ))
 
     unmatched = bool(re.search(
         r"\b(?:unmatched|missing|unsold)\b|\bnot\s+(?:present\s+)?in\b|"
@@ -49,9 +69,9 @@ def allows_unmatched_sources(question: str, *, prior_questions: tuple[str, ...] 
         r"\b(?:never|not)\s+(?:been\s+)?sold\b",
         question, re.IGNORECASE,
     ))
-    if unmatched or not is_followup(question):
+    if unmatched or not is_source_followup(question):
         return unmatched
-    previous = next((text for text in reversed(prior_questions[-6:]) if not is_followup(text)), "")
+    previous = next((text for text in reversed(prior_questions[-6:]) if not is_source_followup(text)), "")
     return allows_unmatched_sources(previous) if previous else False
 
 
@@ -136,6 +156,18 @@ class DataSource:
             if self.workbook_content is None:
                 result["rows"] = len(self.frame)
         return result
+
+
+def local_source_plan(
+    question: str, sources: dict[str, DataSource], required_kinds: set[str],
+) -> dict[str, Any] | None:
+    if required_kinds and required_kinds != {"excel"}:
+        return None
+    calculation = regional_sales_plan(question, {key: source.schema for key, source in sources.items()})
+    if calculation is None or sources[calculation["sheet"]].kind != "excel":
+        return None
+    return {"mode": "data", "message": "", "sql": [], "excel": [calculation["sheet"]],
+            "calculation": calculation}
 
 
 class CompiledQuery(Protocol):

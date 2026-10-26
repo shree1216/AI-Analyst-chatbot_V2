@@ -15,10 +15,11 @@ from sqlalchemy.pool import StaticPool
 from streamlit.testing.v1 import AppTest
 
 from backend_diagnostics import BackendTrace, diagnostic_log
-from excel_support import read_excel_sheet
+from excel_support import read_excel_sheet, regional_sales_plan
 from source_queries import (
-    allows_unmatched_sources, compile_source_query, discover_excel_sources, discover_sql_sources,
-    execute_source_plan, requested_source_kinds, source_planner_prompt,
+    DataSource, allows_unmatched_sources, compile_source_query, discover_excel_sources, discover_sql_sources,
+    execute_source_plan, local_source_plan, requested_source_kinds, source_planner_prompt,
+    source_planning_questions,
 )
 
 
@@ -662,6 +663,116 @@ class SourceQueryTests(unittest.TestCase):
             self.assertIn({"role": "user", "content": "Which products have zero sales?"}, messages)
             self.assertNotIn("PRIVATE_SQL_RESULT", json.dumps(messages))
             self.assertIn({"role": "user", "content": "both"}, messages)
+
+    def test_self_contained_questions_do_not_inherit_prior_source_requests(self):
+        client = Mock()
+        client.chat.completions.create.return_value = SimpleNamespace(choices=[
+            SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=json.dumps(data_plan()))),
+        ])
+        history = (("user", "Give total sales by region using both sources"),
+                   ("assistant", "PRIVATE_SQL_RESULT"))
+        question = "Which region had the highest total sales, and how many sales did it have?"
+        for repair in (False, True):
+            self.chatbot.generate_source_plan(
+                client, "test", "Use the current schemas", question, self.trace, prior_turns=history,
+                previous_plan=data_plan() if repair else None, validation_error="Invalid calculation",
+            )
+            messages = client.chat.completions.create.call_args.kwargs["messages"]
+            self.assertNotIn("using both sources", json.dumps(messages))
+            self.assertNotIn("PRIVATE_SQL_RESULT", json.dumps(messages))
+            self.assertIn({"role": "user", "content": question}, messages)
+
+    def test_regional_extremes_use_only_transactions_and_count_rows_preserving_ties(self):
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            pd.DataFrame({
+                "Region": ["North", "North", "South", "West"],
+                "amount": [40, 60, 100, 5], "Quantity": [7, 8, 20, 3],
+                "Code": ["X1", "X2", "X3", "X4"],
+                "Total Sales": [9999] * 4, "no.of sales": [999] * 4,
+            }).to_excel(writer, sheet_name="Sales", index=False)
+        client = Mock()
+        question = "Which region had the highest total sales, and how many sales did it have?"
+        with patch.dict(os.environ, {"AZURE_OPENAI_DEPLOYMENT_MINI": "test"}), patch.object(
+            self.chatbot, "get_azure_openai_client", return_value=client,
+        ), patch.object(self.chatbot, "get_engine", return_value=self.engine), patch.object(
+            self.chatbot, "run_query", side_effect=AssertionError("Unneeded SQL data read"),
+        ):
+            message = {"question": question, "workbook_content": output.getvalue()}
+            self.chatbot.display_automatic_message(message, "regional_extremes", (
+                ("user", "Give total sales by region using both sources"),
+            ))
+        self.assertNotIn("error", message)
+        self.assertEqual(message["source_labels"], ["EXCEL: Sales"])
+        self.assertEqual(message["result"].to_dict("records"), [
+            {"Region": "North", "Total Sales": 100, "Sales Transactions": 2},
+            {"Region": "South", "Total Sales": 100, "Sales Transactions": 1},
+        ])
+        client.chat.completions.create.assert_not_called()
+        self.assertIn("excel_download", message)
+        pd.testing.assert_frame_equal(
+            read_excel_sheet(message["excel_download"], "Results"), message["result"],
+            check_dtype=False,
+        )
+        self.assertFalse(any(event["event"] == "query_started" for event in message["backend_log"]))
+        self.assertFalse(any(event["event"] == "planner_requested" for event in message["backend_log"]))
+
+    def test_native_regional_plans_preserve_explicit_sources_and_do_not_guess_constraints(self):
+        question = "Which region had the highest total sales, and how many sales did it have?"
+        sales = DataSource("sales", "excel", "Sales", {"Region": "text", "amount": "number"})
+        sources = {"sales": sales}
+        self.assertIsNotNone(local_source_plan(question, sources, set()))
+        for required in ({"sql"}, {"sql", "excel"}):
+            self.assertIsNone(local_source_plan(question, sources, required))
+        for suffix in (" using both sources", " from SQL", " in 2025", " for Product X",
+                       " excluding West", " using Quantity * Price"):
+            self.assertIsNone(local_source_plan(question.rstrip("?") + suffix, sources, set()), suffix)
+        for kind in ("sql", "excel"):
+            competitor = DataSource("other", kind, "Other", sales.schema.copy())
+            self.assertIsNone(local_source_plan(question, {**sources, "other": competitor}, set()))
+            competitor.schema["Revenue"] = "number"
+            self.assertIsNone(local_source_plan(question, {**sources, "other": competitor}, set()))
+        self.assertIsNone(local_source_plan(question, {
+            "sales": DataSource("sales", "excel", "Sales", {"Region": "text", "Total Sales": "number"}),
+        }, set()))
+        self.assertIsNone(local_source_plan(question, {
+            "sales": DataSource("sales", "excel", "Sales", {
+                "Region": "text", "amount": "number", "Revenue": "number",
+            }),
+        }, set()))
+
+    def test_native_regional_plan_works_in_excel_mode_for_lowest_totals(self):
+        output = BytesIO()
+        frame = pd.DataFrame({"Region": ["North", "South", "West", "West"],
+                              "Revenue": [-5, -5, 5, 7]})
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            frame.to_excel(writer, sheet_name="Transactions", index=False)
+        for question, columns in (
+            ("Which region has the lowest total sales?", ["Region", "Total Sales"]),
+            ("Which regions had the lowest sales, and how many transactions did they have?",
+             ["Region", "Total Sales", "Sales Transactions"]),
+        ):
+            with self.subTest(question=question), patch.object(
+                self.chatbot, "get_azure_openai_client", side_effect=AssertionError("Unneeded AI plan"),
+            ):
+                result = self.chatbot.query_excel_workbook(question, frame, output.getvalue(), "Transactions",
+                                                          trace=self.trace)
+            self.assertEqual(list(result), columns)
+            self.assertEqual(result["Region"].tolist(), ["North", "South"])
+            self.assertEqual(result["Total Sales"].tolist(), [-5, -5])
+            self.assertEqual(result.attrs["source_sheets"], ["Transactions"])
+        self.assertEqual(result["Sales Transactions"].tolist(), [1, 1])
+        self.assertIsNotNone(regional_sales_plan(
+            "What region had the highest sales?", {"Transactions": {"Region": "text", "Sales": "number"}},
+        ))
+
+    def test_followup_context_starts_at_the_latest_independent_question(self):
+        history = ("Use both sources to count products",
+                   "Which products have zero sales?", "You can match on code")
+        for question in ("both", "Use Excel instead", "What about the unsold ones?", "And group by region",
+                         "top 5", "for North", "try again", "Excel"):
+            self.assertEqual(source_planning_questions(question, history), history[1:])
+        self.assertEqual(source_planning_questions("How many employees are there?", history), ())
 
     def test_equivalent_planner_calculation_wrapper_is_unwrapped_then_fully_validated(self):
         for key in ("PLAN", "plan"):
