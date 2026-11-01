@@ -1,4 +1,5 @@
 import importlib
+from hashlib import sha256
 from io import BytesIO
 import json
 import os
@@ -13,6 +14,7 @@ from sqlalchemy.dialects.mssql import MONEY, SMALLMONEY, dialect
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.pool import StaticPool
 from streamlit.testing.v1 import AppTest
+from streamlit.runtime.scriptrunner import RerunData, RerunException
 
 from backend_diagnostics import BackendTrace, diagnostic_log
 from excel_support import read_excel_sheet, regional_sales_plan
@@ -124,6 +126,88 @@ class SourceQueryTests(unittest.TestCase):
         self.assertNotIn("PRIVATE_SAMPLE", log)
         self.assertNotIn("PRIVATE_SQL_DATA", log)
 
+    def test_year_explanation_uses_previous_calculation_without_requerying(self):
+        result = pd.DataFrame({"Year": [2026], "Total Sales": [15600]})
+        result.attrs["date_derivations"] = {"Year": {"function": "year", "column": "Date"}}
+        previous = {"kind": "automatic", "result": result, "answer": "Year: 2,026."}
+        for question in (
+            "there is no year column in excel sales,how did you retrieve this",
+            "How did you calculate the year?",
+            "Where did 2026 come from?",
+            "Why does this show a year when there is no Year column?",
+        ):
+            with self.subTest(question=question):
+                answer = self.chatbot.explain_previous_calculation(question, [previous])
+                self.assertIn("YEAR(Date)", answer)
+                self.assertIn("2026", answer)
+                self.assertNotIn("2,026", answer)
+                self.assertIn("not a separate", answer)
+        for question in (
+            "Show sales by year", "What were sales in 2025?", "How many sales per year?",
+            "Why are sales lower this year?", "Why did total sales decrease year over year?",
+        ):
+            with self.subTest(question=question):
+                self.assertIsNone(self.chatbot.explain_previous_calculation(question, [previous]))
+        self.assertIsNone(self.chatbot.explain_previous_calculation("How did you calculate the year?", []))
+
+    def test_year_explanation_never_invents_a_missing_date_mapping(self):
+        previous = {"result": pd.DataFrame({"Year": [2026]})}
+        answer = self.chatbot.explain_previous_calculation("How did you get this year?", [previous])
+        self.assertIn("cannot verify", answer)
+        self.assertNotIn("YEAR(Date)", answer)
+
+    def test_legacy_year_formatting_preserves_amount_formatting(self):
+        for value in (2026, 2026.0):
+            self.assertEqual(self.chatbot.format_value(value, "Joining year"), "2026")
+        self.assertEqual(self.chatbot.format_value(15600, "amount"), "15,600")
+        self.assertEqual(self.chatbot.format_value(15600, "salary"), "INR 15,600.00")
+
+    def test_year_explanation_restores_only_completed_final_attempt_steps(self):
+        result = pd.DataFrame({"Year": [2026], "Total Sales": [15600]})
+        calculation = {"op": "calculate", "columns": [
+            {"name": "Year", "expression": {"function": "year", "args": [{"column": "Date"}]}},
+        ]}
+        previous = {"result": result, "backend_log": [
+            {"event": "source_selected"},
+            {"event": "step_started", "step": 1, "operation": "calculate", "details": calculation},
+            {"event": "step_completed", "step": 1, "operation": "calculate"},
+        ]}
+        answer = self.chatbot.explain_previous_calculation("How did you get this year?", [previous])
+        self.assertIn("YEAR(Date)", answer)
+        self.assertIn("2026", answer)
+        result.attrs.clear()
+        previous["backend_log"].extend([
+            {"event": "source_selected"},
+            {"event": "step_started", "step": 1, "operation": "calculate", "details": calculation},
+        ])
+        answer = self.chatbot.explain_previous_calculation("How did you get this year?", [previous])
+        self.assertIn("cannot verify", answer)
+
+    def test_ui_explains_cached_year_without_model_database_or_workbook_reads(self):
+        result = pd.DataFrame({"Year": [2026], "Total Sales": [15600]})
+        result.attrs["date_derivations"] = {"Year": {"function": "year", "column": "Date"}}
+        app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py"))
+        app.session_state["chat_history"] = [{
+            "kind": "automatic", "question": "Sales by year", "answer": "Year: 2,026.",
+            "result": result, "source_labels": ["EXCEL: Sales"],
+        }]
+        with patch.object(self.chatbot, "get_azure_openai_client", side_effect=AssertionError("Unneeded AI")), patch.object(
+            self.chatbot, "get_engine", side_effect=AssertionError("Unneeded SQL"),
+        ), patch("source_queries.read_excel_sheet", side_effect=AssertionError("Unneeded workbook read")):
+            app.run(timeout=30)
+            self.assertEqual(len(app.exception), 0)
+            self.assertNotIn("2,026", app.session_state["chat_history"][0]["answer"])
+            for question in (
+                "there is no year column in excel sales,how did you retrieve this",
+                "Where did 2026 come from?",
+            ):
+                app.chat_input[0].set_value(question).run(timeout=30)
+                self.assertEqual(len(app.exception), 0)
+                latest = app.session_state["chat_history"][-1]
+                self.assertEqual(latest["kind"], "calculation_explanation")
+                self.assertIn("YEAR(Date)", latest["answer"])
+                self.assertNotIn("result", latest)
+
     def test_sql_only_does_not_load_or_calculate_excel(self):
         with patch("source_queries.read_excel_sheet", side_effect=AssertionError("Unneeded Excel read")):
             result, labels = self.execute(data_plan(sql=[{"source": self.actual, "query": query(
@@ -227,7 +311,49 @@ class SourceQueryTests(unittest.TestCase):
         self.assertNotIn("Confirm", message["error"])
         self.assertNotIn("answer", message)
         self.assertNotIn("excel_download", message)
-        self.assertEqual(client.chat.completions.create.call_count, 2)
+        self.assertEqual(client.chat.completions.create.call_count, 1)
+        self.assertFalse(any(event["event"] == "planner_repair_requested" for event in message["backend_log"]))
+
+    def test_product_units_summary_combines_catalog_and_sales_without_ai_or_false_joins(self):
+        with self.engine.begin() as connection:
+            pd.DataFrame({"code": ["P01", "P01", "P05", "P06"],
+                          "product": ["Pen", "Pen", "Marker", "Folder"], "price": [5, 5, 10, 20]}).to_sql(
+                "Products", connection, index=False,
+            )
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            pd.DataFrame({"Code": [" p01 ", "P01", "P02", "P03", "P03"],
+                          "Quantity": [2, 3, 4, None, 9]}).to_excel(writer, sheet_name="Sales", index=False)
+        client = Mock()
+        with patch.dict(os.environ, {"AZURE_OPENAI_DEPLOYMENT_MINI": "test"}), patch.object(
+            self.chatbot, "get_azure_openai_client", return_value=client,
+        ), patch.object(self.chatbot, "get_engine", return_value=self.engine):
+            message = {"question": "How many units of each product were sold?use both sources",
+                       "workbook_content": output.getvalue()}
+            self.chatbot.display_automatic_message(message, "product_units")
+        self.assertNotIn("error", message)
+        self.assertEqual(message["source_labels"], ["SQL: main.Products", "EXCEL: Sales"])
+        result = message["result"].set_index("Product Code")["Units Sold"]
+        self.assertEqual(result.loc[["P01", "P02", "P05", "P06"]].tolist(), [5, 4, 0, 0])
+        self.assertTrue(pd.isna(result.loc["P03"]))
+        self.assertFalse(any(event["event"] == "join_matched" for event in message["backend_log"]))
+        client.chat.completions.create.assert_not_called()
+
+    def test_product_units_native_plan_does_not_drop_filters_or_explicit_sql_scope(self):
+        from source_queries import product_units_plan
+        sources = {
+            "sales": DataSource("sales", "excel", "Sales", {"Code": "text", "Quantity": "number"}),
+            "products": DataSource("products", "sql", "Products", {"code": "text", "product": "text"}),
+        }
+        question = "How many units of each product were sold?"
+        self.assertIsNotNone(product_units_plan(question, sources, set()))
+        self.assertIsNone(product_units_plan(question, sources, {"sql"}))
+        for suffix in (" in 2025", " excluding P01", " in the West region", " match by name"):
+            self.assertIsNone(product_units_plan(question.rstrip("?") + suffix, sources, set()))
+        self.assertIsNone(product_units_plan(question, {"sales": sources["sales"]}, {"sql", "excel"}))
+        self.assertIsNone(product_units_plan(question, {**sources, "other": DataSource(
+            "other", "excel", "Other sales", sources["sales"].schema,
+        )}, set()))
 
     def test_explicit_excel_question_does_not_inspect_sql(self):
         client = Mock()
@@ -682,6 +808,63 @@ class SourceQueryTests(unittest.TestCase):
             self.assertNotIn("PRIVATE_SQL_RESULT", json.dumps(messages))
             self.assertIn({"role": "user", "content": question}, messages)
 
+    def test_reasoning_planner_recovers_truncated_json_within_two_call_budget(self):
+        client = Mock()
+        client.chat.completions.create.side_effect = [
+            SimpleNamespace(choices=[SimpleNamespace(finish_reason="length", message=SimpleNamespace(content=""))],
+                            usage=SimpleNamespace(completion_tokens=12000,
+                                                  completion_tokens_details=SimpleNamespace(reasoning_tokens=12000))),
+            SimpleNamespace(choices=[SimpleNamespace(
+                finish_reason="stop", message=SimpleNamespace(content=json.dumps(self.combined_plan())),
+            )]),
+        ]
+        result = self.chatbot.generate_source_plan(
+            client, "gpt-5-mini", "Current schemas", "Give a combined price list and flag no sales", self.trace,
+        )
+        self.assertEqual(result, self.combined_plan())
+        first, second = [call.kwargs for call in client.chat.completions.create.call_args_list]
+        self.assertEqual(first["reasoning_effort"], "low")
+        self.assertEqual(first["max_completion_tokens"], 12000)
+        self.assertEqual(second["max_completion_tokens"], 24000)
+        self.assertEqual(first["messages"], second["messages"])
+        self.assertTrue(any(event.get("finish_reason") == "length" for event in self.events))
+        self.assertTrue(any(event.get("reasoning_tokens") == 12000 for event in self.events))
+
+    def test_truncation_retry_and_validation_repair_share_the_two_call_budget(self):
+        client = Mock()
+        client.chat.completions.create.side_effect = [
+            SimpleNamespace(choices=[SimpleNamespace(finish_reason="length", message=SimpleNamespace(content=""))]),
+            SimpleNamespace(choices=[SimpleNamespace(finish_reason="stop", message=SimpleNamespace(
+                content=json.dumps(data_plan(excel=["missing_sheet"])),
+            ))]),
+        ]
+        with patch.dict(os.environ, {"AZURE_OPENAI_DEPLOYMENT_MINI": "gpt-5-mini"}), patch.object(
+            self.chatbot, "get_azure_openai_client", return_value=client,
+        ), patch.object(self.chatbot, "get_engine", return_value=self.engine), patch.object(
+            self.chatbot, "run_query", side_effect=AssertionError("Invalid plans must not query data"),
+        ):
+            message = {"question": "Give a combined price list and flag no sales",
+                       "workbook_content": workbook_bytes()}
+            self.chatbot.display_automatic_message(message, "truncation_budget")
+        self.assertIn("error", message)
+        self.assertNotIn("result", message)
+        self.assertEqual(client.chat.completions.create.call_count, 2)
+
+    def test_incomplete_and_filtered_plans_do_not_execute_or_retry_without_bound(self):
+        for finish, expected_calls in (("length", 2), ("content_filter", 1)):
+            events = []
+            client = Mock()
+            client.chat.completions.create.return_value = SimpleNamespace(choices=[
+                SimpleNamespace(finish_reason=finish, message=SimpleNamespace(content="{}")),
+            ])
+            with self.subTest(finish=finish), self.assertRaises(ValueError):
+                self.chatbot.generate_source_plan(
+                    client, "test", "Current schemas", "Show products", BackendTrace(events),
+                )
+            self.assertEqual(client.chat.completions.create.call_count, expected_calls)
+            self.assertNotIn("reasoning_effort", client.chat.completions.create.call_args.kwargs)
+            self.assertEqual(client.chat.completions.create.call_args.kwargs["max_completion_tokens"], 6000)
+
     def test_regional_extremes_use_only_transactions_and_count_rows_preserving_ties(self):
         output = BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -920,6 +1103,214 @@ class SourceQueryTests(unittest.TestCase):
                 self.chatbot.display_automatic_message(message, "automatic")
                 self.assertEqual(message["backend_log"], original_events)
                 self.assertEqual(client.chat.completions.create.call_count, 1)
+
+    def test_interrupted_automatic_request_keeps_its_uploaded_workbook_for_resume(self):
+        content = workbook_bytes()
+        message = {"kind": "automatic", "question": "Compare SQL actuals with Excel budgets",
+                   "workbook_content": content}
+        with patch.dict(os.environ, {"AZURE_OPENAI_DEPLOYMENT_MINI": "test"}), patch.object(
+            self.chatbot, "get_azure_openai_client", return_value=Mock(),
+        ), patch.object(self.chatbot, "get_engine", return_value=self.engine), patch.object(
+            self.chatbot, "generate_source_plan",
+            side_effect=[RerunException(RerunData()), self.combined_plan()],
+        ):
+            with self.assertRaises(RerunException):
+                self.chatbot.display_automatic_message(message, "interrupted")
+            self.assertEqual(message.get("workbook_content"), content)
+            self.assertNotIn("error", message)
+            self.assertIsNone(self.chatbot.SQL_TRACE.get())
+            self.chatbot.display_automatic_message(message, "resumed")
+        self.assertNotIn("error", message)
+        self.assertEqual(message["source_labels"], ["SQL: main.Actuals", "EXCEL: Targets"])
+        self.assertEqual(message["result"]["Variance"].tolist(), [-50, 5])
+        self.assertNotIn("workbook_content", message)
+
+    def test_pending_automatic_request_recovers_current_upload_when_payload_is_missing(self):
+        client = Mock()
+        client.chat.completions.create.return_value = SimpleNamespace(choices=[
+            SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=json.dumps(self.combined_plan()))),
+        ])
+        with patch.dict(os.environ, {"AZURE_OPENAI_DEPLOYMENT_MINI": "test"}), patch.object(
+            self.chatbot, "get_azure_openai_client", return_value=client,
+        ), patch.object(self.chatbot, "get_engine", return_value=self.engine), patch.object(
+            self.chatbot.st, "session_state", {"excel_workbook": {"content": workbook_bytes()}},
+        ):
+            message = {"kind": "automatic", "question": "Compare actuals with targets using both sources"}
+            self.chatbot.display_automatic_message(message, "recover_upload")
+        self.assertNotIn("error", message)
+        self.assertEqual(message["source_labels"], ["SQL: main.Actuals", "EXCEL: Targets"])
+        self.assertEqual(message["result"]["Variance"].tolist(), [-50, 5])
+
+    def test_automatic_request_recovers_uploaded_widget_when_workbook_cache_is_missing(self):
+        upload = BytesIO(workbook_bytes())
+        upload.name = "uploaded.xlsx"
+        client = Mock()
+        client.chat.completions.create.return_value = SimpleNamespace(choices=[
+            SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=json.dumps(self.combined_plan()))),
+        ])
+        with patch.dict(os.environ, {"AZURE_OPENAI_DEPLOYMENT_MINI": "test"}), patch.object(
+            self.chatbot, "get_azure_openai_client", return_value=client,
+        ), patch.object(self.chatbot, "get_engine", return_value=self.engine), patch.object(
+            self.chatbot.st, "session_state", {"excel_upload_0": upload},
+        ):
+            message = {"kind": "automatic", "question": "Compare actuals with targets using both sources"}
+            self.chatbot.display_automatic_message(message, "widget_recovery")
+            self.assertEqual(self.chatbot.st.session_state["excel_workbook"]["content"], upload.getvalue())
+        self.assertNotIn("error", message)
+        self.assertEqual(message["source_labels"], ["SQL: main.Actuals", "EXCEL: Targets"])
+
+    def test_upload_callback_captures_payload_and_honors_removal_and_close(self):
+        upload = BytesIO(workbook_bytes())
+        upload.name = "active.xlsx"
+        state = {"excel_upload_0": upload}
+        with patch.object(self.chatbot.st, "session_state", state):
+            self.chatbot.synchronize_excel_upload()
+            original = state["excel_workbook"]
+            self.assertEqual(original["content"], upload.getvalue())
+            original["preview_sheet"] = "Targets"
+            self.chatbot.synchronize_excel_upload()
+            self.assertIs(state["excel_workbook"], original)
+            del state["excel_upload_0"]
+            self.assertIs(self.chatbot.active_excel_workbook(), original)
+            state["excel_upload_0"] = None
+            self.chatbot.synchronize_excel_upload()
+            self.assertIsNone(self.chatbot.active_excel_workbook())
+            state["excel_upload_0"] = upload
+            self.chatbot.synchronize_excel_upload()
+            state.pop("excel_workbook")
+            state["excel_uploader_version"] = 1
+            self.assertIsNone(self.chatbot.active_excel_workbook())
+
+    def test_uploaded_but_unreadable_sheets_are_not_reported_as_no_upload(self):
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            pd.DataFrame().to_excel(writer, sheet_name="Products", index=False)
+        client = Mock()
+        with patch.dict(os.environ, {"AZURE_OPENAI_DEPLOYMENT_MINI": "test"}), patch.object(
+            self.chatbot, "get_azure_openai_client", return_value=client,
+        ):
+            message = {"question": "Look up the products from Excel", "workbook_content": output.getvalue()}
+            self.chatbot.display_automatic_message(message, "unreadable_upload")
+        self.assertIn("workbook is uploaded", message["error"])
+        self.assertIn("header row", message["error"])
+        self.assertNotIn("No Excel workbook", message["error"])
+        client.chat.completions.create.assert_not_called()
+
+    def test_upload_refresh_preserves_source_scope_snapshots_and_same_file_errors(self):
+        content = b"new workbook"
+        workbook = {"content": content}
+        for message in (
+            {"question": "Show SQL products", "error": "SQL unavailable"},
+            {"question": "Show products", "sql_only": True, "error": "SQL unavailable"},
+            {"question": "Show targets", "answer": "Already answered"},
+            {"question": "Show targets", "error": "Missing quantity",
+             "source_workbook_digest": sha256(content).hexdigest()},
+            {"question": "Show targets", "workbook_content": b"original workbook"},
+        ):
+            original = message.copy()
+            self.chatbot.prepare_automatic_workbook(message, workbook, retry_failed=True)
+            self.assertEqual(message, original)
+        failed = {"question": "Show targets", "error": "No workbook uploaded", "result": "stale",
+                  "excel_download": b"stale", "source_labels": ["stale"], "source_warnings": ["stale"]}
+        self.chatbot.prepare_automatic_workbook(failed, workbook)
+        self.assertIn("error", failed)
+        self.chatbot.prepare_automatic_workbook(failed, None, retry_failed=True)
+        self.assertIn("error", failed)
+        self.chatbot.prepare_automatic_workbook(failed, workbook, retry_failed=True)
+        self.assertEqual(failed, {"question": "Show targets", "workbook_content": content})
+
+    def test_upload_automatically_retries_only_the_latest_failed_question(self):
+        client = Mock()
+        client.chat.completions.create.return_value = SimpleNamespace(choices=[
+            SimpleNamespace(finish_reason="stop", message=SimpleNamespace(
+                content=json.dumps(data_plan(excel=["excel_0"])),
+            )),
+        ])
+        upload = BytesIO(workbook_bytes())
+        upload.name = "targets.xlsx"
+        environment = {
+            "AZURE_OPENAI_ENDPOINT": "https://unit-test.invalid", "AZURE_OPENAI_API_KEY": "test-only",
+            "AZURE_OPENAI_API_VERSION": "2024-02-01", "AZURE_OPENAI_DEPLOYMENT_MINI": "test",
+            "WORKFORCE_DATA_MODE": "demo",
+        }
+        self.chatbot.st.cache_resource.clear()
+        self.addCleanup(self.chatbot.st.cache_resource.clear)
+        with patch.dict(os.environ, environment), patch("openai.AzureOpenAI", return_value=client):
+            app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+            app.session_state["chat_history"] = [
+                {"kind": "automatic", "question": "Show previous targets from Excel", "error": "Earlier error"},
+                {"kind": "automatic", "question": "Show targets from Excel", "error": "No Excel workbook available"},
+            ]
+            with patch("streamlit.file_uploader", side_effect=lambda *args, **kwargs: (
+                upload if kwargs.get("key") == "excel_upload_0" else None
+            )):
+                app.run(timeout=30)
+                self.assertEqual(len(app.exception), 0)
+                messages = app.session_state["chat_history"]
+                self.assertEqual(messages[0]["error"], "Earlier error")
+                self.assertNotIn("error", messages[-1])
+                self.assertEqual(messages[-1]["source_labels"], ["EXCEL: Targets"])
+                self.assertEqual(messages[-1]["result"]["Budget"].tolist(), [350, 70, 90, 60])
+                app.run(timeout=30)
+                self.assertEqual(client.chat.completions.create.call_count, 1)
+                messages[-1].pop("answer")
+                messages[-1]["error"] = "A required column is missing"
+                app.run(timeout=30)
+                self.assertEqual(app.session_state["chat_history"][-1]["error"], "A required column is missing")
+                self.assertEqual(client.chat.completions.create.call_count, 1)
+
+    def test_successive_questions_render_in_separate_user_and_assistant_turns(self):
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            pd.DataFrame({"Code": ["P01", "P01", "P02"], "Quantity": [2, 3, 4],
+                          "Region": ["North", "North", "South"], "amount": [20, 30, 40]}).to_excel(
+                writer, sheet_name="Sales", index=False,
+            )
+        upload = BytesIO(output.getvalue())
+        upload.name = "sales.xlsx"
+        client = Mock()
+        environment = {
+            "AZURE_OPENAI_ENDPOINT": "https://unit-test.invalid", "AZURE_OPENAI_API_KEY": "test-only",
+            "AZURE_OPENAI_API_VERSION": "2024-02-01", "AZURE_OPENAI_DEPLOYMENT_MINI": "test",
+            "WORKFORCE_DATA_MODE": "demo",
+        }
+        self.chatbot.st.cache_resource.clear()
+        self.addCleanup(self.chatbot.st.cache_resource.clear)
+        with patch.dict(os.environ, environment), patch("openai.AzureOpenAI", return_value=client), patch(
+            "streamlit.file_uploader", side_effect=lambda *args, **kwargs: (
+                upload if kwargs.get("key") == "excel_upload_0" else None
+            ),
+        ):
+            app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
+            questions = ("How many units of each product were sold from Excel?",
+                         "Which region had the highest total sales, and how many sales did it have?")
+            for question in questions:
+                app.chat_input[0].set_value(question).run(timeout=30)
+                self.assertEqual(len(app.exception), 0)
+            self.assertEqual(len(app.chat_message), 4)
+            for index, question in enumerate(questions):
+                user = app.chat_message[index * 2]
+                assistant = app.chat_message[index * 2 + 1]
+                self.assertEqual(user.name, "user")
+                self.assertEqual(assistant.name, "assistant")
+                self.assertEqual([item.value for item in user.markdown], [question])
+                self.assertEqual(len(user.button), 0)
+            self.assertEqual(app.session_state["chat_history"][0]["result"]["Units Sold"].tolist(), [5, 4])
+            self.assertEqual(app.session_state["chat_history"][1]["result"].to_dict("records"), [
+                {"Region": "North", "Total Sales": 50, "Sales Transactions": 2},
+            ])
+            app.run(timeout=30)
+            self.assertEqual(len(app.chat_message), 4)
+            earlier = app.session_state["chat_history"][0]
+            earlier.pop("answer")
+            earlier["error"] = "No matching product keys"
+            app.chat_input[0].set_value(questions[0]).run(timeout=30)
+            self.assertEqual(len(app.exception), 0)
+            self.assertEqual(len(app.chat_message), 6)
+            self.assertEqual([button.label for button in app.chat_message[1].button], ["Retry question"])
+            for index in (0, 2, 4):
+                self.assertEqual(len(app.chat_message[index].button), 0)
+            client.chat.completions.create.assert_not_called()
 
     def test_automatic_ui_queries_both_sources_and_displays_sources_and_download(self):
         employees = pd.read_excel(ROOT / "employee_dataset.xlsx")

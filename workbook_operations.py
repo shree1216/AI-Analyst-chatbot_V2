@@ -208,7 +208,7 @@ def _evaluate(node: Any, frame: pd.DataFrame, active: pd.Series) -> Any:
         condition = _truth(_evaluate(args[0], frame, active), frame)
         yes = _series(_evaluate(args[1], frame, active & condition), frame)
         no = _series(_evaluate(args[2], frame, active & ~condition), frame)
-        return yes.where(condition, no).infer_objects()
+        return yes.astype(object).where(condition, no.astype(object)).infer_objects()
     if function in AGGREGATES:
         all_rows = pd.Series(True, index=frame.index)
         mask = _truth(_evaluate(node["where"], frame, all_rows), frame) if "where" in node else all_rows
@@ -271,7 +271,7 @@ def _evaluate(node: Any, frame: pd.DataFrame, active: pd.Series) -> Any:
         if function == "date":
             return dates
         if function != "datediff":
-            return getattr(dates.dt, function)
+            return getattr(dates.dt, function).astype("Int64")
         end = _dates(values[1], frame, active)
         unit = values[2]
         _require(isinstance(unit, str) and unit in {"days", "months", "years"},
@@ -321,7 +321,8 @@ def evaluate_expression(node: Any, frame: pd.DataFrame) -> Any:
 
 def _keys(step: dict[str, Any], allowed: set[str], required: set[str]) -> None:
     _require(set(step) <= allowed | {"op"} and required | {"op"} <= set(step),
-             "The calculation step contains missing or unsupported fields.")
+             f"The {step.get('op', 'calculation')} step has missing fields "
+             f"{sorted((required | {'op'}) - set(step))} or unsupported fields {sorted(set(step) - allowed - {'op'})}.")
 
 
 def _aggregate_frame(frame: pd.DataFrame, groups: list[str], metrics: Any) -> pd.DataFrame:
@@ -472,8 +473,8 @@ def _extrema(frame: pd.DataFrame, step: dict[str, Any]) -> pd.DataFrame:
 
 
 def _select(frame: pd.DataFrame, selections: Any) -> pd.DataFrame:
-    if not (isinstance(selections, list) and selections and all(isinstance(item, dict) for item in selections)):
-        return frame[_columns(selections, frame)]
+    if isinstance(selections, list):
+        selections = [{"column": item} if isinstance(item, str) else item for item in selections]
     _require(isinstance(selections, list) and 1 <= len(selections) <= MAX_COLUMNS,
              "Choose a bounded list of output columns.")
     for selection in selections:
@@ -502,9 +503,73 @@ def _append(frame: pd.DataFrame, step: dict[str, Any], sheets: dict[str, pd.Data
     _require(rows <= MAX_ROWS and rows * len(frame.columns) <= MAX_CELLS,
              "This append would produce too many rows or cells. Filter the sources first.")
     incoming = _select(source, step["columns"])
-    _require(set(incoming.columns) == set(frame.columns),
-             "Appended column names must match the current result columns exactly.")
-    return pd.concat([frame, incoming[list(frame.columns)]], ignore_index=True)
+    _require(set(frame.columns) <= set(incoming.columns),
+             "Appended column mappings must include every current result column.")
+    columns = list(frame.columns) + [name for name in incoming if name not in frame]
+    _require(rows * len(columns) <= MAX_CELLS,
+             "This append would produce too many rows or cells. Filter the sources first.")
+    return pd.concat([frame.reindex(columns=columns), incoming[columns]], ignore_index=True)
+
+
+def _date_derivation(expression: Any, derivations: dict[str, dict[str, str]]) -> dict[str, str] | None:
+    if not isinstance(expression, dict):
+        return None
+    if set(expression) == {"column"}:
+        return derivations.get(expression["column"])
+    function, args = expression.get("function"), expression.get("args", [])
+    if function in {"year", "month", "day"}:
+        argument = args[0]
+        if isinstance(argument, dict) and argument.get("function") == "date" and len(argument["args"]) == 1:
+            argument = argument["args"][0]
+        if isinstance(argument, dict) and set(argument) == {"column"}:
+            return {"function": function, "column": argument["column"]}
+    elif function == "text":
+        return _date_derivation(args[0], derivations)
+    elif function in {"if", "coalesce"}:
+        branches = args[1:] if function == "if" else args
+        candidates = []
+        for branch in branches:
+            literal = branch.get("literal") if isinstance(branch, dict) and set(branch) == {"literal"} else branch
+            if literal is None or (
+                isinstance(literal, str) and literal.strip().casefold() in {"", "unknown", "not available"}
+            ):
+                continue
+            candidate = _date_derivation(branch, derivations)
+            if candidate is None:
+                return None
+            candidates.append(candidate)
+        if candidates and all(candidate == candidates[0] for candidate in candidates):
+            return candidates[0]
+    return None
+
+
+def date_derivations_after_step(
+    derivations: dict[str, dict[str, str]], step: dict[str, Any],
+) -> dict[str, dict[str, str]]:
+    result = dict(derivations)
+    operation = step["op"]
+    if operation == "calculate":
+        for item in step["columns"]:
+            name, expression = item["name"], item["expression"]
+            derivation = _date_derivation(expression, result)
+            result.pop(name, None)
+            if derivation is not None:
+                result[name] = derivation
+    elif operation == "select":
+        result = {}
+        for selection in step["columns"]:
+            selection = {"column": selection} if isinstance(selection, str) else selection
+            column = selection.get("column")
+            if column in derivations:
+                result[selection.get("name", column)] = derivations[column]
+    elif operation in {"aggregate", "pivot"}:
+        groups = step.get("group_by", []) if operation == "aggregate" else step["index"]
+        result = {column: value for column, value in result.items() if column in groups}
+    elif operation == "rank":
+        result.pop(step["name"], None)
+    elif operation == "append":
+        result = {}
+    return result
 
 
 def execute_workbook_plan(
@@ -523,9 +588,11 @@ def execute_workbook_plan(
     if trace:
         trace.record_code("source_selected", execute_workbook_plan, evaluate_expression, _evaluate,
                           _aggregate_frame, _aggregate, _aggregate_values, _join, _extrema, _select, _append,
+                          _date_derivation, date_derivations_after_step,
                           sheet=sheet, rows=len(sheets[sheet]), columns=len(sheets[sheet].columns))
     frame = _bounded(sheets[sheet].copy(deep=True))
     frame_sources = {sheet}
+    date_derivations: dict[str, dict[str, str]] = {}
     for step_number, step in enumerate(steps, start=1):
         _require(isinstance(step, dict) and isinstance(step.get("op"), str), "A workbook calculation step is invalid.")
         operation = step["op"]
@@ -631,7 +698,9 @@ def execute_workbook_plan(
                          "A pivot category collides with a row label. Rename the dimension first.")
                 frame = frame.reset_index()
         frame = _bounded(frame)
+        date_derivations = date_derivations_after_step(date_derivations, step)
         if trace:
             trace.record("step_completed", step=step_number, operation=operation, rows=len(frame),
                          columns=len(frame.columns), result_columns=[str(column) for column in frame.columns])
+    frame.attrs["date_derivations"] = date_derivations
     return frame

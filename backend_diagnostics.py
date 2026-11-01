@@ -22,6 +22,7 @@ LOG_FIELDS = {
     "source_id",
     "implementation",
     "matched_rows", "unmatched_rows",
+    "finish_reason", "completion_tokens", "reasoning_tokens", "token_budget",
 }
 
 # Preserve identifiers/placeholders while removing SQL comments and literal values.
@@ -37,6 +38,7 @@ PLAN_FIELDS = {
     "where", "function", "args", "column", "name", "expression", "by", "direction",
     "left_on", "right_on", "how", "keep", "count", "method", "index", "values",
     "mode", "sql", "excel", "calculation", "query", "source",
+    "chart_type", "category", "aggregate", "sort",
 }
 
 

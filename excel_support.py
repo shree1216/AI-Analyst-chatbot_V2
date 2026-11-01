@@ -1,19 +1,27 @@
 from collections import Counter
+from contextlib import closing
+from copy import copy
 from datetime import date, datetime
 from io import BytesIO
 import math
 from numbers import Real
 from pathlib import Path
+import posixpath
 import re
+from typing import Any
 from zipfile import BadZipFile, ZipFile
+from xml.etree import ElementTree as ET
 from xml.etree.ElementTree import ParseError
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.cell import WriteOnlyCell
+from openpyxl.formula import Tokenizer
+from openpyxl.formula.tokenizer import TokenizerError
 from openpyxl.styles import Font
-from openpyxl.utils.cell import get_column_letter
+from openpyxl.utils.cell import coordinate_to_tuple, get_column_letter, range_boundaries
 from openpyxl.utils.exceptions import InvalidFileException
 from openpyxl.worksheet.worksheet import Worksheet
+from openpyxl.worksheet.formula import ArrayFormula, DataTableFormula
 import pandas as pd
 
 
@@ -21,6 +29,8 @@ EXCEL_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 MAX_EXCEL_BYTES = 10_000_000
 MAX_EXCEL_ROWS = 50_000
 MAX_EXCEL_COLUMNS = 100
+FORMULA_CACHE_VERSION = 2
+SOURCE_RANGE_NAME = "_WorkforceSourceData"
 SALES_SHEET_MISSING = (
     "I couldn't find a sheet named 'Sales' in this workbook. "
     "Add or rename the sales worksheet to 'Sales', save the file, and upload it again."
@@ -83,11 +93,238 @@ def excel_sheet_names(content: bytes | str | Path) -> list[str]:
         workbook.close()
 
 
+_MAIN_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+
+
+def _worksheet_parts(archive: ZipFile) -> dict[str, str]:
+    relationships = {
+        item.attrib["Id"]: item.attrib["Target"]
+        for item in ET.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
+    }
+    sheets = ET.fromstring(archive.read("xl/workbook.xml")).find(f"{_MAIN_NS}sheets")
+    if sheets is None:
+        return {}
+    result = {}
+    for sheet in sheets:
+        identifier = sheet.attrib["{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"]
+        target = relationships[identifier]
+        path = target.lstrip("/") if target.startswith("/") else posixpath.normpath(posixpath.join("xl", target))
+        if path in archive.namelist() and "/worksheets/" in path:
+            result[sheet.attrib["name"]] = path
+    return result
+
+
+def excel_source_range(content: bytes, sheet: str) -> tuple[int, int] | None:
+    with ZipFile(BytesIO(content)) as archive:
+        root = ET.fromstring(archive.read("xl/workbook.xml"))
+    sheets = root.find(f"{_MAIN_NS}sheets")
+    names = root.find(f"{_MAIN_NS}definedNames")
+    if sheets is None or names is None:
+        return None
+    index = next((index for index, item in enumerate(sheets) if item.get("name") == sheet), None)
+    for item in names:
+        if item.get("name") != SOURCE_RANGE_NAME or item.get("localSheetId") != str(index):
+            continue
+        match = re.fullmatch(r"'((?:[^']|'')+)'!\$A\$1:\$([A-Z]+)\$(\d+)", item.text or "")
+        if match is None or match[1].replace("''", "'") != sheet:
+            raise ValueError("The saved source-data range is invalid. Upload the original workbook.")
+        _, _, last_column, last_row = range_boundaries(f"A1:{match[2]}{match[3]}")
+        if not (1 <= last_column <= MAX_EXCEL_COLUMNS and 1 <= last_row <= MAX_EXCEL_ROWS + 1):
+            raise ValueError("The saved source-data range exceeds the workbook data limits.")
+        return last_row, last_column
+    return None
+
+
+def _workbook_cell_values(content: bytes) -> dict[tuple[str, str], tuple[str, object]]:
+    workbook = load_workbook(BytesIO(content), data_only=False)
+    try:
+        result = {}
+        for sheet in workbook:
+            for cell in sheet._cells.values():
+                value = cell.value
+                if value is None:
+                    continue
+                if isinstance(value, ArrayFormula):
+                    value = ("array", value.text, value.ref)
+                elif isinstance(value, DataTableFormula):
+                    value = ("dataTable", tuple(sorted(dict(value).items())))
+                result[(sheet.title, cell.coordinate)] = (cell.data_type, value)
+        return result
+    finally:
+        workbook.close()
+
+
+def _defined_name_values(content: bytes) -> dict[tuple[str, str], str]:
+    with ZipFile(BytesIO(content)) as archive:
+        root = ET.fromstring(archive.read("xl/workbook.xml"))
+    worksheets = root.find(f"{_MAIN_NS}sheets")
+    sheets = [sheet.attrib["name"] for sheet in worksheets] if worksheets is not None else []
+    definitions = root.find(f"{_MAIN_NS}definedNames")
+    if definitions is None:
+        return {}
+    return {
+        (
+            sheets[int(item.attrib["localSheetId"])].casefold() if "localSheetId" in item.attrib else "",
+            item.attrib["name"].casefold(),
+        ): item.text or ""
+        for item in definitions
+    }
+
+
+def _formula_text(value: object) -> str | None:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, tuple) and len(value) == 3 and value[0] == "array" and isinstance(value[1], str):
+        return value[1]
+    return None
+
+
+def _formula_affected(
+    formula: str, sheet: str, changed: set[tuple[str, str]], names: dict[tuple[str, str], str],
+    changed_names: set[tuple[str, str]], seen: frozenset[tuple[str, str]] = frozenset(),
+) -> bool:
+    if not changed and not changed_names:
+        return False
+    try:
+        tokens = Tokenizer(formula).items
+        if any(token.type == "FUNC" and token.value.upper().removeprefix("_XLFN.") in {
+            "INDIRECT(", "OFFSET(",
+        } for token in tokens):
+            return True
+        for token in tokens:
+            if token.type != "OPERAND" or token.subtype != "RANGE":
+                continue
+            reference = token.value
+            source, area = reference.rsplit("!", 1) if "!" in reference else (sheet, reference)
+            if source.startswith("'") and source.endswith("'"):
+                source = source[1:-1].replace("''", "'")
+            if any(character in source for character in "[]:"):
+                return True
+            if not re.fullmatch(
+                r"\$?[A-Za-z]{1,3}\$?\d+(?::\$?[A-Za-z]{1,3}\$?\d+)?|"
+                r"\$?[A-Za-z]{1,3}:\$?[A-Za-z]{1,3}|\$?\d+:\$?\d+", area,
+            ):
+                candidates = [(source.casefold(), area.casefold()), ("", area.casefold())]
+                key = next((key for key in candidates if key in names or key in changed_names), None)
+                if key is None or key in changed_names or key in seen or len(seen) >= 20:
+                    return True
+                if _formula_affected("=" + names[key].lstrip("="), source, changed, names, changed_names, seen | {key}):
+                    return True
+                continue
+            left, top, right, bottom = range_boundaries(area)
+            for changed_sheet, address in changed:
+                if changed_sheet.casefold() != source.casefold():
+                    continue
+                row, column = coordinate_to_tuple(address)
+                if (left or 1) <= column <= (right or 16384) and (top or 1) <= row <= (bottom or 1048576):
+                    return True
+    except (ValueError, TypeError, TokenizerError):
+        return True
+    return False
+
+
+def preserve_formula_values(original: bytes, updated: bytes, *, reject_changed: bool = False) -> bytes:
+    """Restore Excel's saved results only for formulas whose inputs are unchanged."""
+    old_values = _workbook_cell_values(original)
+    formulas = {key: value for key, (kind, value) in old_values.items() if kind == "f"}
+    if not formulas:
+        return updated
+    new_values = _workbook_cell_values(updated)
+    changed = {key for key in old_values.keys() | new_values.keys() if old_values.get(key) != new_values.get(key)}
+    current_formulas = {key: value for key, (kind, value) in new_values.items() if kind == "f"}
+    old_names = _defined_name_values(original)
+    names = _defined_name_values(updated)
+    changed_names = {key for key in old_names.keys() | names.keys() if old_names.get(key) != names.get(key)}
+    while changed or changed_names:
+        affected = set()
+        for key, formula in current_formulas.items():
+            if key in changed:
+                continue
+            expression = _formula_text(formula)
+            if expression is None or _formula_affected(expression, key[0], changed, names, changed_names):
+                affected.add(key)
+        if not affected:
+            break
+        changed.update(affected)
+    if reject_changed and any(key in changed for key in current_formulas):
+        raise ValueError(
+            "This edit changes inputs used by workbook formulas or has dependencies that cannot be verified "
+            f"at {', '.join(f'{sheet}!{cell}' for sheet, cell in sorted(current_formulas.keys() & changed)[:5])}. "
+            "Recalculate a copy in Excel before uploading it; "
+            "the chatbot will not reuse stale formula results. No workbook changes were applied."
+        )
+    replacements = {}
+    with ZipFile(BytesIO(original)) as source, ZipFile(BytesIO(updated)) as destination:
+        old_parts = _worksheet_parts(source)
+        new_parts = _worksheet_parts(destination)
+        for sheet, part in new_parts.items():
+            if sheet not in old_parts:
+                continue
+            cached = {
+                cell.attrib["r"]: cell
+                for cell in ET.fromstring(source.read(old_parts[sheet])).iter(f"{_MAIN_NS}c")
+                if cell.find(f"{_MAIN_NS}f") is not None
+            }
+            if not cached:
+                continue
+            root = ET.fromstring(destination.read(part))
+            restored = False
+            for cell in root.iter(f"{_MAIN_NS}c"):
+                address = cell.attrib["r"]
+                key = (sheet, address)
+                if key in changed or key not in formulas or key not in current_formulas or address not in cached:
+                    continue
+                saved = cached[address]
+                value = saved.find(f"{_MAIN_NS}v")
+                if value is None or (value.text is None and saved.get("t") != "str"):
+                    continue
+                current = cell.find(f"{_MAIN_NS}v")
+                if current is not None:
+                    cell.remove(current)
+                cell.append(ET.fromstring(ET.tostring(value)))
+                if "t" in saved.attrib:
+                    cell.set("t", saved.attrib["t"])
+                else:
+                    cell.attrib.pop("t", None)
+                restored = True
+            if restored:
+                replacements[part] = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+        if not replacements:
+            return updated
+        output = BytesIO()
+        with ZipFile(output, "w") as archive:
+            for item in destination.infolist():
+                archive.writestr(item, replacements.get(item.filename, destination.read(item.filename)))
+    return output.getvalue()
+
+
+def _check_formula_values(content: bytes, sheet: str, last_row: int, last_column: int | None = None) -> None:
+    with ZipFile(BytesIO(content)) as archive:
+        part = _worksheet_parts(archive).get(sheet)
+        if part is None:
+            return
+        missing = []
+        for cell in ET.fromstring(archive.read(part)).iter(f"{_MAIN_NS}c"):
+            row, column = coordinate_to_tuple(cell.attrib["r"])
+            if cell.find(f"{_MAIN_NS}f") is None or row > last_row or (last_column is not None and column > last_column):
+                continue
+            value = cell.find(f"{_MAIN_NS}v")
+            if value is None or (value.text is None and cell.get("t") != "str"):
+                missing.append(cell.attrib["r"])
+        if missing:
+            raise ValueError(
+                f"Worksheet '{sheet}' has formulas without saved calculation results at {', '.join(missing[:5])}. "
+                "These are not empty source cells. Open the original workbook in Excel, recalculate all formulas "
+                "(Ctrl+Alt+F9), save it, and upload the saved file again."
+            )
+
+
 def read_excel_sheet(
     content: bytes | str | Path, sheet: str, *, preview_rows: int | None = None,
 ) -> pd.DataFrame:
     if preview_rows is not None and (type(preview_rows) is not int or not 1 <= preview_rows <= MAX_EXCEL_ROWS):
         raise ValueError("Choose a preview size between 1 and 50,000 rows.")
+    content = _excel_content(content)
     workbook = open_excel_workbook(content)
     try:
         if sheet not in [worksheet.title for worksheet in workbook.worksheets]:
@@ -97,7 +334,11 @@ def read_excel_sheet(
             )
         worksheet = workbook[sheet]
         worksheet.reset_dimensions()
-        rows = worksheet.iter_rows(values_only=True)
+        source_range = excel_source_range(content, sheet)
+        rows = worksheet.iter_rows(
+            values_only=True, max_row=source_range[0] if source_range else None,
+            max_col=source_range[1] if source_range else None,
+        )
         header = list(next(rows, ()))
         while header and header[-1] is None:
             header.pop()
@@ -135,9 +376,10 @@ def read_excel_sheet(
                 populated_rows += 1
             if preview_rows is not None and populated_rows >= preview_rows:
                 break
-        frame = pd.DataFrame(values, columns=columns).dropna(how="all").reset_index(drop=True)
-        if frame.empty:
-            raise ValueError("The selected worksheet has no data rows.")
+        _check_formula_values(content, sheet, len(values) + 1, source_range[1] if source_range else None)
+        populated = pd.DataFrame(values, columns=columns).dropna(how="all")
+        frame = populated.reset_index(drop=True)
+        frame.attrs["excel_row_numbers"] = [int(index) + 2 for index in populated.index]
         return frame
     except OSError as error:
         raise ValueError(_excel_access_message(error)) from error
@@ -205,7 +447,13 @@ def regional_sales_plan(question: str, schemas: dict[str, dict[str, str]]) -> di
         r"\s+(?:did|does|do)\s+(?:it|they)\s+have)?",
         question.strip().rstrip("?.!").strip(), flags=re.IGNORECASE,
     )
-    if match is None:
+    all_regions = re.fullmatch(
+        r"(?:(?:give(?: me)?|show(?: me)?|calculate|what (?:is|are))\s+)?(?:the\s+)?"
+        r"(?:total|sum(?: of)?)\s+(?:sales amount|sales|revenue)\s+"
+        r"(?:for\s+(?:all|each)\s+regions?|by\s+regions?|per\s+regions?)",
+        question.strip().rstrip("?.!").strip(), flags=re.IGNORECASE,
+    )
+    if match is None and all_regions is None:
         return None
     candidates = []
     for sheet, schema in schemas.items():
@@ -223,16 +471,14 @@ def regional_sales_plan(question: str, schemas: dict[str, dict[str, str]]) -> di
     amount = amounts[0]
     metrics = [{"name": "Total Sales", "function": "sum", "column": amount}]
     columns = [region, "Total Sales"]
-    if match["count"]:
+    if match is not None and match["count"]:
         metrics.append({"name": "Sales Transactions", "function": "count_rows", "column": "*"})
         columns.append("Sales Transactions")
-    return {
-        "understood": True, "unhandled_conditions": [], "sheet": sheet, "steps": [
-            {"op": "aggregate", "group_by": [region], "metrics": metrics},
-            {"op": "extrema", "column": "Total Sales", "which": match["extreme"].casefold()},
-            {"op": "select", "columns": columns},
-        ],
-    }
+    steps = [{"op": "aggregate", "group_by": [region], "metrics": metrics}]
+    if match is not None:
+        steps.append({"op": "extrema", "column": "Total Sales", "which": match["extreme"].casefold()})
+    steps.append({"op": "select", "columns": columns})
+    return {"understood": True, "unhandled_conditions": [], "sheet": sheet, "steps": steps}
 
 
 def query_sales_total(question: str, frame: pd.DataFrame) -> pd.DataFrame | None:
@@ -307,7 +553,7 @@ def write_region_summary(
         _literal_excel_text(worksheet)
         output = BytesIO()
         workbook.save(output)
-        return backup, output.getvalue()
+        return backup, preserve_formula_values(backup, output.getvalue(), reject_changed=True)
     except OSError as error:
         raise ValueError(_excel_access_message(error)) from error
     finally:
@@ -322,12 +568,45 @@ def _literal_excel_text(worksheet: Worksheet) -> None:
                 cell.hyperlink = None
 
 
+def is_calendar_year_column(column: object) -> bool:
+    return re.sub(r"[\s_-]+", "", str(column)).casefold() in {
+        "year", "calendaryear", "fiscalyear", "financialyear", "salesyear", "saleyear",
+        "orderyear", "transactionyear", "birthyear", "joiningyear", "joinyear", "hireyear",
+    }
+
+
+def date_derivation_description(result: pd.DataFrame) -> str:
+    descriptions = []
+    for name, derivation in result.attrs.get("date_derivations", {}).items():
+        if name not in result:
+            continue
+        function, column = derivation["function"], derivation["column"]
+        description = (
+            f"{name} is derived from the {column} values using {function.upper()}({column}); "
+            "it is not a separate column read from the source."
+        )
+        if function == "year":
+            years = pd.to_numeric(result[name], errors="coerce").dropna().unique()
+            if len(years):
+                labels = ", ".join(f"{int(value):04d}" for value in years[:10])
+                description += f" Years in this result: {labels}" + (" (first 10 shown)." if len(years) > 10 else ".")
+        descriptions.append(description)
+    return "\n\n".join(descriptions)
+
+
 def spreadsheet_answer(result: pd.DataFrame) -> str:
-    def value_text(value: object) -> str:
+    def value_text(value: object, column: object) -> str:
         if pd.isna(value):
             return "not available"
+        calendar_year = is_calendar_year_column(column) or (
+            result.attrs.get("date_derivations", {}).get(column, {}).get("function") == "year"
+        )
+        if calendar_year and isinstance(value, str) and re.fullmatch(r"\d{1,4}(?:\.0+)?", value.strip()):
+            return f"{int(float(value)):04d}"
         if isinstance(value, Real) and not isinstance(value, bool):
             if math.isfinite(value) and value == int(value):
+                if calendar_year:
+                    return f"{int(value):04d}"
                 return f"{int(value):,}"
             return format(value, ",")
         if isinstance(value, (date, datetime)):
@@ -349,18 +628,26 @@ def spreadsheet_answer(result: pd.DataFrame) -> str:
     if result.shape == (1, 1):
         value = result.iloc[0, 0]
         if str(result.columns[0]) == "row_count":
-            return f"There {'is' if value == 1 else 'are'} {value_text(value)} {'row' if value == 1 else 'rows'}."
+            return f"There {'is' if value == 1 else 'are'} {value_text(value, result.columns[0])} {'row' if value == 1 else 'rows'}."
         subject = result.attrs.get("answer_subject") or f"The {label_text(result.columns[0])}"
         if pd.isna(value):
             return f"No value is available for {subject.removeprefix('The ')}."
-        return f"{subject} is {value_text(value)}."
+        answer = f"{subject} is {value_text(value, result.columns[0])}."
+        description = date_derivation_description(result)
+        return answer + (f"\n\n{description}" if description else "")
+    if len(result.columns) > 6:
+        answer = f"Found {len(result):,} matching {'row' if len(result) == 1 else 'rows'} across {len(result.columns):,} columns. See the data table below."
+        description = date_derivation_description(result)
+        return answer + (f"\n\n{description}" if description else "")
     lines = [
-        "; ".join(f"{label_text(column)}: {value_text(value)}" for column, value in zip(result.columns, row)) + "."
+        "; ".join(f"{label_text(column)}: {value_text(value, column)}" for column, value in zip(result.columns, row)) + "."
         for row in result.itertuples(index=False, name=None)
     ]
-    if len(lines) == 1:
-        return lines[0]
-    return f"Here are the {len(result):,} matching results:\n\n" + "\n".join(f"- {line}" for line in lines)
+    answer = lines[0] if len(lines) == 1 else (
+        f"Here are the {len(result):,} matching results:\n\n" + "\n".join(f"- {line}" for line in lines)
+    )
+    description = date_derivation_description(result)
+    return answer + (f"\n\n{description}" if description else "")
 
 
 def generate_excel_download(tables: list[tuple[str, pd.DataFrame]]) -> bytes:
@@ -409,3 +696,40 @@ def generate_excel_download(tables: list[tuple[str, pd.DataFrame]]) -> bytes:
     finally:
         workbook.close()
     return output.getvalue()
+
+
+def append_result_sheet(
+    content: bytes, result: pd.DataFrame, title: str, *, after_sheet: str,
+) -> tuple[bytes, str]:
+    if not 1 <= len(result.columns) <= MAX_EXCEL_COLUMNS or len(result) > MAX_EXCEL_ROWS:
+        raise ValueError("A saved result needs 1 to 100 columns and at most 50,000 rows.")
+    excel_sheet_names(content)
+    with closing(load_workbook(BytesIO(content), data_only=False)) as workbook, closing(
+        load_workbook(BytesIO(generate_excel_download([("Results", result)])))
+    ) as exported:
+        if after_sheet not in workbook.sheetnames:
+            raise ValueError("The source worksheet is unavailable. No worksheet was added.")
+        base = re.sub(r"[\[\]:*?/\\]", "_", title).strip().strip("'")[:31] or "Results"
+        name = base
+        suffix = 1
+        existing = {sheet.casefold() for sheet in workbook.sheetnames}
+        while name.casefold() in existing:
+            tail = f"_{suffix}"
+            name = base[:31 - len(tail)] + tail
+            suffix += 1
+        worksheet = workbook.create_sheet(name, workbook.sheetnames.index(after_sheet) + 1)
+        for row in exported.worksheets[0]:
+            for source in row:
+                cell = worksheet.cell(source.row, source.column, source.value)
+                cell.data_type = source.data_type
+                cell.font = copy(source.font)
+                cell.number_format = source.number_format
+        worksheet.freeze_panes = "A2"
+        worksheet.auto_filter.ref = worksheet.dimensions
+        for index, column in enumerate(result.columns, 1):
+            worksheet.column_dimensions[get_column_letter(index)].width = min(40, max(14, len(str(column)) + 3))
+        output = BytesIO()
+        workbook.save(output)
+        updated = preserve_formula_values(content, output.getvalue(), reject_changed=True)
+        excel_sheet_names(updated)
+        return updated, name

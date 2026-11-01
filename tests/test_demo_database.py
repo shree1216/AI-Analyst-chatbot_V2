@@ -385,7 +385,8 @@ class DemoDatabaseTests(unittest.TestCase):
             choice.message.content = '{"understood": false, "unhandled_conditions": ["PRIVATE_REASON"]}'
             self.assertIsNone(self.chatbot.generate_employee_query("Unsupported PRIVATE_QUESTION"))
         self.assertEqual([event["event"] for event in events], [
-            "planner_requested", "planner_completed", "cache_hit", "planner_requested", "planner_rejected",
+            "planner_requested", "planner_call_started", "planner_call_completed", "planner_completed",
+            "cache_hit", "planner_requested", "planner_call_started", "planner_call_completed", "planner_rejected",
         ])
         for secret in ("PRIVATE_NAME", "PRIVATE_REASON", "PRIVATE_QUESTION"):
             self.assertNotIn(secret, diagnostic_log(events))

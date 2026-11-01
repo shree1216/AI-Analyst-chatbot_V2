@@ -1,11 +1,11 @@
-# Warm Workforce Compass theme
+# Workforce Compass theme
 [theme]
 base = "light"
-primaryColor = "#C96442"
+primaryColor = "#147D73"
 backgroundColor = "#FAF9F5"
 secondaryBackgroundColor = "#F0EEE6"
 textColor = "#29261B"
-font = "serif"
+font = "sans serif"
 
 [client]
 showErrorDetails = "none"

@@ -95,7 +95,7 @@ are not a replacement for database permissions or access controls.
 - Create business reports with key metrics, applied scope, factual findings, and
     relevant analyst notes.
 - Download reports as PDF files.
-- Upload `.xlsx` workbooks with arbitrary columns and select a worksheet to query.
+- Upload `.xlsx` or `.csv` files with arbitrary columns and select a worksheet to query.
 - Download query results and report summaries, breakdowns, and source data as Excel workbooks.
 - Look up employee details such as department, city, email, and phone number.
 - Azure OpenAI support for structured column queries; results are rendered directly
@@ -117,10 +117,101 @@ Image analysis allows 60 seconds and up to 2,000 completion tokens per request.
 Images must be smaller than 4 MB; high-detail vision
 is used for readability, but extracted text and numbers should still be checked.
 
+### Explore uploaded Excel and CSV data
+
+In **Automatic (SQL + Excel)** or **Excel workbook** mode, upload an `.xlsx` or
+`.csv` file (up to 10 MB). For a workbook with several sheets, choose **Worksheet**
+in the sidebar. CSV files become a single-sheet Excel working copy; the original
+file is not modified. Quoted values and comma, semicolon, tab and pipe delimiters
+are supported. Invalid row widths produce an upload error rather than dropping data.
+
+Ask **open the file** or **show me the data** to see the complete selected sheet
+in a scrollable table; click a column header to sort. The summary includes row and
+column counts, column names, inferred data types, and missing-value counts.
+Blank cells and common placeholders such as `N/A` count as missing.
+
+Ask **make charts** for up to four useful charts selected from the actual columns,
+or **show average salary by department** or **how many people joined each year**
+for a specific chart. Every chart includes its supporting numbers immediately
+underneath and a short explanation. These simple upload-only requests work without
+Azure or a SQL connection and use the full selected sheet, not its sidebar preview.
+If a sheet has too few suitable columns, fewer charts are shown with an explicit
+error when none can be built. Missing or unreadable values excluded from a chart
+are explained. Chart data and the overview can be downloaded as Excel.
+
+Charts appear in the chat and **Download Excel with charts** includes native,
+editable Excel charts, original data and supporting numbers. **Same worksheet**
+is the default **Excel chart placement**: charts and their supporting tables are
+placed in unused columns beside the data, without overwriting existing cells.
+**Download supporting tables only** is explicitly a numbers-only export.
+To update the active working copy, ask **Add a column chart of total Amount by
+Region in the workbook**. Explicit SQL/both-source requests and more
+complex filtered calculations retain the existing validated source planner.
+
+Ask **create a dashboard with charts and supporting tables** for a two-column
+dashboard, row/column/missing-value metrics, and **Dashboard**, **Supporting tables**
+and **Data summary** tabs. Tables under each chart use the exact numbers plotted.
+The column-summary tab describes data types and missing values.
+
+Compound prompts are supported: **open worksheet employees_messy and draw charts
+in the excel sheet** first selects `employees_messy`, then builds a dashboard.
+You can also ask **create a dashboard for employees_messy with supporting tables**.
+Worksheet names are matched case-insensitively; an unknown name is reported
+explicitly, never replaced with another worksheet.
+
+**Open employees_messy and create a chart for employee salary** keeps
+`employees_messy` as the source and charts its `Salary` (or exact `Employee Salary`)
+column, not a worksheet named "employee salary". Without a grouping or explicit
+aggregation, a numeric-only chart defaults to a salary distribution, with counts
+per salary range underneath and a native Excel chart in the download.
+**Create a chart for salary** also works on the selected worksheet.
+Use **for worksheet employees_messy** or **from employees_messy** to explicitly
+name a source; these never fall back to a similarly named column. For a grouped
+comparison, ask **show average salary by department** instead.
+
+When the prompt says **in Excel**, **in the workbook** or **in the excel sheet**,
+**Download Excel with charts** contains charts on the same worksheet by default.
+Select **New dashboard tab**, or ask **draw charts on a new worksheet**, to put
+them together on a separate tab instead. An explicit **same worksheet** prompt
+overrides that selection. Existing data cells, formulas, PivotTables, slicers,
+charts and images are preserved. The source sheet stays selected for follow-up
+questions, and a hidden source-range name separates the original data from added
+supporting cells when querying or reuploading the export. Reopening a cached
+answer does not insert duplicate charts. CSV uploads export as `.xlsx` because
+CSV cannot store charts. Row/column edits on a same-sheet chart workbook require
+the original upload; the editing engine cannot safely move the inline chart data.
+This is a prompt-driven spreadsheet/dashboard workflow, not a complete Quadratic
+editor replacement; arbitrary chart filters and multi-metric instructions still
+require the existing validated planner rather than silently ignoring conditions.
+
+### Safely clean an uploaded table
+
+Ask **clean the employees_messy table**, **clean worksheet employees_messy**, or
+**clean the table** for the selected worksheet. Cleanup uses the uploaded workbook
+directly, without Azure or SQL queries, and updates its working copy in place.
+It trims surrounding whitespace, turns missing placeholders into blank cells,
+normalizes category capitalization, converts readable numeric values, and
+standardizes unambiguous date text to ISO format.
+
+Every source row is retained, including duplicate rows. Rows that become
+entirely blank remain at their original worksheet positions.
+As before, entirely blank rows are omitted from subsequent chart/query analysis.
+IDs keep leading zeros
+and large integer strings; names and emails keep their capitalization. Formula
+cells, cached results, styles, rich text, charts, images, other worksheets, and
+the original upload are preserved. Ambiguous dates such as `01/02/2025`,
+unrecognized number formats, and precision-sensitive values stay unchanged and
+are reported. Department abbreviations are never guessed or merged.
+The **Cleanup summary** counts actual changes per column, and **Download updated
+workbook** includes the cleaned data and existing charts. Ordinary source queries
+and chart prompts continue to use the cleaned table. A previously failed cleanup
+request can use **Retry question** to run the new local cleanup action.
+
 ### Automatic SQL + Excel questions
 
 **Automatic (SQL + Excel)** is the default data-source mode. It requires Azure
-OpenAI. The app reads the live table/column schema and SQL types for all visible
+OpenAI for schema-aware source planning; the simple upload exploration above does
+not. The app reads the live table/column schema and SQL types for all visible
 user tables in the configured database (not just the employee table), plus the
 uploaded workbook's worksheet names, column names/types, and up to three sample
 rows per worksheet. SQL row data is not fetched for source discovery. The Excel
@@ -175,6 +266,24 @@ not inherit an earlier request to use both sources. Follow-up context starts at
 the most recent independent question, rather than carrying unrelated requests
 across the conversation.
 
+An unfinished automatic question retains its workbook snapshot across Streamlit
+reruns. If the request has no snapshot, it uses the active uploaded workbook.
+The upload callback saves file bytes immediately instead of clearing the workbook
+and waiting for the sidebar preview to rebuild it. Question submission, retries,
+workbook commands and previews all resolve the same active upload; if the parsed
+cache is missing, it can be recovered from the current uploader widget. A hidden
+uploader during a source-mode change does not discard the remembered workbook.
+Explicit removal and **close Excel** still unload it, and an old uploader version
+cannot resurrect a closed workbook. Backend diagnostics record whether the
+request attached a workbook, had no workbook, or intentionally used SQL only.
+An uploaded file with no readable sheets produces the worksheet/loading error,
+not a false request to upload the file again.
+Uploading a new or changed workbook automatically retries the latest failed
+automatic question once for that file; older failures and successful answers
+stay cached. The same workbook does not trigger repeated automatic retries.
+SQL-only questions still ignore Excel. Workbook bytes are released from the
+question after a final answer or handled error, rather than during an interruption.
+
 Simple highest/lowest regional-sales questions use a local validated plan when
 exactly one discovered source has a Region column and an unambiguous recorded
 transaction amount (amount, sales amount, revenue, or sales). If that source is
@@ -184,6 +293,32 @@ quantities or cached summary columns; all tied regions are retained. Excel
 workbook mode uses the same calculation. Explicit SQL/both-source requests,
 additional filters, ambiguous sources or measures, and other question forms
 remain with the schema-aware planner; they are never silently simplified.
+
+Simple **units sold per product** requests also use local validated calculations.
+When both sources are requested, a unique SQL product catalog supplies the product
+universe and a unique Excel transaction sheet supplies quantities. Catalog codes
+are appended with zero transaction contribution before grouping, so disjoint
+catalog/transaction codes do not cause false join failures and duplicate catalog
+rows cannot multiply sales. Catalog-only codes have zero units in the uploaded
+transactions; this does not assert zero sales outside that workbook. Missing
+quantities in actual sales remain unknown. Extra filters, explicit matching
+requirements, SQL-only questions and ambiguous sources stay with the planner.
+
+Each question/answer pair has its own keyed chat container. Stale chat elements
+are hidden during reruns, and completed messages do not display processing
+spinners again, preventing previous answers or Retry controls from appearing
+inside a new user message.
+
+Calendar years are displayed as `2026`, not `2,026` or `2026.0`; sales amounts
+retain their numeric formatting. Year/month/day summaries derive their periods
+from the actual date column and display the executed derivation, such as
+`YEAR(Date)`. A separate Year column is not needed, but an absent or invalid date
+must not be replaced with today's year. Missing dates remain unknown.
+Questions such as "there is no year column, how did you retrieve this?" explain
+the previous recorded calculation locally instead of running another sales query.
+Older cached answers can recover this explanation from completed diagnostic
+steps; if no recorded derivation exists, the app says it cannot verify the year
+rather than inventing an explanation.
 
 SQL-only multi-table joins and combined SQL/Excel joins use the same validated
 calculation steps: inner, left, right and full outer joins, multi-column grouping,
@@ -212,6 +347,24 @@ validator feedback. The corrected plan passes the same checks; invalid data or
 requested conditions must not be skipped. A second failure is shown explicitly,
 with no unbounded retry or fabricated answer. Plan attempts and repairs remain in
 backend diagnostics, with shorthand literals redacted like explicit literals.
+JSON planners for SQL, single-sheet Excel, workbook and combined-source questions
+allow 12,000 completion tokens (including reasoning) for recognized GPT-5/mini/nano
+deployment names. They use low reasoning effort so hidden reasoning does not exhaust
+the allowance before a plan is emitted. A response truncated by the token limit
+can retry once, at 24,000 tokens for these models; other deployments retain their
+existing token limits and receive no model-specific reasoning parameter.
+In Automatic mode this shares the existing
+two-call budget with clarification/validation repair; it cannot start a third
+planning call. Partial JSON is never executed. Finish reasons and numeric token
+counts are logged without recording reasoning text, questions or result rows.
+Append mappings must cover every existing result column and may explicitly add
+transaction fields; previous catalog rows receive null in new fields, not
+fabricated quantities or amounts. Row/cell limits use the widened output schema
+and are checked before concatenation. Selections may mix plain column headers,
+renamed columns and scalar constants; all names and duplicates are still validated.
+Combined catalog price lists preserve the union of products and source-labeled
+prices, flagging products without recorded transactions instead of dropping
+unmatched catalog entries. Different prices are not silently collapsed to one.
 Each answer names the actual sources used and offers an Excel export. The interface
 keeps only **Sources used** captions; request IDs, timing, preview counts and
 technical routing details remain in backend diagnostics rather than faded helper text.
@@ -248,8 +401,9 @@ names. Shared IDs/codes are preferred; exact text keys ignore case and outer
 whitespace. Match and unmatched-row counts are logged without recording key
 values. Partial matches produce a visible warning. A join with no real matches
 cannot be presented as a successful combined answer with blank SQL details.
-The automatic correction pass can try another valid key; otherwise the app
-explains the missing relationship. Explicit unmatched/missing-record questions
+Confirmed zero-overlap joins explain the missing relationship immediately,
+without a second AI request repeating the same failed match. Structural plan
+errors still receive the bounded correction pass. Explicit unmatched/missing-record questions
 remain supported. An Excel salesperson name that does not exist in the SQL
 employee table needs a shared employee ID or verified mapping; unrelated people
 are never joined by row position or guessed/fuzzy identity.
@@ -348,10 +502,11 @@ questions.
 
 Use unique, nonempty text column headers in the first row. Workbooks must be
 smaller than 10 MB (50 MB expanded), with at most 50,000 data rows and 100 columns
-per selected sheet. Empty sheets, missing/duplicate headers, encrypted files,
+per selected sheet. Sheets without a header row, missing/duplicate headers, encrypted files,
 and legacy `.xls` files are not supported. Formulas are not executed: only values
 last saved by Excel are read, so recalculate and save the workbook first if needed.
 Use Excel date cells or unambiguous ISO text such as `2025-01-31` for date operations.
+Header-only sheets are valid empty datasets, including after deleting all data rows.
 Empty trailing header cells created only by formatting are ignored; populated
 cells without headers are still rejected. Loading errors identify the worksheet
 and affected cells (for example `A1` and `B1` for repeated headers). The same
@@ -381,17 +536,14 @@ ignores case and surrounding spaces. Missing numeric values are not reported as
 zero, and no currency is inferred. Additional conditions outside this simple
 grammar still use the validated AI planner; they are never silently ignored.
 
-#### Create a Region_Summary worksheet
+#### Regional summaries
 
-With a workbook containing a **Sales** worksheet uploaded, open **Create region
-summary** in the sidebar:
+Ask for regional totals or a regional sales summary in chat. The sidebar contains
+only workbook selection, preview and (after an edit) grouped workbook downloads;
+the former **Create region summary** panel and duplicate backup controls have
+been removed. Existing Region_Summary worksheets remain readable like any sheet.
 
-1. Download **original backup**. The application retains an exact original-byte
-   backup in the current session before creating an updated workbook.
-2. Check **I confirm: add Region_Summary to a copy of this workbook**.
-3. Select **Create Region_Summary**, then download the updated workbook.
-
-The `write_region_summary(content, confirmed=True)` function in `excel_support.py`
+For programmatic use, `write_region_summary(content, confirmed=True)` in `excel_support.py`
 returns `(backup_bytes, updated_workbook_bytes)`. Without explicit confirmation it
 raises an error before opening or writing a workbook. It never writes to the
 original uploaded file. The updated copy adds exactly **Region_Summary**, with
@@ -463,7 +615,7 @@ the workbook engine.
 
 These are **natural-language operations**, not a complete Excel formula interpreter.
 Typed formulas, approximate/wildcard lookups, external-workbook links, arbitrary
-macros/code, free-form data edits, and narrative/PDF reports for arbitrary sheets
+macros/code, unrestricted cell edits, and narrative/PDF reports for arbitrary sheets
 are unsupported. Questions that cannot be fully interpreted request clarification
 instead of silently ignoring conditions or switching to employee data.
 Planner rejections include specific reasons and available column names, rather
@@ -546,11 +698,163 @@ configured synchronization service. Automatic loading/refresh is not enabled by
 the logging changes; selecting the storage/account type and configuring access
 are still required. Manual upload remains available.
 
-Calculations and downloaded results are read-only: calculated columns, pivots,
-and joins do not add or edit uploaded sheets. Only the separate, explicitly
-confirmed **Region_Summary** workflow creates an updated workbook copy.
+Ordinary questions and result exports remain read-only: calculated result columns,
+pivots and joins do not modify uploaded sheets. Explicit row/column edit requests
+use the working-copy workflow below.
 Excel formula cells still use their saved cached values; the engine does not
-recalculate existing workbook formulas.
+recalculate existing workbook formulas. Workbook edits preserve saved string and
+numeric formula results across all worksheets when their formulas and inputs are
+unchanged. Changes to formula inputs, including transitive dependencies, cannot
+silently reuse stale cached results. Previously edited session copies can recover
+unchanged cached results from the original upload while retaining added columns.
+Modern array formulas are compared by their expression and spill range, not
+Python object identity. Static workbook/worksheet named ranges are resolved
+before deciding whether an edited cell affects a formula; name changes, cycles
+and unresolved/dynamic dependencies remain protected. Session recovery is
+versioned so older working copies are rechecked after these corrections.
+If no saved formula result exists, loading reports the affected cells and asks
+for recalculation in Excel (Ctrl+Alt+F9), saving and reuploading; formulas are never
+silently treated as missing product, rating, price, amount or summary values.
+
+#### Save an answer to a new worksheet
+
+In Automatic or Excel workbook mode, explicitly ask to save a workbook answer
+in another worksheet of the same workbook, for example:
+
+```text
+give sum of sales for all regions and save in other sheet in same workbook
+preview and save in another sheet named "Selected data"
+```
+
+The calculation uses the uploaded workbook, then adds the complete result to
+the active working copy. Regional sales totals default to **total_sales_by region**,
+inserted immediately after the source **Sales** sheet, even if another worksheet
+was selected in the sidebar. Existing worksheets are never replaced: subsequent
+requests create **total_sales_by region_1**, **total_sales_by region_2**, and so on.
+Name collisions ignore case, and names are made valid within Excel's 31-character
+limit. Other results default to **Results** unless a name is supplied.
+
+The original upload, source cells, supported formatting, formulas and unchanged
+cached formula values are preserved. Results are written as literal values, not
+executable formulas. **Download updated workbook** contains all original sheets
+plus the new result sheet. Following questions use this working copy; reruns do
+not replay the save, and previous answers retain their own download snapshots.
+Ordinary questions without an explicit new-sheet save request remain read-only.
+
+#### Add or delete Excel rows and columns
+
+In **Automatic** or **Excel workbook** mode, explicit edit requests update the
+active in-memory workbook copy, not the file on your computer or any SQL table:
+
+```text
+Add column Reviewed to Sales.
+Add a Reviewed column with Yes to Sales.
+Add a column "Reviewed" with "Yes" for the top 3 amounts, and save as a new file in Sales sheet.
+In Sales, add column Reviewed with Yes in rows 11, 3 and 9; leave other rows blank.
+Delete column Reviewed from Sales.
+Add a row to Sales with Salesperson Eve, amount 2500 and Code E.
+Delete row 3 from Sales.
+Delete rows from Sales where amount is below 1500.
+From Sales, keep amount above 1500, sort highest first, add Reviewed with Yes
+for the top 3, break amount ties by who joined first, and save a new file.
+```
+
+Following questions and edits use the updated working copy, even after reruns,
+New chat or source-mode switches. **Download updated workbook** includes every
+worksheet, not just the preview or query result. The sidebar also offers the
+current working copy and the original upload; each edit answer retains its own
+download snapshot. Removing/closing the upload unloads the working copy.
+Uploading a different file starts a new working copy. The app does not overwrite
+your disk/OneDrive original, write SQL, or require routine per-edit confirmations.
+
+New columns may be blank, constant or computed with the validated expression
+engine. New rows accept finite scalar values against existing headers; omitted
+cells are blank. Excel row 1 is the protected header and data starts at row 2;
+row-number edits include physical blank rows. Deletion conditions remove matches.
+When a new column is limited to explicit row numbers, only those new cells are
+populated; existing cells, row order and all other rows stay unchanged. Explicit
+row numbers take precedence over descriptions such as "the top 3 amounts" and
+do not trigger sorting or a staff lookup. The validated `add_column` step uses
+optional `row_numbers` for this selection; omitting it populates the full column.
+Deleting every data row is supported, but deleting every column is not. New
+columns cannot silently overwrite an existing header. Text starting with `=` is
+saved as literal text, not executable Excel code.
+
+#### Build Excel charts from a prompt
+
+In **Automatic** or **Excel workbook** mode, ask for a chart and say it belongs in
+the workbook (mention Excel, the workbook, a sheet or file, or use *add*/*insert*).
+The app adds a **native Excel chart** to the active working copy:
+
+```text
+Add a column chart of total Amount by Region in the workbook.
+Create a pie chart of Amount by Salesperson in my Excel file.
+Insert a bar chart of Quantity and Amount by Salesperson.
+Add a line chart of Amount by Date to the workbook.
+Add an Excel chart of count of sales by Region.
+Add a chart of the top 5 products by average price to the workbook.
+```
+
+Supported types are column, bar (horizontal), line, pie, doughnut, area and
+scatter. Values can be summed, averaged, counted, or reduced to minimum or
+maximum per category, or plotted one point per row; repeated categories are summed
+unless you say otherwise. Simple prompts with exact column names are parsed
+locally; other wording uses Azure OpenAI to produce a validated chart plan, with
+one automatic repair attempt.
+
+Each chart is placed on a **new worksheet** named after the chart title, next to
+the small table it plots, so the chart can be restyled or edited in Excel.
+Existing sheets are never modified: the new sheet, drawing and chart parts are
+inserted into the original file package and every existing part is kept byte for
+byte, so PivotTables, slicers, dynamic-array formulas and earlier charts survive.
+Asking *show a chart of ...* without mentioning the workbook still shows the
+interactive chart in the conversation only. The chart data is a snapshot of the
+saved worksheet values; if the source data changes, ask for the chart again.
+Limits: at most 500 categories (50 pie slices), 10 value columns and 20
+worksheets per workbook. Blank categories and non-numeric values are skipped and
+reported in the answer.
+
+Combined filter/sort/mark requests preserve all original columns and non-target
+worksheets. A top-three flag does not discard the remaining filtered rows.
+For top-N marking without an explicit sort, original row order and formula
+coordinates stay unchanged. Equal amounts use existing worksheet order, missing
+amounts are not selected, and only the requested column is saved. Simple quoted
+top-amount marking requests run locally without AI or a staff lookup. Conditions,
+filters and joining-date tie breakers are not inherited from previous questions.
+Staff joining-date tie breakers use an actual workbook staff lookup only when
+the current question explicitly requests that tie breaker; transaction
+or birth dates are never substituted. Missing mappings or required tie-breaker
+values fail explicitly. Ranking/lookup fields are scratch columns and are not
+saved; to retain one, the plan must copy it into an explicit new-column result.
+Name-based lookups automatically trim outer spaces and ignore case on both sides:
+Salesperson can match staff Name without a Staff ID in Sales or adding a
+normalized-name column to staff. The planner must use exact JSON field names
+(`keep` for a lookup, never a question-mark suffix or a `keep` field on a join).
+
+Simple named-column additions/deletions and numbered-row deletions run locally.
+Other edits use a bounded JSON edit plan, never model-written Python/SQL.
+Unexpected fields or invalid steps can receive one repair, sharing the existing
+two-call AI budget with truncated-response recovery. A first missing-data refusal
+also gets one schema-grounded recheck; an actual lack of matching names or dates
+still fails explicitly without changing the workbook. All steps and serialization
+must succeed before the active workbook is replaced; a failure leaves it unchanged.
+Limits remain 20 steps, 50,000 worksheet rows, 100 columns and 5 million cells;
+each insertion step accepts at most 1,000 new rows.
+
+Ordinary cell styles, row heights, column widths, other worksheets and existing
+formula cells are preserved. Structural changes that could invalidate formulas
+or defined-name references to the edited sheet are rejected; formula workbooks
+can still append columns/rows at the end without shifting existing cells.
+Unreferenced trailing columns (such as a newly appended Status column) can also
+be removed without shifting existing cells. These edits are blocked if they
+change inputs used by formulas; cached values are never treated as recalculation.
+Merged cells, Excel tables, validations and conditional formatting on the target
+sheet are not yet editable; use a plain values-only worksheet copy. Structural
+changes to a sheet with drawings/charts are also rejected rather than corrupting
+their references. Existing formulas are not recalculated.
+Wide query results use a short row/column summary and an expanded data table,
+instead of repeating every cell in a long bulleted answer. The chat workspace
+is wider, and sidebar downloads are grouped separately from worksheet preview.
 
 Important calculation semantics:
 
@@ -647,6 +951,8 @@ the new **Data source** controls appear; local tests alone do not update it.
 | `employee_sql_chatbot.py` | Main Streamlit application |
 | `excel_support.py` | Bounded Excel parsing, worksheet schema inference, and literal-safe workbook exports |
 | `workbook_operations.py` | Bounded, read-only workbook calculations, expressions, lookups, joins, rankings, and pivots |
+| `workbook_edits.py` | Validated Excel row/column edits, ordered transformations and atomic working-copy serialization |
+| `workbook_charts.py` | Prompt-driven native Excel charts added on new worksheets without re-saving existing parts |
 | `backend_diagnostics.py` | Privacy-safe request traces, rotating server log files, and session log downloads |
 | `source_queries.py` | Live SQL/Excel source discovery, source-plan validation, and bounded cross-source execution |
 | `employee_dataset.xlsx` | Synthetic 150-employee sample dataset |

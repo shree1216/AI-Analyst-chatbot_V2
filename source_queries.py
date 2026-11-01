@@ -25,6 +25,16 @@ SALES_PLANNING_RULES = (
     "columns such as Total Sales, Average sales, no.of sales, Rank and Region-1 for transaction totals. "
     "A valid existing amount must not be replaced with zero or a catalog-price estimate. "
     "If a required amount is missing, report that limitation instead of silently inventing a value. "
+    "CALENDAR PERIODS: derive year/month/day from the actual transaction date using year/month/day "
+    "functions; a separate Year column is not required. Never invent a year, substitute today's year, "
+    "or use staff birth/joining dates as sales dates. Missing dates remain unknown. If no usable "
+    "transaction date or explicit period field exists, explain that yearly sales cannot be determined. "
+    "UNITS SOLD: Sum transaction quantity, not price or transaction counts. If both sources are "
+    "requested and SQL is a product catalog while Excel holds transactions, use the union of product "
+    "codes: append catalog identities with zero transaction contribution and group the original sales "
+    "quantities. Preserve sold Excel codes absent from the SQL catalog; no catalog match is needed to "
+    "count those sales. Catalog-only codes have zero units in the uploaded transactions, not a claim "
+    "about all historical sales. Missing quantities in actual transactions remain unknown, never zero. "
 )
 
 
@@ -158,9 +168,92 @@ class DataSource:
         return result
 
 
+def product_units_plan(
+    question: str, sources: dict[str, DataSource], required_kinds: set[str],
+) -> dict[str, Any] | None:
+    text = " ".join(re.sub(r"[?.!,;]", " ", question).split())
+    if required_kinds == {"sql"} or not re.fullmatch(
+        r"(?:how many units of each product (?:were|are|have been) sold|"
+        r"(?:show|give me) (?:total )?units sold (?:by|per|for each) product)"
+        r"(?: (?:use|using|from) (?:both (?:data )?sources|sql and excel|excel(?: only)?))?",
+        text, flags=re.IGNORECASE,
+    ):
+        return None
+
+    def field(source: DataSource, names: set[str]) -> str | None:
+        matches = [name for name in source.schema
+                   if re.sub(r"[_\s]+", " ", name).strip().casefold() in names]
+        return matches[0] if len(matches) == 1 else None
+
+    sales = []
+    catalogs = []
+    for source in sources.values():
+        code = field(source, {"code", "product code", "productcode", "sku"})
+        if code is None or source.schema[code] != "text":
+            continue
+        quantity = field(source, {"quantity", "units"})
+        if source.kind == "excel" and quantity is not None:
+            sales.append((source, code, quantity))
+        if (
+            source.kind == "sql" and field(source, {"product", "product name", "productname"})
+            and not any(re.sub(r"[_\s]+", " ", name).strip().casefold() in {
+                "quantity", "units", "amount", "revenue", "sales", "sales amount",
+            } for name in source.schema)
+        ):
+            catalogs.append((source, code))
+    combined = required_kinds == {"sql", "excel"}
+    if len(sales) != 1 or combined and len(catalogs) != 1:
+        return None
+    source, code, quantity = sales[0]
+    steps: list[dict[str, Any]] = [
+        {"op": "calculate", "columns": [
+            {"name": "Product Code", "expression": {"column": code}},
+            {"name": "Units Sold", "expression": {"column": quantity}},
+            {"name": "Sales Rows", "expression": {"literal": 1}},
+            {"name": "Known Quantity Rows", "expression": {"function": "if", "args": [
+                {"function": "is_blank", "args": [{"column": quantity}]}, {"literal": 0}, {"literal": 1},
+            ]}},
+        ]},
+        {"op": "select", "columns": ["Product Code", "Units Sold", "Sales Rows", "Known Quantity Rows"]},
+    ]
+    sql = []
+    if combined:
+        catalog, catalog_code = catalogs[0]
+        sql.append({"source": catalog.id, "query": {
+            "understood": True, "unhandled_conditions": [], "columns": [catalog_code],
+            "metrics": [], "filter": None, "group_by": [], "order_by": [],
+        }})
+        steps.append({"op": "append", "sheet": catalog.id, "columns": [
+            {"column": catalog_code, "name": "Product Code"},
+            *[{"literal": 0, "name": name} for name in ("Units Sold", "Sales Rows", "Known Quantity Rows")],
+        ]})
+    steps.extend([
+        {"op": "calculate", "columns": [{"name": "Product Code", "expression": {
+            "function": "upper", "args": [{"function": "trim", "args": [{"column": "Product Code"}]}],
+        }}]},
+        {"op": "aggregate", "group_by": ["Product Code"], "metrics": [
+            {"name": name, "function": "sum", "column": name}
+            for name in ("Units Sold", "Sales Rows", "Known Quantity Rows")
+        ]},
+        {"op": "calculate", "columns": [{"name": "Units Sold", "expression": {
+            "function": "if", "args": [
+                {"function": "eq", "args": [{"column": "Sales Rows"}, {"column": "Known Quantity Rows"}]},
+                {"column": "Units Sold"}, {"literal": None},
+            ],
+        }}]},
+        {"op": "select", "columns": ["Product Code", "Units Sold"]},
+        {"op": "sort", "by": [{"column": "Product Code", "direction": "asc"}]},
+    ])
+    return {"mode": "data", "message": "", "sql": sql, "excel": [source.id],
+            "calculation": {"understood": True, "unhandled_conditions": [], "sheet": source.id, "steps": steps}}
+
+
 def local_source_plan(
     question: str, sources: dict[str, DataSource], required_kinds: set[str],
 ) -> dict[str, Any] | None:
+    units = product_units_plan(question, sources, required_kinds)
+    if units is not None:
+        return units
     if required_kinds and required_kinds != {"excel"}:
         return None
     calculation = regional_sales_plan(question, {key: source.schema for key, source in sources.items()})
@@ -503,6 +596,19 @@ def source_planner_prompt(sources: dict[str, DataSource], unavailable: list[str]
         "return Excel-only rows with every SQL field blank as a successful combined answer. "
         "Unmatched-record investigations are valid when explicitly requested. Partial matches must remain "
         "visible, and requesting top N never permits inventing extra people when fewer valid rows exist. "
+        "COMBINED PRICE LISTS: append compatible product catalogs from SQL and Excel, rather than "
+        "inner-joining them or keeping only SQL catalog codes. Preserve all products sold or stocked. "
+        "Keep a source label with each catalog price; conflicting source prices must remain visible, "
+        "not silently reduced to MIN/MAX or one arbitrary price. Normalize product codes and deduplicate "
+        "identical catalog entries before enriching with sales. Add sales-only products when absent "
+        "from every catalog, identifying any transaction-derived price rather than calling it a catalog price. "
+        "For 'no sales yet' or 'never sold', flag absence of recorded transactions using a joined "
+        "sales-key presence count, not catalog-placeholder row counts or a missing price. A free/zero-amount "
+        "transaction still means the product has been sold. Return the complete price list WITH flags, "
+        "not only the unsold subset, when the question asks for a list and to identify which have no sales. "
+        "Use the fewest concrete steps needed. Never emit placeholder steps, empty aggregate operations, "
+        "temporary SELECTs that drop fields still needed, or unsupported nested subplans. After aggregate "
+        "only group_by fields and named metrics exist. Track column names after each step. "
         "ZERO/NO SALES: use the product catalog as the complete product population, then LEFT JOIN sales "
         "on the shared code. Include catalog products with no transaction rows AND products whose sales "
         "sum is zero. A complete lack of matches is a valid result for this specific unmatched query, "
@@ -574,7 +680,10 @@ def source_planner_prompt(sources: dict[str, DataSource], unavailable: list[str]
         "An append mapping may use {literal:JSON_scalar,name:existing_output_header} instead of column, "
         "for example to label incoming rows with their source. For separate source counts, calculate a Source "
         "literal on the initial frame, append the other source with its Source literal, then group by Source. "
-        "append stacks rows, mapping the incoming columns to EXACTLY the current result columns; "
+        "append stacks rows. Its mapping MUST include every current result column, and may explicitly "
+        "add new columns; earlier rows receive null in those added columns. Use literal:null for any "
+        "existing column absent from the incoming source. For combined catalog/transaction lists, map "
+        "Quantity/amount plus a transaction-presence flag on sales rows; catalog rows must not count as sales. "
         "first select the identity columns needed, append the other source's matching columns, then calculate "
         "normalized keys with lower(trim(column)), filter not(is_blank(key)), and aggregate count_distinct. "
         "lookup:{op,sheet:source_id,left_on:[headers],right_on:[headers],columns:[{column,name}],keep:'first'|'last'}. "

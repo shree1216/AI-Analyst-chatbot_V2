@@ -53,6 +53,47 @@ class WorkbookOperationTests(unittest.TestCase):
             "count": 3, "counta": 3, "count_distinct": 3, "rows": 4, "dates": 3, "text": 0,
         })
 
+    def test_date_derivations_describe_executed_columns_and_survive_grouping(self):
+        result = self.run_plan(
+            {"op": "calculate", "columns": [{"name": "Year", "expression": fn("year", col("Date"))}]},
+            {"op": "aggregate", "group_by": ["Year"], "metrics": [metric("Total", "sum", "Sales")]},
+            {"op": "select", "columns": [{"column": "Year", "name": "Sales Year"}, "Total"]},
+        )
+        self.assertEqual(result.attrs["date_derivations"], {
+            "Sales Year": {"function": "year", "column": "Date"},
+        })
+        self.assertTrue(pd.isna(result["Sales Year"].iloc[-1]))
+        self.assertNotIn("Year", self.sales)
+
+    def test_date_derivations_do_not_describe_overwritten_or_removed_columns(self):
+        calculate = {"op": "calculate", "columns": [{"name": "Year", "expression": fn("year", col("Date"))}]}
+        for step in (
+            {"op": "calculate", "columns": [{"name": "Year", "expression": lit(2000)}]},
+            {"op": "select", "columns": ["Sales"]},
+            {"op": "aggregate", "metrics": [metric("Year", "count_rows")]},
+        ):
+            with self.subTest(step=step):
+                result = self.run_plan(calculate, step)
+                self.assertEqual(result.attrs.get("date_derivations", {}), {})
+
+    def test_year_text_and_missing_date_labels_preserve_integer_years_and_provenance(self):
+        year = fn("year", col("Date"))
+        self.assertEqual(evaluate_expression(fn("text", year), self.sales).iloc[0], "2024")
+        for expression in (
+            fn("if", fn("is_blank", col("Date")), lit("Unknown"), fn("text", year)),
+            fn("if", fn("is_blank", col("Date")), lit("Unknown"), year),
+            fn("coalesce", fn("text", year), lit("Unknown")),
+        ):
+            with self.subTest(expression=expression):
+                result = self.run_plan({"op": "calculate", "columns": [{"name": "Year", "expression": expression}]})
+                self.assertEqual(str(result["Year"].iloc[0]), "2024")
+                self.assertEqual(result["Year"].iloc[-1], "Unknown")
+                self.assertEqual(result.attrs["date_derivations"]["Year"], {"function": "year", "column": "Date"})
+        result = self.run_plan({"op": "calculate", "columns": [{
+            "name": "Year", "expression": fn("coalesce", year, lit(2026)),
+        }]})
+        self.assertEqual(result.attrs["date_derivations"], {})
+
     def test_conditional_sum_count_average_multiple_nested_conditions(self):
         condition = fn("and", fn("eq", col("Region"), lit(" NORTH ")),
                        fn("or", fn("gt", col("Sales"), lit(15)), fn("not", fn("eq", col("Product"), lit("A")))))
@@ -288,6 +329,34 @@ class WorkbookOperationTests(unittest.TestCase):
             {"op": "aggregate", "metrics": [metric("Distinct", "count_distinct", "Key")]},
         )
         self.assertEqual(combined.iloc[0, 0], 4)
+
+    def test_append_can_explicitly_add_transaction_columns_to_catalog_rows(self):
+        self.sheets["Sales"] = pd.DataFrame({"Product": ["A", "B"]})
+        self.sheets["Products"] = pd.DataFrame({"Code": ["A", "C"], "Quantity": [2, 3]})
+        step = {"op": "append", "sheet": "Products", "columns": [
+            {"column": "Code", "name": "Product"}, {"column": "Quantity", "name": "Quantity"},
+        ]}
+        result = self.run_plan(step)
+        self.assertEqual(list(result), ["Product", "Quantity"])
+        self.assertEqual(result["Product"].tolist(), ["A", "B", "A", "C"])
+        self.assertTrue(result["Quantity"].iloc[:2].isna().all())
+        self.assertEqual(result["Quantity"].iloc[2:].tolist(), [2, 3])
+        with patch("workbook_operations.MAX_CELLS", 5), patch(
+            "workbook_operations.pd.concat", side_effect=AssertionError("Oversized union materialized"),
+        ):
+            with self.assertRaisesRegex(ValueError, "too many rows or cells"):
+                self.run_plan(step)
+
+    def test_select_supports_mixed_headers_aliases_and_literals_without_skipping_validation(self):
+        result = self.run_plan({"op": "select", "columns": [
+            {"column": "Product", "name": "Product Name"}, "Region", {"literal": "Sales", "name": "Source"},
+        ]})
+        self.assertEqual(list(result), ["Product Name", "Region", "Source"])
+        self.assertEqual(result["Product Name"].tolist(), self.sales["Product"].tolist())
+        for columns in (["Product", {"column": "Region", "name": "Product"}],
+                        ["Product", {"column": "Missing"}], ["Product", None]):
+            with self.subTest(columns=columns), self.assertRaises(ValueError):
+                self.run_plan({"op": "select", "columns": columns})
 
     def test_append_rejects_invalid_mappings_and_checks_cardinality_before_concat(self):
         for mapping in (

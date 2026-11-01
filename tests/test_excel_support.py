@@ -85,12 +85,13 @@ class ExcelFileTests(unittest.TestCase):
 
     def test_invalid_headers_empty_sheets_and_extra_cells_are_rejected(self):
         for rows in (
-            [], [("Header",)], [("Name", " name "), ("A", "B")],
+            [], [("Name", " name "), ("A", "B")],
             [(None, "Revenue"), ("West", 10)], [(42,), (1,)],
             [("Name",), ("A", "no header")], [tuple(f"c{i}" for i in range(101))],
         ):
             with self.subTest(rows=rows[:1]), self.assertRaises(ValueError):
                 read_excel_sheet(workbook_bytes({"Sheet": rows}), "Sheet")
+        self.assertEqual(read_excel_sheet(workbook_bytes({"Sheet": [("Header",)]}), "Sheet").shape, (0, 1))
 
     def test_actual_row_limit(self):
         rows = [("Number",)] + [(value,) for value in range(50_001)]
@@ -204,6 +205,28 @@ class ExcelFileTests(unittest.TestCase):
         self.assertIn("Region: North; total Sales: 100.", grouped)
         self.assertNotIn("sum Sales", grouped)
         self.assertIn("No matching rows", spreadsheet_answer(pd.DataFrame()))
+
+    def test_calendar_years_are_not_formatted_as_amounts(self):
+        for column in ("Year", "year", "Sales Year", "joining_year"):
+            with self.subTest(column=column):
+                answer = spreadsheet_answer(pd.DataFrame({column: [2026.0], "Total Sales": [15600]}))
+                self.assertIn("2026", answer)
+                self.assertNotIn("2,026", answer)
+                self.assertNotIn("2026.0", answer)
+                self.assertIn("15,600", answer)
+        self.assertEqual(spreadsheet_answer(pd.DataFrame({"Year": [2026]})), "The Year is 2026.")
+        self.assertEqual(spreadsheet_answer(pd.DataFrame({"Year": ["2026.0"]})), "The Year is 2026.")
+        self.assertIn("2,026", spreadsheet_answer(pd.DataFrame({"Years of service": [2026]})))
+        self.assertIn("not available", spreadsheet_answer(pd.DataFrame({"Year": [None], "Sales": [1]})))
+
+    def test_year_explanation_preserves_unknown_date_labels(self):
+        result = pd.DataFrame({"Year": ["2026.0", "Unknown"], "Total Sales": [2000, 500]})
+        result.attrs["date_derivations"] = {"Year": {"function": "year", "column": "Date"}}
+        answer = spreadsheet_answer(result)
+        self.assertIn("Year: 2026;", answer)
+        self.assertIn("Year: Unknown;", answer)
+        self.assertIn("YEAR(Date)", answer)
+        self.assertIn("Years in this result: 2026.", answer)
 
     def test_region_summary_requires_explicit_confirmation_before_opening(self):
         with patch("excel_support.load_workbook") as load:
@@ -395,7 +418,8 @@ class ExcelChatTests(unittest.TestCase):
         ))
         self.assertEqual(result["Revenue"].tolist(), [10, 30])
         self.assertEqual([event["event"] for event in events], [
-            "planner_requested", "planner_completed", "source_loading", "query_started", "query_completed",
+            "planner_requested", "planner_call_started", "planner_call_completed",
+            "planner_completed", "source_loading", "query_started", "query_completed",
         ])
         self.assertIn("SELECT", events[-2]["sql"])
         self.assertEqual(events[-2]["route"], "sqlite_spreadsheet")
@@ -813,31 +837,20 @@ class ExcelChatTests(unittest.TestCase):
         self.assertIn(("user", "preview"), context)
         self.assertNotIn("Private cell value", str(context))
 
-    def test_region_summary_ui_requires_confirmation_and_offers_both_downloads(self):
+    def test_sidebar_omits_legacy_region_summary_controls(self):
         upload = BytesIO(workbook_bytes())
         upload.name = "sample.xlsx"
         with patch("streamlit.file_uploader", return_value=upload):
             app = employee_app().run(timeout=30)
             app.radio(key="data_source").set_value("Excel workbook").run(timeout=30)
-            create = next(button for button in app.button if button.label == "Create Region_Summary")
-            self.assertTrue(create.disabled)
             cache = app.session_state["excel_workbook"]
-            self.assertEqual(cache["backup"], upload.getvalue())
             self.assertNotIn("region_summary_output", cache)
-            self.assertTrue(any(button.label == "Download original backup" for button in app.get("download_button")))
-            app.checkbox[0].check().run(timeout=30)
-            app.button(key=create.key).click().run(timeout=30)
+            self.assertNotIn("Create region summary", [expander.label for expander in app.expander])
+            self.assertFalse(any(button.label == "Create Region_Summary" for button in app.button))
+            self.assertFalse(any(button.label == "Download original backup" for button in app.get("download_button")))
             self.assertEqual(len(app.exception), 0)
-            cache = app.session_state["excel_workbook"]
-            output = cache["region_summary_output"]
-            self.assertEqual(load_workbook(BytesIO(output)).sheetnames, ["Sales", "Inventory", "Region_Summary"])
-            self.assertEqual(cache["backup"], upload.getvalue())
-            self.assertTrue(any(button.label == "Download workbook with Region_Summary"
-                                for button in app.get("download_button")))
-            app.run(timeout=30)
-            self.assertEqual(app.session_state["excel_workbook"]["region_summary_output"], output)
 
-    def test_region_summary_ui_refuses_to_replace_existing_sheet(self):
+    def test_existing_summary_sheet_remains_available_without_legacy_writer(self):
         upload = BytesIO(workbook_bytes({
             "Sales": [("Region", "Sales"), ("North", 10)],
             "Region_Summary": [("Original",), (99,)],
@@ -846,12 +859,11 @@ class ExcelChatTests(unittest.TestCase):
         with patch("streamlit.file_uploader", return_value=upload):
             app = employee_app().run(timeout=30)
             app.radio(key="data_source").set_value("Excel workbook").run(timeout=30)
-            app.checkbox[0].check().run(timeout=30)
-            create = next(button for button in app.button if button.label == "Create Region_Summary")
-            create.click().run(timeout=30)
             self.assertEqual(len(app.exception), 0)
-            self.assertTrue(any("already exists" in error.value for error in app.error))
             self.assertNotIn("region_summary_output", app.session_state["excel_workbook"])
+            app.selectbox[0].select("Region_Summary").run(timeout=30)
+            self.assertEqual(app.session_state["excel_workbook"]["frame"].iloc[0, 0], 99)
+            self.assertFalse(any(button.label == "Create Region_Summary" for button in app.button))
 
     def test_missing_sales_and_access_errors_display_friendly_ui_messages(self):
         upload = BytesIO(workbook_bytes({"Inventory": [("Product",), ("Widget",)]}))
@@ -860,7 +872,8 @@ class ExcelChatTests(unittest.TestCase):
             app = employee_app().run(timeout=30)
             app.radio(key="data_source").set_value("Excel workbook").run(timeout=30)
             self.assertEqual(len(app.exception), 0)
-            self.assertTrue(any("doesn't have a Sales sheet" in info.value for info in app.info))
+            self.assertEqual(app.selectbox[0].value, "Inventory")
+            self.assertFalse(any("Region_Summary" in info.value for info in app.info))
         locked = BytesIO(workbook_bytes())
         locked.name = "locked.xlsx"
         with patch("streamlit.file_uploader", return_value=locked), patch(

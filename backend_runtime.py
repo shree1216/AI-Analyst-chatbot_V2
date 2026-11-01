@@ -5,7 +5,7 @@ import sys
 from threading import Lock
 
 
-MODULES = ("backend_diagnostics", "excel_support", "workbook_operations", "source_queries")
+MODULES = ("backend_diagnostics", "excel_support", "data_explorer", "workbook_operations", "source_queries", "workbook_charts", "workbook_edits")
 RELOAD_LOCK = Lock()
 LOADED_REVISIONS: dict[str, str] = {}
 

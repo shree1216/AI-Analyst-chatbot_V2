@@ -29,7 +29,8 @@ from openai import (
     APIConnectionError, APIStatusError, APITimeoutError, AuthenticationError,
     AzureOpenAI, BadRequestError, NotFoundError, PermissionDeniedError, RateLimitError,
 )
-from openai.types.chat import ChatCompletionMessageParam
+from openai.types.chat import ChatCompletion, ChatCompletionMessageParam
+from openai.types.chat.completion_create_params import CompletionCreateParamsNonStreaming
 from PIL import Image
 from reportlab.graphics.charts.barcharts import HorizontalBarChart, VerticalBarChart
 from reportlab.graphics.charts.linecharts import HorizontalLineChart
@@ -50,14 +51,27 @@ from backend_runtime import refresh_backend_modules
 refresh_backend_modules()
 
 from excel_support import (
-    EXCEL_MIME, excel_sheet_names, generate_excel_download, query_sales_total, read_excel_sheet,
-    regional_sales_plan, spreadsheet_answer, spreadsheet_schema, write_region_summary,
+    EXCEL_MIME, FORMULA_CACHE_VERSION, append_result_sheet, date_derivation_description, excel_sheet_names, generate_excel_download,
+    is_calendar_year_column, preserve_formula_values, query_sales_total, read_excel_sheet,
+    regional_sales_plan, spreadsheet_answer, spreadsheet_schema,
 )
-from workbook_operations import MAX_SHEETS, execute_workbook_plan
+from workbook_operations import MAX_SHEETS, date_derivations_after_step, execute_workbook_plan
+from workbook_edits import (
+    WorkbookEdit, apply_safe_workbook_clean, apply_workbook_edit, excel_edit_prompt, is_excel_edit_request,
+    local_excel_edit_plan, result_sheet_request, workbook_clean_request,
+)
+from workbook_charts import (
+    apply_excel_chart, apply_excel_dashboard, chart_placement_for_question, excel_chart_analysis_question, excel_chart_prompt,
+    is_excel_chart_request, local_excel_chart_plan,
+)
+from data_explorer import (
+    _find_column, build_charts, chart_presentation_question, charts_answer, csv_to_workbook, data_overview, is_chart_question,
+    is_generic_chart_request, is_overview_request, overview_answer, plan_charts,
+)
 from backend_diagnostics import BackendTrace, diagnostic_log, execution_code_log
 from source_queries import (
     SALES_PLANNING_RULES, SourceMatchError, allows_unmatched_sources, discover_excel_sources, discover_sql_sources, execute_source_plan,
-    local_source_plan, requested_source_kinds, source_mode_for_question, source_planner_prompt,
+    local_source_plan, product_units_plan, requested_source_kinds, source_mode_for_question, source_planner_prompt,
     source_planning_questions,
 )
 
@@ -1408,6 +1422,54 @@ def ai_service_error_message(error: APIConnectionError | APIStatusError) -> str:
     return "The AI service could not be reached or is temporarily unavailable. Please try again."
 
 
+def planner_attempt_count(trace: BackendTrace) -> int:
+    return sum(event["event"] == "planner_call_started" and event["request_id"] == trace.request_id
+               for event in trace.events)
+
+
+def request_json_plan(
+    client: AzureOpenAI, deployment: str, *, messages: list[ChatCompletionMessageParam],
+    trace: BackendTrace | None, route: str, max_completion_tokens: int = 6000,
+) -> ChatCompletion:
+    attempts = planner_attempt_count(trace) if trace else 0
+    reasoning_model = bool(re.fullmatch(r"gpt-5(?:-mini|-nano)?(?:-\d{4}-\d{2}-\d{2})?",
+                                       deployment, re.IGNORECASE))
+    token_budget = 12000 if reasoning_model else max_completion_tokens
+    while attempts < 2:
+        attempts += 1
+        options: CompletionCreateParamsNonStreaming = {
+            "model": deployment, "messages": messages, "max_completion_tokens": token_budget,
+            "response_format": {"type": "json_object"},
+        }
+        if reasoning_model:
+            options["reasoning_effort"] = "low"
+        if trace:
+            trace.record_code("planner_call_started", request_json_plan, route=route, attempt=attempts,
+                              token_budget=token_budget)
+        completion = client.chat.completions.create(**options, timeout=60.0)
+        finish = completion.choices[0].finish_reason if completion.choices else None
+        if trace:
+            usage = getattr(completion, "usage", None)
+            details = getattr(usage, "completion_tokens_details", None)
+            counts = {}
+            for name, value in (
+                ("completion_tokens", getattr(usage, "completion_tokens", None)),
+                ("reasoning_tokens", getattr(details, "reasoning_tokens", None)),
+            ):
+                if isinstance(value, int):
+                    counts[name] = value
+            trace.record("planner_call_completed", route=route, attempt=attempts,
+                         finish_reason=finish, token_budget=token_budget, **counts)
+        if finish != "length" or attempts >= 2:
+            return completion
+        if trace:
+            trace.record("planner_token_retry", route=route, status="retrying",
+                         operation="expand_output_budget", attempt=attempts + 1)
+        if reasoning_model:
+            token_budget *= 2
+    raise ValueError("The two-attempt planning budget was exhausted. No additional AI request was made.")
+
+
 def generate_employee_query(question: str) -> SqlRequest | None:
     trace = SQL_TRACE.get()
 
@@ -1435,11 +1497,8 @@ def generate_employee_query(question: str) -> SqlRequest | None:
         )
 
     try:
-        completion = client.chat.completions.create(
-            model=deployment,
-            max_completion_tokens=3500,
-            timeout=60.0,
-            response_format={"type": "json_object"},
+        completion = request_json_plan(
+            client, deployment, trace=trace, route="azure_employee", max_completion_tokens=3500,
             messages=[
                 {
                     "role": "system",
@@ -1608,6 +1667,8 @@ def filter_description(parameters: dict[str, Any]) -> str:
 def format_value(value: Any, column_name: str) -> str:
     if pd.isna(value):
         return "not available"
+    if is_calendar_year_column(column_name) and isinstance(value, (int, float)) and float(value).is_integer():
+        return f"{int(value):04d}"
     if "salary" in column_name:
         return f"INR {float(value):,.2f}"
     if isinstance(value, float):
@@ -2496,8 +2557,27 @@ def recall_previous_question(messages: list[dict[str, Any]]) -> str:
     return "There are no earlier messages in this chat. I cannot recall conversations from other sessions."
 
 
+COMPOUND_WORKBOOK_CHART = re.compile(
+    r"(?P<command>.+?)(?:\s+and(?:\s+then)?\s+|\s+then\s+|[;,]\s*)"
+    r"(?P<task>(?:draw|make|create|build|generate|show|plot|add|insert|give)\s+.+)",
+    re.I,
+)
+
+
+def split_workbook_chart_command(question: str) -> tuple[tuple[str, str | None], str] | None:
+    match = COMPOUND_WORKBOOK_CHART.fullmatch(question.strip().rstrip("?.!").strip())
+    if match is None or not is_chart_question(match["task"]):
+        return None
+    command = ("open", None) if is_overview_request(match["command"]) else parse_workbook_command(match["command"])
+    if command is None or command[0] == "close":
+        return None
+    return command, match["task"]
+
+
 def parse_workbook_command(question: str) -> tuple[str, str | None] | None:
     normalized = question.strip().rstrip("?.!").strip()
+    if COMPOUND_WORKBOOK_CHART.fullmatch(normalized):
+        return None
     match = re.fullmatch(
         r"(?:please\s+)?(?P<verb>open|show|load|close|unload)\s+(?:the\s+)?"
         r"(?:excel(?:\s+(?:workbook|file))?|workbook)", normalized, re.IGNORECASE,
@@ -2521,6 +2601,54 @@ def resolve_workbook_sheet(target: str, sheet_names: list[str]) -> str | None:
         if match is not None:
             return match
     return None
+
+
+def restore_date_derivations(message: dict[str, Any]) -> None:
+    result = message.get("result")
+    if result is None or "date_derivations" in result.attrs:
+        return
+    derivations: dict[str, dict[str, str]] = {}
+    pending: dict[str, Any] | None = None
+    for event in message.get("backend_log", []):
+        if event["event"] == "source_selected":
+            derivations, pending = {}, None
+        elif event["event"] == "step_started":
+            pending = event
+        elif event["event"] == "step_completed" and pending is not None:
+            if event.get("step") == pending.get("step") and event.get("operation") == pending.get("operation"):
+                derivations = date_derivations_after_step(derivations, pending["details"])
+            pending = None
+    result.attrs["date_derivations"] = {
+        column: value for column, value in derivations.items() if column in result
+    }
+
+
+def explain_previous_calculation(question: str, history: list[dict[str, Any]]) -> str | None:
+    text = question.strip().casefold()
+    if not history or not re.search(r"\b(?:year|month|date|20\d{2}|19\d{2})\b", text):
+        return None
+    if not re.search(
+        r"\bhow\s+(?:did|do|was|were|is)\b.*\b(?:retriev\w*|deriv\w*|calculat\w*|generat\w*|extract\w*|get|got|obtain\w*)\b|"
+        r"\bwhere\s+(?:did|does|is)\b.*\b(?:come|from)\b|"
+        r"\b(?:there\s+is\s+no|there's\s+no|no)\s+(?:year|month|date)\s+column\b|"
+        r"\bwhy\b.*\b(?:show|display|include|return|use|there)\b.*\b(?:year|month|date)\b|"
+        r"\bwhy\s+is\s+(?:(?:the|this|that)\s+)?(?:year|month|date)\b",
+        text,
+    ):
+        return None
+    previous = next(
+        (message for message in reversed(history) if message.get("kind") != "calculation_explanation"), None,
+    )
+    if previous is None or previous.get("error") or previous.get("result") is None:
+        return None
+    restore_date_derivations(previous)
+    description = date_derivation_description(previous["result"])
+    if not description:
+        return (
+            "I cannot verify how the year or month was obtained from the recorded previous calculation. "
+            "A year must come from an actual date or period field, not an assumed current year."
+        )
+    return "This explains the previous result; no new data query was run.\n\n" + description
 
 
 def conversation_context(messages: list[dict[str, Any]]) -> tuple[tuple[str, str], ...]:
@@ -2756,9 +2884,8 @@ def query_excel_sheet(question: str, frame: pd.DataFrame) -> pd.DataFrame:
     try:
         if trace:
             trace.record("planner_requested", route="azure_spreadsheet", schemas=schema)
-        completion = client.chat.completions.create(
-            model=deployment, max_completion_tokens=3500, timeout=60.0,
-            response_format={"type": "json_object"},
+        completion = request_json_plan(
+            client, deployment, trace=trace, route="azure_spreadsheet", max_completion_tokens=3500,
             messages=[
                 {"role": "system", "content": (
                     "Return a JSON spreadsheet query plan, NEVER SQL, Python, or an answer. "
@@ -3013,7 +3140,9 @@ def query_excel_workbook(
         "lookup:{op:'lookup',sheet,left_on:[headers],right_on:[headers],columns:[{column,name}],keep?:'first'|'last'}; "
         "join:{op:'join',sheet,left_on:[headers],right_on:[headers],columns:[{column,name}],how:'left'|'inner'|'right'|'outer'}. "
         "append:{op:'append',sheet,columns:[{column,name} or {literal:JSON_scalar,name}]}; "
-        "append stacks source rows mapped to exactly the current result columns, without joining keys. "
+        "append stacks rows without joining keys. Map every current result column; use literal:null "
+        "when absent from the incoming source. Explicitly mapped new columns are allowed and are null "
+        "for previous rows. Preserve transaction presence separately from catalog-only rows. "
         "Join/lookup output names must not collide with existing columns. Only exact lookups, at most five keys; "
         "use lookup for VLOOKUP/XLOOKUP/INDEX-MATCH requests, first match unless last requested. "
         "Track schema changes after each step: retrieved aliases, calculated names and aggregate metric names "
@@ -3061,9 +3190,8 @@ def query_excel_workbook(
     try:
         if trace:
             trace.record("planner_requested", route="azure", source_sheets=list(schemas), unavailable_sheets=list(unavailable))
-        completion = client.chat.completions.create(
-            model=deployment, max_completion_tokens=6000, timeout=60.0,
-            response_format={"type": "json_object"},
+        completion = request_json_plan(
+            client, deployment, trace=trace, route="azure_workbook",
             messages=[{"role": "system", "content": prompt}, {"role": "user", "content": question}],
         )
     except (APIConnectionError, APIStatusError) as error:
@@ -3074,7 +3202,8 @@ def query_excel_workbook(
     if not completion.choices or completion.choices[0].finish_reason != "stop":
         if trace:
             trace.record("planner_incomplete", status="failed")
-        raise ValueError("The AI service returned an incomplete workbook plan. Please simplify the question and try again.")
+        raise ValueError("The AI service could not finish a complete workbook plan within its response budget. "
+                         "No calculation was run. Please retry.")
     try:
         plan = json.loads(completion.choices[0].message.content or "")
     except (ValueError, TypeError) as error:
@@ -3154,6 +3283,7 @@ def display_excel_response(message: dict[str, Any], render_key: str) -> str | No
             st.warning(message["backend_log_error"])
         return None
     result = message["result"]
+    restore_date_derivations(message)
     preview = result.head(MAX_ROWS)
     answer = spreadsheet_answer(preview)
     if new_trace:
@@ -3164,8 +3294,8 @@ def display_excel_response(message: dict[str, Any], render_key: str) -> str | No
             f"Download Excel includes all {len(result):,} rows."
         )
     st.write(answer)
-    with st.expander("Supporting data"):
-        st.dataframe(preview, hide_index=True, width="stretch")
+    with st.expander("Supporting data", expanded=len(preview.columns) > 6):
+        st.dataframe(preview.style.format(na_rep=""), hide_index=True, width="stretch")
     new_download = "excel_download" not in message
     if new_download:
         trace.record_code("export_started", generate_excel_download, rows=len(result), columns=len(result.columns))
@@ -3185,6 +3315,7 @@ def display_excel_response(message: dict[str, Any], render_key: str) -> str | No
 
 def display_excel_download(
     tables: list[tuple[str, pd.DataFrame]], render_key: str, cache: dict[str, Any],
+    *, label: str = "Download Excel",
 ) -> None:
     if "excel_download" not in cache:
         trace = SQL_TRACE.get()
@@ -3195,7 +3326,7 @@ def display_excel_download(
         if trace:
             trace.record("export_completed", operation="excel", rows=sum(len(table) for _, table in tables))
     st.download_button(
-        "Download Excel", data=cache["excel_download"], file_name="workforce_results.xlsx",
+        label, data=cache["excel_download"], file_name="workforce_results.xlsx",
         mime=EXCEL_MIME, key=f"download_excel_{render_key}", icon=":material/download:",
     )
 
@@ -3490,15 +3621,15 @@ def generate_source_plan(
             )},
         ])
     try:
-        completion = client.chat.completions.create(
-            model=deployment, max_completion_tokens=6000, timeout=60.0,
-            response_format={"type": "json_object"}, messages=messages,
+        completion = request_json_plan(
+            client, deployment, trace=trace, route="automatic", messages=messages,
         )
     except (APIConnectionError, APIStatusError) as error:
         trace.record("planner_failed", route="automatic", error_type=type(error).__name__, status="failed")
         raise ValueError(ai_service_error_message(error)) from error
     if not completion.choices or completion.choices[0].finish_reason != "stop":
-        raise ValueError("The source-selection plan was incomplete. Simplify the question and try again.")
+        raise ValueError("The AI service could not finish a complete source-selection plan within its response budget. "
+                         "No data query was run. Please retry.")
     try:
         plan = json.loads(completion.choices[0].message.content or "")
     except (ValueError, TypeError) as error:
@@ -3509,13 +3640,648 @@ def generate_source_plan(
     return plan
 
 
+def remember_excel_upload(content: bytes, file_name: str) -> dict[str, Any]:
+    digest = sha256(content).hexdigest()
+    workbook = st.session_state.get("excel_workbook")
+    if workbook is None or workbook.get("upload_digest", workbook.get("digest")) != digest:
+        workbook = {"content": content, "file_name": file_name, "digest": digest, "upload_digest": digest}
+        if Path(file_name).suffix.casefold() == ".csv":
+            try:
+                workbook["content"] = csv_to_workbook(content, file_name)
+            except ValueError as error:
+                logger.warning("CSV upload failed: %s", type(error).__name__)
+                workbook.update(content=None, load_error=str(error))
+            else:
+                workbook["digest"] = sha256(workbook["content"]).hexdigest()
+        st.session_state["excel_workbook"] = workbook
+    if workbook.get("edited") and workbook.get("formula_cache_version") != FORMULA_CACHE_VERSION:
+        restored = preserve_formula_values(workbook["original_content"], workbook["content"])
+        if restored != workbook["content"]:
+            workbook["content"] = restored
+            workbook["digest"] = sha256(restored).hexdigest()
+            workbook.pop("sheet", None)
+            workbook.pop("frame", None)
+            logger.info("Recovered unchanged Excel formula results from the original upload.")
+        workbook["formula_cache_preserved"] = True
+        workbook["formula_cache_version"] = FORMULA_CACHE_VERSION
+    return workbook
+
+
+def active_excel_workbook() -> dict[str, Any] | None:
+    upload_key = f"excel_upload_{st.session_state.get('excel_uploader_version', 0)}"
+    upload = st.session_state.get(upload_key)
+    if upload is not None:
+        return remember_excel_upload(upload.getvalue(), upload.name)
+    workbook = st.session_state.get("excel_workbook")
+    if workbook is not None and workbook.get("edited") and workbook.get("formula_cache_version") != FORMULA_CACHE_VERSION:
+        return remember_excel_upload(workbook["original_content"], workbook["file_name"])
+    return workbook
+
+
+def edited_workbook_state(
+    workbook: dict[str, Any], content: bytes, sheet: str, base_digest: str,
+) -> dict[str, Any]:
+    if active_excel_workbook() is not workbook or workbook["digest"] != base_digest:
+        raise ValueError("The workbook changed while the edit was being prepared. No edit was applied; retry the current workbook.")
+    original = workbook.get("original_content", workbook["content"])
+    return {
+        "content": content, "file_name": workbook["file_name"], "digest": sha256(content).hexdigest(),
+        "upload_digest": workbook.get("upload_digest", base_digest), "original_content": original,
+        "backup": original, "edited": True, "formula_cache_preserved": True,
+        "formula_cache_version": FORMULA_CACHE_VERSION, "requested_sheet": sheet,
+        "preview_sheet": sheet, "sheets": excel_sheet_names(content),
+    }
+
+
+def uploaded_data_message(question: str, enabled: bool) -> dict[str, Any] | None:
+    compound = split_workbook_chart_command(question)
+    task = compound[1] if compound else question
+    native = is_excel_chart_request(task)
+    analysis_question = chart_presentation_question(excel_chart_analysis_question(chart_presentation_question(task)))
+    generic = is_generic_chart_request(analysis_question)
+    dashboard = generic and (native or bool(re.search(r"\bdashboard\b", task, re.I)))
+    target = compound[0][1] if compound else None
+    full_analysis_question = analysis_question
+    named = None if compound else re.fullmatch(
+        r"(?P<task>.+?)\s+(?P<preposition>for|from|using|of|on)\s+(?:the\s+)?"
+        r"(?P<sheet_keyword>(?:work)?sheet\s+)?(?P<target>.+)",
+        analysis_question, re.I,
+    )
+    if named and is_generic_chart_request(named["task"]):
+        target, analysis_question = named["target"], named["task"]
+        generic = True
+        dashboard = dashboard or native or bool(re.search(r"\bdashboard\b", task, re.I))
+    if (
+        not enabled or "sql" in requested_source_kinds(question)
+        or (native and not (generic or compound))
+        or (is_excel_edit_request(question) and not (native or compound))
+        or result_sheet_request(question) is not None
+        or not (is_overview_request(question) or is_chart_question(analysis_question))
+    ):
+        return None
+    workbook = active_excel_workbook()
+    if workbook is None:
+        if not (is_overview_request(question) or generic or compound):
+            return None
+        return {
+            "kind": "uploaded_data", "question": question,
+            "error": "Upload an Excel (.xlsx) or CSV file and choose a worksheet first.",
+        }
+    message = {
+        "kind": "uploaded_data", "question": question, "analysis_question": analysis_question,
+        "dashboard": dashboard or bool(compound), "native_dashboard": native,
+        "generic_charts": generic,
+    }
+    try:
+        if workbook.get("load_error") and (workbook.get("content") is None or target is None):
+            if workbook.get("content") is not None and not (
+                is_overview_request(question) or generic or compound
+            ):
+                return None
+            raise ValueError(workbook["load_error"])
+        sheets = workbook.get("sheets") or excel_sheet_names(workbook["content"])
+        sheet = workbook.get("preview_sheet", workbook.get("sheet", sheets[0]))
+        frame = None
+        if target is not None:
+            selected = sheet if target.strip("\"'").casefold() == workbook["file_name"].casefold() else (
+                resolve_workbook_sheet(target, sheets)
+            )
+            if (
+                selected is None and named is not None and named["sheet_keyword"] is None
+                and named["preposition"].casefold() not in {"from", "using"}
+            ):
+                frame = read_excel_sheet(workbook["content"], sheet)
+                if _find_column(target, list(frame.columns)) is not None:
+                    target, selected, analysis_question, generic = None, sheet, full_analysis_question, False
+                    message.update(analysis_question=analysis_question, generic_charts=False)
+            if selected is None:
+                raise ValueError(f"I couldn't find worksheet {target}. Available worksheets: {', '.join(sheets)}.")
+            sheet = selected
+        if frame is None:
+            if workbook.get("sheet") == sheet and not workbook.get("frame_preview_only", True):
+                frame = workbook["frame"]
+            else:
+                frame = read_excel_sheet(workbook["content"], sheet)
+        specs = None if is_overview_request(question) else plan_charts(analysis_question, frame)
+        if not is_overview_request(question) and specs is None:
+            if compound:
+                raise ValueError(
+                    "The worksheet was found, but this chart request needs a supported measure and grouping. "
+                    "Try 'make a dashboard' or 'show average Salary by Department'. No workbook was changed."
+                )
+            if not (generic or frame.empty):
+                return None
+            raise ValueError("This worksheet has no data to chart. Choose a worksheet with data rows.")
+        if target is not None:
+            workbook["requested_sheet"] = sheet
+            workbook["preview_sheet"] = sheet
+            workbook["sheet_widget_version"] = workbook.get("sheet_widget_version", 0) + 1
+            message["refresh_sidebar"] = True
+        message.update(
+            frame=frame, chart_specs=specs, source=f"{workbook['file_name']} / {sheet}", source_sheet=sheet,
+            file_name=workbook["file_name"], edit_base_digest=workbook["digest"],
+            workbook_content=workbook["content"],
+            chart_placement=chart_placement_for_question(
+                question, st.session_state.get("excel_chart_placement", "same_sheet"),
+            ),
+        )
+    except ValueError as error:
+        logger.warning("Uploaded data exploration failed: %s", type(error).__name__)
+        message["error"] = str(error)
+    return message
+
+
+def display_uploaded_data(message: dict[str, Any], render_key: str) -> str | None:
+    if "answer" not in message and "error" not in message:
+        trace = BackendTrace(message.setdefault("backend_log", []))
+        message["request_id"] = trace.request_id
+        trace.record("request_started", route="uploaded_data")
+        try:
+            frame = message["frame"]
+            specs = message["chart_specs"]
+            if specs is None:
+                summary = data_overview(frame)
+                message.update(result=frame, summary=summary, answer=overview_answer(frame, summary, message["source"]))
+                trace.record_code("result_ready", data_overview, rows=len(frame), columns=len(frame.columns))
+            else:
+                charts, problems = build_charts(frame, specs)
+                message["chart_problems"] = problems
+                if not charts:
+                    raise ValueError(
+                        " ".join(problems) or
+                        "No useful charts could be built. Choose a sheet with numeric, category or date columns."
+                    )
+                message.update(
+                    charts=charts, answer=charts_answer(charts, message.get("generic_charts", False)),
+                )
+                summary = data_overview(frame)
+                if message.get("dashboard"):
+                    message.update(
+                        dashboard_summary=summary, dashboard_rows=len(frame), dashboard_columns=len(frame.columns),
+                        dashboard_missing=int(summary["Missing values"].sum()),
+                    )
+                exported = apply_excel_dashboard(
+                    message["workbook_content"], message["source_sheet"],
+                    [(chart.title, chart.table, chart.chart_type) for chart in charts],
+                    source_rows=len(frame), source_columns=len(frame.columns),
+                    missing_values=int(summary["Missing values"].sum()), placement=message["chart_placement"],
+                    trace=trace,
+                )
+                message.update(
+                    dashboard_workbook=exported.content, dashboard_sheet=exported.sheet,
+                    excel_download=exported.content,
+                )
+                if message.get("native_dashboard"):
+                    workbook = active_excel_workbook()
+                    if workbook is None or workbook.get("content") is None:
+                        raise ValueError("The workbook was unloaded. Upload it again before building a dashboard.")
+                    if workbook["digest"] != message["edit_base_digest"]:
+                        raise ValueError("The workbook changed after this dashboard was requested. Retry the current workbook.")
+                    updated = edited_workbook_state(
+                        workbook, exported.content, message["source_sheet"], message["edit_base_digest"],
+                    )
+                    message.update(
+                        dashboard_workbook=exported.content, dashboard_sheet=exported.sheet,
+                        original_workbook=updated["original_content"],
+                    )
+                    message["answer"] += (
+                        f"\n\nAdded {len(charts)} native Excel charts and their supporting tables to "
+                        f"'{exported.sheet}'. Download the Excel dashboard to open it in Excel. "
+                        "Existing data cells and your original upload were not changed."
+                    )
+                    st.session_state["excel_workbook"] = updated
+                    message["refresh_sidebar"] = True
+                trace.record_code("result_ready", build_charts, rows=len(frame), columns=len(frame.columns))
+            trace.record("request_completed", route="uploaded_data", status="success")
+        except ValueError as error:
+            logger.warning("Uploaded data chart failed: %s", type(error).__name__)
+            message.pop("answer", None)
+            for key in ("dashboard_workbook", "excel_download", "dashboard_sheet"):
+                message.pop(key, None)
+            message["error"] = str(error)
+            trace.record("request_failed", route="uploaded_data", status="failed", error_type=type(error).__name__)
+        finally:
+            if "answer" in message or "error" in message:
+                message.pop("frame", None)
+                message.pop("chart_specs", None)
+                message.pop("workbook_content", None)
+            if trace.file_error:
+                message["backend_log_error"] = trace.file_error
+        if "answer" in message and message.pop("refresh_sidebar", False):
+            st.rerun()
+    if message.get("backend_log_error"):
+        st.warning(message["backend_log_error"])
+    if message.get("error"):
+        st.warning(message["error"])
+        if st.button("Retry question", key=f"retry_uploaded_data_{render_key}"):
+            replacement = uploaded_data_message(message["question"], True)
+            if replacement is not None:
+                message.clear()
+                message.update(replacement)
+            else:
+                message["error"] = "The selected worksheet cannot answer this chart request. Check its columns."
+            st.rerun()
+        return None
+    st.caption("Sources used: " + message["source"] + ".")
+    if "summary" in message:
+        st.write(message["answer"])
+        result = message["result"]
+        left, right = st.columns(2)
+        left.metric("Rows", f"{len(result):,}")
+        right.metric("Columns", f"{len(result.columns):,}")
+        st.dataframe(result, hide_index=True, width="stretch", height=400)
+        st.subheader("Column summary")
+        st.dataframe(message["summary"], hide_index=True, width="stretch")
+        tables = [("Data", result), ("Column summary", message["summary"])]
+    else:
+        charts = message["charts"]
+        if message.get("dashboard"):
+            st.subheader(f"{message['source_sheet']} dashboard")
+            metrics = st.columns(4)
+            for column, (label, value) in zip(metrics, (
+                ("Rows", message["dashboard_rows"]), ("Columns", message["dashboard_columns"]),
+                ("Missing values", message["dashboard_missing"]), ("Charts", len(charts)),
+            )):
+                column.metric(label, f"{value:,}")
+        if message.get("generic_charts"):
+            st.write(f"I looked at the columns and made {len(charts)} useful chart(s).")
+        tables = [(chart.title, chart.table) for chart in charts]
+
+        def render_chart(index: int) -> None:
+            chart = charts[index]
+            st.plotly_chart(chart.figure, width="stretch", key=f"uploaded_chart_{render_key}_{index}")
+            st.dataframe(chart.table, hide_index=True, width="stretch")
+            st.write(chart.explanation)
+            if chart.note:
+                st.warning(chart.note)
+
+        if message.get("dashboard"):
+            dashboard_tab, tables_tab, summary_tab = st.tabs(["Dashboard", "Supporting tables", "Data summary"])
+            with dashboard_tab:
+                for start in range(0, len(charts), 2):
+                    columns = st.columns(2)
+                    for index in range(start, min(start + 2, len(charts))):
+                        with columns[index - start]:
+                            render_chart(index)
+            with tables_tab:
+                for chart in charts:
+                    st.subheader(chart.title)
+                    st.dataframe(chart.table, hide_index=True, width="stretch")
+            with summary_tab:
+                st.dataframe(message["dashboard_summary"], hide_index=True, width="stretch")
+            tables.append(("Column summary", message["dashboard_summary"]))
+        else:
+            for index in range(len(charts)):
+                render_chart(index)
+        for problem in message.get("chart_problems", []):
+            st.warning(problem)
+        if message.get("dashboard_workbook"):
+            st.caption(
+                f"Excel export: {len(charts)} native charts and supporting tables "
+                + ("beside the original data in " if message.get("chart_placement") == "same_sheet" else "on tab ")
+                + f"'{message['dashboard_sheet']}'. Existing data cells are unchanged."
+            )
+            st.download_button(
+                "Download Excel with charts", data=message["dashboard_workbook"], mime=EXCEL_MIME,
+                file_name=f"{Path(message['file_name']).stem}_charts.xlsx",
+                key=f"dashboard_download_{render_key}",
+            )
+        display_excel_download(
+            tables, f"chart_tables_{render_key}", message.setdefault("supporting_table_export", {}),
+            label="Download supporting tables only",
+        )
+    if "summary" in message:
+        display_excel_download(tables, render_key, message)
+    return message["answer"]
+
+
+def generate_excel_edit_plan(
+    client: AzureOpenAI, deployment: str, prompt: str, question: str, trace: BackendTrace,
+    previous_plan: Any = None, validation_error: str | None = None,
+) -> Any:
+    messages: list[ChatCompletionMessageParam] = [
+        {"role": "system", "content": prompt}, {"role": "user", "content": question},
+    ]
+    if validation_error:
+        messages.extend([
+            {"role": "assistant", "content": json.dumps(previous_plan)},
+            {"role": "user", "content": (
+                f"The validator rejected the plan: {validation_error}. No workbook was changed. "
+                "Correct the complete plan while preserving all requested conditions and tie breakers. "
+                "Use exactly understood, unhandled_conditions, sheet and steps; saving is automatic. "
+                "Top N marking does not require sorting: use rank with method first, add_column with "
+                "IF(rank<=N,value,null), and delete the scratch rank. Preserve original row order and formula "
+                "coordinates. Do not filter, sort or limit unless explicitly requested in this question. "
+                "Use staff joining dates only for a tie breaker explicitly requested in the CURRENT question; "
+                "do not inherit conditions from earlier questions. Otherwise ties use existing worksheet order. "
+                "For explicit row numbers, use add_column with row_numbers and the requested expression; "
+                "other new cells stay blank. Do not sort/filter/re-rank those rows or move protected rows, "
+                "even if the listed rows are described parenthetically as top N. Preserve all original cells. "
+                "Recheck refusals against the actual schemas. Lookup keys automatically ignore text case "
+                "and outer whitespace on BOTH sides, so use Salesperson -> Name directly when available. "
+                "A shared Staff ID or an added normalized-name column is not required. Do not modify staff. "
+                "Optional fields use their exact JSON names, never names ending with a question mark; "
+                "keep is valid only for lookup, not join. Actual matches are verified by the validator. "
+                "If required data is missing, return understood:false and a specific reason."
+            )},
+        ])
+    try:
+        completion = request_json_plan(client, deployment, messages=messages, trace=trace, route="excel_edit")
+    except (APIConnectionError, APIStatusError) as error:
+        raise ValueError(ai_service_error_message(error)) from error
+    if not completion.choices or completion.choices[0].finish_reason != "stop":
+        raise ValueError("The AI did not finish a complete Excel edit plan. No workbook was changed.")
+    try:
+        result = json.loads(completion.choices[0].message.content or "")
+    except (ValueError, TypeError) as error:
+        raise ValueError("The AI returned invalid JSON for the Excel edit. No workbook was changed.") from error
+    trace.record("planner_received", route="excel_edit", plan=result, status="validating")
+    return result
+
+
+def build_excel_chart(
+    question: str, content: bytes, sources: dict[str, Any], schemas: dict[str, dict[str, str]],
+    selected_sheet: str, trace: BackendTrace,
+):
+    placement = chart_placement_for_question(question, st.session_state.get("excel_chart_placement", "same_sheet"))
+    proposed = local_excel_chart_plan(question, schemas, selected_sheet)
+    if proposed is not None:
+        try:
+            return apply_excel_chart(content, proposed, trace=trace, placement=placement)
+        except ValueError as error:
+            local_error = str(error)
+            trace.record("local_chart_plan_rejected", route="excel_chart", error_type=type(error).__name__)
+    else:
+        local_error = None
+    deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT_MINI", "")
+    client = get_azure_openai_client() if deployment else None
+    if client is None:
+        raise ValueError(local_error or (
+            "This chart request needs Azure OpenAI configuration. Without AI, ask in the form "
+            "\"Add a column chart of total Amount by Region in the workbook\" using exact column names."
+        ))
+    messages: list[ChatCompletionMessageParam] = [
+        {"role": "system", "content": excel_chart_prompt([source.metadata() for source in sources.values()], selected_sheet)},
+        {"role": "user", "content": question},
+    ]
+    while True:
+        try:
+            completion = request_json_plan(client, deployment, messages=messages, trace=trace, route="excel_chart")
+        except (APIConnectionError, APIStatusError) as error:
+            raise ValueError(ai_service_error_message(error)) from error
+        if not completion.choices or completion.choices[0].finish_reason != "stop":
+            raise ValueError("The AI did not finish a complete chart plan. No chart was added.")
+        reply = completion.choices[0].message.content or ""
+        try:
+            plan = json.loads(reply)
+        except (ValueError, TypeError) as error:
+            raise ValueError("The AI returned an invalid chart plan. No chart was added.") from error
+        trace.record("planner_received", route="excel_chart", plan=plan, status="validating")
+        try:
+            return apply_excel_chart(content, plan, trace=trace, placement=placement)
+        except ValueError as error:
+            if planner_attempt_count(trace) >= 2:
+                raise
+            trace.record("planner_repair_requested", route="excel_chart", status="retrying",
+                         error_type=type(error).__name__)
+            messages.extend([
+                {"role": "assistant", "content": reply},
+                {"role": "user", "content": (
+                    f"The validator rejected the chart plan: {error} Correct the complete plan using exact headers "
+                    "from the worksheet schemas and exactly the required keys."
+                )},
+            ])
+
+
+def display_excel_edit(message: dict[str, Any], render_key: str) -> str | None:
+    if "answer" not in message and "error" not in message:
+        trace = BackendTrace(message.setdefault("backend_log", []))
+        message["request_id"] = trace.request_id
+        trace.record("request_started", route="excel_edit")
+        try:
+            if "sql" in requested_source_kinds(message["question"]) or (
+                message.get("sql_only") and st.session_state.get("data_source") == "Employee database"
+            ):
+                raise ValueError(
+                    "Excel charts are built from uploaded Excel workbooks only. SQL remains read-only."
+                    if message.get("kind") == "excel_chart"
+                    else "Safe cleanup is enabled for uploaded Excel and CSV files only. SQL remains read-only."
+                    if message.get("kind") == "excel_clean"
+                    else "Row and column edits are enabled for uploaded Excel workbooks only. SQL remains read-only."
+                )
+            workbook = active_excel_workbook()
+            if workbook is None or workbook.get("content") is None:
+                upload_error = (
+                    "Upload an Excel or CSV file before cleaning a table." if message.get("kind") == "excel_clean"
+                    else "Upload an Excel workbook before adding a chart." if message.get("kind") == "excel_chart"
+                    else "Upload an Excel workbook before changing worksheets."
+                )
+                raise ValueError(
+                    workbook.get("load_error", upload_error) if workbook else upload_error
+                )
+            base_digest = message.setdefault("edit_base_digest", workbook["digest"])
+            if base_digest != workbook["digest"]:
+                raise ValueError("The active workbook changed after this edit was requested. Retry to edit the current working copy.")
+            content = workbook["content"]
+            sources, unavailable = discover_excel_sources(content, trace)
+            if not sources:
+                raise ValueError("No worksheet can be edited. " + " ".join(unavailable))
+            schemas = {source.label: source.schema for source in sources.values()}
+            selected_sheet = workbook.get("preview_sheet", workbook.get("sheet", next(iter(schemas))))
+            sheet_request = result_sheet_request(message["question"]) if message.get("kind") == "excel_sheet_result" else None
+            if sheet_request is not None:
+                calculation, requested_title = sheet_request
+                selected_frame = read_excel_sheet(content, selected_sheet) if selected_sheet in schemas else None
+                result = query_excel_workbook(calculation, selected_frame, content, selected_sheet, trace=trace)
+                source_sheets = result.attrs.get("source_sheets") or [selected_sheet]
+                regional = {"region", "total sales"} <= {str(column).strip().casefold() for column in result.columns}
+                title = requested_title or ("total_sales_by region" if regional else "Results")
+                saved, title = append_result_sheet(content, result, title, after_sheet=source_sheets[0])
+                edited = WorkbookEdit(saved, title, result, 0, 0)
+                message["source_sheets"] = source_sheets
+                trace.record_code("result_sheet_saved", append_result_sheet, generate_excel_download,
+                                  sheet=title, rows=len(result), columns=len(result.columns), status="validated")
+            elif message.get("kind") == "excel_chart":
+                chart = build_excel_chart(message["question"], content, sources, schemas, selected_sheet, trace)
+                edited = WorkbookEdit(chart.content, chart.sheet, chart.frame, 0, 0)
+                message.update(source_sheets=[chart.source_sheet], chart_type=chart.chart_type, chart_title=chart.title)
+            elif message.get("kind") == "excel_clean":
+                request = workbook_clean_request(message["question"])
+                if request is None:
+                    raise ValueError("This cleanup request could not be understood. No workbook was changed.")
+                target = selected_sheet if request.target is None else resolve_workbook_sheet(request.target, list(schemas))
+                if target is None:
+                    raise ValueError(
+                        f"I couldn't find worksheet {request.target}. Available worksheets: {', '.join(schemas)}. "
+                        "No data was cleaned."
+                    )
+                cleaned = apply_safe_workbook_clean(content, target, trace=trace)
+                edited = WorkbookEdit(cleaned.content, target, cleaned.frame, len(cleaned.frame), len(cleaned.frame.columns))
+                message.update(
+                    source_sheets=[target], cleanup_summary=cleaned.summary, cleaned_cells=cleaned.changed_cells,
+                    cleanup_protected_cells=cleaned.protected_cells, cleanup_ambiguous_values=cleaned.ambiguous_values,
+                    cleanup_blank_rows=int(cleaned.frame.isna().all(axis=1).sum()),
+                )
+            else:
+                prompt = excel_edit_prompt([source.metadata() for source in sources.values()], selected_sheet)
+                proposed = local_excel_edit_plan(message["question"], schemas, selected_sheet)
+                client = None
+                deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT_MINI", "")
+                failure: str | None = None
+                while True:
+                    if proposed is None or failure:
+                        client = client or get_azure_openai_client()
+                        if client is None or not deployment:
+                            raise ValueError(
+                                failure or "This Excel edit needs Azure OpenAI configuration. "
+                                "Simple named-column additions/deletions and numbered-row deletions also work without AI."
+                            )
+                        proposed = generate_excel_edit_plan(
+                            client, deployment, prompt, message["question"], trace, proposed, failure,
+                        )
+                    try:
+                        edited = apply_workbook_edit(content, proposed, trace=trace)
+                        break
+                    except ValueError as error:
+                        if planner_attempt_count(trace) >= 2 or not deployment:
+                            raise
+                        failure = str(error)
+                        trace.record("planner_repair_requested", route="excel_edit", status="retrying",
+                                     error_type=type(error).__name__)
+            updated = edited_workbook_state(workbook, edited.content, edited.sheet, base_digest)
+            original = updated["original_content"]
+            updated_digest = updated["digest"]
+            answer = (
+                f"Updated {edited.sheet} in the active Excel working copy: "
+                f"{len(edited.frame):,} worksheet rows (excluding the header) and {len(edited.frame.columns):,} columns. "
+                "Your original file and SQL tables were not changed."
+            )
+            if sheet_request is not None:
+                answer = (
+                    f"Saved the answer in a new worksheet named {edited.sheet}, beside {source_sheets[0]}. "
+                    "Existing worksheets and your original upload were not overwritten.\n\n"
+                    + spreadsheet_answer(edited.frame.head(MAX_ROWS))
+                )
+            elif message.get("kind") == "excel_chart":
+                aggregate = {
+                    "sum": "summed", "average": "averaged", "count": "counted", "min": "minimum values",
+                    "max": "maximum values", "none": "one point per row",
+                }[chart.aggregate]
+                answer = (
+                    f"Added a native Excel {chart.chart_type} chart, \"{chart.title}\", "
+                    + (f"beside the source data in worksheet {chart.sheet}"
+                       if chart.sheet == chart.source_sheet else f"on a new worksheet named {chart.sheet}")
+                    + f" ({len(chart.frame):,} categories from {chart.source_sheet}, {aggregate}). "
+                    "The supporting data is beside the chart; existing data cells, PivotTables, slicers and formulas "
+                    "were left unchanged. Download the updated workbook to open it in Excel."
+                    + "".join(f"\n\n{note}" for note in chart.notes)
+                )
+            elif message.get("kind") == "excel_clean":
+                answer = (
+                    f"Cleaned {cleaned.changed_cells:,} cells in {edited.sheet} using safe cleanup. "
+                    if cleaned.changed_cells else f"No cell changes were needed in {edited.sheet}. "
+                ) + (
+                    f"Kept all {len(edited.frame):,} source rows. Cleanup trims surrounding whitespace, blanks missing "
+                    "placeholders, normalizes category capitalization, and standardizes unambiguous numbers/dates. "
+                    "IDs, names, emails, formulas, charts and images were preserved; ambiguous values were not guessed. "
+                    "Duplicate rows and department abbreviations were not merged. "
+                    "The original upload and SQL tables were not changed."
+                )
+            message.update(
+                result=edited.frame, answer=answer, edited_workbook=edited.content,
+                original_workbook=original, file_name=workbook["file_name"], edited_sheet=edited.sheet,
+            )
+            st.session_state["excel_workbook"] = updated
+            trace.record_code("working_copy_saved", display_excel_edit, remember_excel_upload,
+                              active_excel_workbook, route="excel_edit", workbook_id=updated_digest[:12],
+                              rows=len(edited.frame), columns=len(edited.frame.columns), status="success")
+            trace.record("request_completed", route="excel_edit", status="success")
+        except ValueError as error:
+            message["error"] = str(error)
+            trace.record("request_failed", route="excel_edit", error_type=type(error).__name__, status="failed")
+        if trace.file_error:
+            message["backend_log_error"] = trace.file_error
+        if "answer" in message:
+            st.rerun()
+    if message.get("backend_log_error"):
+        st.warning(message["backend_log_error"])
+    if message.get("error"):
+        st.warning(message["error"])
+        if st.button("Retry edit", key=f"retry_edit_{render_key}"):
+            for key in ("error", "edit_base_digest"):
+                message.pop(key, None)
+            st.rerun()
+        return None
+    st.caption(f"Sources used: EXCEL: {', '.join(message.get('source_sheets', [message['edited_sheet']]))}.")
+    st.write(message["answer"])
+    if message.get("kind") == "excel_clean":
+        st.subheader("Cleanup summary")
+        st.dataframe(message["cleanup_summary"], hide_index=True, width="stretch")
+        if message.get("cleanup_ambiguous_values"):
+            st.warning(
+                f"{message['cleanup_ambiguous_values']:,} ambiguous or unparseable values were kept unchanged. "
+                "Check those columns before choosing a date convention or numeric format."
+            )
+        if message.get("cleanup_protected_cells"):
+            st.caption(f"Preserved {message['cleanup_protected_cells']:,} formula, rich-text or metadata cells.")
+        if message.get("cleanup_blank_rows"):
+            st.caption(
+                f"{message['cleanup_blank_rows']:,} source rows are now completely blank and remain in the workbook. "
+                "As before, entirely blank rows are excluded from subsequent chart and query analysis."
+            )
+    if message.get("kind") == "excel_chart" and len(message["result"].columns) == 2:
+        preview_type = {"doughnut": "donut", "area": "line", "scatter": "line"}.get(message["chart_type"], message["chart_type"])
+        preview = create_query_chart(message["result"], message["chart_title"], str(message["result"].columns[1]), preview_type)
+        if preview is not None:
+            st.plotly_chart(preview, key=f"excel_chart_preview_{render_key}", use_container_width=True,
+                            config={"displayModeBar": False})
+    label = {"excel_sheet_result": "Saved result", "excel_chart": "Chart data"}.get(message.get("kind"), "Updated worksheet")
+    with st.expander(label, expanded=message.get("kind") == "excel_sheet_result"):
+        st.dataframe(message["result"].head(MAX_ROWS).style.format(na_rep=""), hide_index=True, width="stretch")
+    stem = Path(message["file_name"]).stem
+    st.download_button(
+        "Download updated workbook", data=message["edited_workbook"], file_name=f"{stem}_edited.xlsx",
+        mime=EXCEL_MIME, key=f"edit_download_{render_key}",
+    )
+    st.download_button(
+        "Download original backup", data=message["original_workbook"], file_name=f"{stem}_original.xlsx",
+        mime=EXCEL_MIME, key=f"edit_original_{render_key}",
+    )
+    return message["answer"]
+
+
+def prepare_automatic_workbook(
+    message: dict[str, Any], workbook: dict[str, Any] | None, *, retry_failed: bool = False,
+) -> None:
+    if (
+        message.get("sql_only") or requested_source_kinds(message["question"]) == {"sql"}
+        or "answer" in message
+    ):
+        return
+    content = workbook.get("content") if workbook else None
+    if "error" in message:
+        if not retry_failed or content is None:
+            return
+        if sha256(content).hexdigest() == message.get("source_workbook_digest"):
+            return
+        for key in ("error", "answer", "result", "excel_download", "source_labels", "source_warnings"):
+            message.pop(key, None)
+        message["workbook_content"] = content
+    elif message.get("workbook_content") is None and content is not None:
+        message["workbook_content"] = content
+
+
 def display_automatic_message(
     message: dict[str, Any], render_key: str, prior_turns: tuple[tuple[str, str], ...] = (),
 ) -> str | None:
     if message.get("employee_report"):
         return display_employee_message(message, render_key, prior_turns)
     sql_only = message.get("sql_only", False)
+    workbook = None if sql_only or requested_source_kinds(message["question"]) == {"sql"} else active_excel_workbook()
+    prepare_automatic_workbook(message, workbook)
     if "answer" not in message and "error" not in message:
+        content = message.get("workbook_content")
+        message["source_workbook_digest"] = sha256(content).hexdigest() if content is not None else None
         trace = BackendTrace(message.setdefault("backend_log", []))
         message["request_id"] = trace.request_id
         trace.record("request_started", route="automatic", operation="source_selection")
@@ -3539,6 +4305,9 @@ def display_automatic_message(
                         "Choose Automatic (SQL + Excel) to combine SQL and Excel, or Excel workbook for Excel only."
                     )
                 requested_kinds = {"sql"}
+            trace.record("workbook_resolved", route="automatic",
+                         status="not_requested" if requested_kinds == {"sql"}
+                         else "attached" if content is not None else "absent")
             if requested_kinds != {"excel"}:
                 try:
                     with get_demo_query_lock() if DATA_MODE == "demo" else nullcontext():
@@ -3548,9 +4317,13 @@ def display_automatic_message(
                 except SQLAlchemyError as error:
                     trace.record("schema_discovery_failed", route="sql", error_type=type(error).__name__, status="unavailable")
                     unavailable.append("SQL is unavailable. SQL actual values cannot be queried or compared.")
-            content = message.get("workbook_content")
             if content is not None and not sql_only and requested_kinds != {"sql"}:
                 excel_sources, excel_unavailable = discover_excel_sources(content, trace)
+                if not excel_sources:
+                    raise ValueError(
+                        "The workbook is uploaded, but none of its worksheets can be read. "
+                        + " ".join(excel_unavailable)
+                    )
                 sources.update(excel_sources)
                 unavailable.extend(excel_unavailable)
             elif content is None and not sql_only:
@@ -3569,17 +4342,17 @@ def display_automatic_message(
             )
             plan = local_source_plan(message["question"], sources, requested_kinds)
             if plan is not None:
-                trace.record_code("planner_received", local_source_plan, regional_sales_plan,
-                                  route="local_regional_sales", status="validating", plan=plan)
+                trace.record_code("planner_received", local_source_plan, regional_sales_plan, product_units_plan,
+                                  route="local_source_summary", status="validating", plan=plan)
             else:
                 trace.record_code("planner_requested", generate_source_plan, route="automatic",
                                   source_sheets=[source.label for source in sources.values()])
                 plan = generate_source_plan(
                     client, deployment, system_prompt, message["question"], trace, prior_turns=prior_turns,
                 )
-            planning_repaired = False
+            planning_repaired = planner_attempt_count(trace) >= 2
             if (
-                plan["mode"] == "clarification" and plan["sql"] == [] and plan["excel"] == []
+                not planning_repaired and plan["mode"] == "clarification" and plan["sql"] == [] and plan["excel"] == []
                 and plan["calculation"] is None and sources and not message["source_warnings"]
                 and requested_kinds <= {source.kind for source in sources.values()}
             ):
@@ -3642,7 +4415,7 @@ def display_automatic_message(
                 try:
                     result, labels = execute_plan(plan)
                 except ValueError as error:
-                    if planning_repaired:
+                    if planning_repaired or isinstance(error, SourceMatchError):
                         raise
                     trace.record("planner_repair_requested", route="automatic",
                                  error_type=type(error).__name__, status="retrying")
@@ -3651,8 +4424,6 @@ def display_automatic_message(
                         previous_plan=plan, validation_error=str(error),
                         prior_turns=prior_turns,
                     )
-                    if isinstance(error, SourceMatchError) and repaired["mode"] != "data":
-                        raise error
                     if repaired["mode"] == "clarification" and isinstance(repaired["message"], str) and repaired["message"].strip():
                         raise ValueError(repaired["message"][:1500]) from error
                     result, labels = execute_plan(repaired)
@@ -3691,7 +4462,8 @@ def display_automatic_message(
             )
         finally:
             SQL_TRACE.reset(token)
-            message.pop("workbook_content", None)
+            if "answer" in message or "error" in message:
+                message.pop("workbook_content", None)
             if completed:
                 trace.record("request_completed", route="automatic", status="success")
             if trace.file_error:
@@ -3710,16 +4482,31 @@ def display_automatic_message(
         ):
             for key in ("error", "answer", "result", "excel_download", "source_labels", "source_warnings"):
                 message.pop(key, None)
-            workbook = None if sql_only else st.session_state.get("excel_workbook")
+            workbook = None if sql_only else active_excel_workbook()
             message["workbook_content"] = workbook.get("content") if workbook else None
+            if is_excel_chart_request(message["question"]):
+                message["kind"] = "excel_chart"
+                message.pop("edit_base_digest", None)
+            elif is_excel_edit_request(message["question"]):
+                message["kind"] = "excel_clean" if workbook_clean_request(message["question"]) is not None else "excel_edit"
+                message.pop("edit_base_digest", None)
             st.rerun()
         return None
+    if "result" in message:
+        restore_date_derivations(message)
+        result = message["result"]
+        message["answer"] = spreadsheet_answer(result.head(MAX_ROWS))
+        if len(result) > MAX_ROWS:
+            message["answer"] += (
+                f"\n\nShowing the first {MAX_ROWS:,} of {len(result):,} result rows. "
+                "Download Excel includes all result rows."
+            )
     answer = message["answer"]
     st.write(answer)
     if "result" in message:
         result = message["result"]
-        with st.expander("Supporting data"):
-            st.dataframe(result.head(MAX_ROWS), hide_index=True, width="stretch")
+        with st.expander("Supporting data", expanded=len(result.columns) > 6):
+            st.dataframe(result.head(MAX_ROWS).style.format(na_rep=""), hide_index=True, width="stretch")
         display_excel_download([("Results", result)], render_key, message)
     return answer
 
@@ -4060,7 +4847,7 @@ def apply_theme() -> None:
             }
 
             .block-container {
-                max-width: 760px !important;
+                max-width: 1080px !important;
                 padding: 3rem 1.25rem 8rem !important;
             }
 
@@ -4098,7 +4885,7 @@ def apply_theme() -> None:
 
             .sidebar-brand {
                 color: var(--wc-ink);
-                font-family: "Source Serif 4", Georgia, serif;
+                font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
                 font-size: 1.35rem;
                 font-weight: 600;
                 line-height: 1.1;
@@ -4255,6 +5042,19 @@ def apply_theme() -> None:
                 width: 100%;
             }
 
+            [data-testid="stSidebar"] label,
+            [data-testid="stSidebar"] button,
+            [data-testid="stSidebar"] summary,
+            [data-testid="stDataFrame"] {
+                font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+            }
+
+            [data-testid="stSidebar"] [data-testid="stDownloadButton"] button {
+                width: 100%;
+                border-radius: 8px;
+                font-size: 0.85rem;
+            }
+
             [data-testid="stChatMessage"] th,
             [data-testid="stChatMessage"] td {
                 border: 1px solid var(--wc-line);
@@ -4335,9 +5135,9 @@ def apply_theme() -> None:
                 font-size: 0.88rem;
             }
 
-            [data-stale="true"] {
-                opacity: 1 !important;
-                transition: none !important;
+            [data-testid="stChatMessage"][data-stale="true"],
+            [data-testid="stChatMessage"] [data-stale="true"] {
+                visibility: hidden;
             }
 
             * {
@@ -4404,8 +5204,13 @@ automatic_selected = False
 excel_load_error = "Upload a valid Excel workbook and choose a worksheet before asking a question."
 
 
-def clear_excel_workbook() -> None:
-    st.session_state.pop("excel_workbook", None)
+def synchronize_excel_upload() -> None:
+    upload_key = f"excel_upload_{st.session_state.get('excel_uploader_version', 0)}"
+    upload = st.session_state.get(upload_key)
+    if upload is None:
+        st.session_state.pop("excel_workbook", None)
+    else:
+        remember_excel_upload(upload.getvalue(), upload.name)
 
 
 def render_recent_chats(placeholder: Any) -> None:
@@ -4482,25 +5287,22 @@ with st.sidebar:
                 )
     if excel_selected or automatic_selected:
         upload = st.file_uploader(
-            "Upload Excel workbook", type=["xlsx"], max_upload_size=10,
+            "Upload Excel or CSV file", type=["xlsx", "csv"], max_upload_size=10,
             key=f"excel_upload_{st.session_state.get('excel_uploader_version', 0)}",
-            on_change=clear_excel_workbook,
+            on_change=synchronize_excel_upload,
         )
-        remembered_workbook = st.session_state.get("excel_workbook")
-        if upload is not None or (remembered_workbook and remembered_workbook.get("content") is not None):
-            content = upload.getvalue() if upload is not None else remembered_workbook["content"]
-            file_name = upload.name if upload is not None else remembered_workbook["file_name"]
+        remembered_workbook = (
+            remember_excel_upload(upload.getvalue(), upload.name) if upload is not None else active_excel_workbook()
+        )
+        if remembered_workbook and remembered_workbook.get("content") is not None:
+            content = remembered_workbook["content"]
+            file_name = remembered_workbook["file_name"]
             excel_source = file_name
             digest = sha256(content).hexdigest()
+            workbook_cache = remembered_workbook
             try:
-                workbook_cache = st.session_state.get("excel_workbook")
-                if workbook_cache is None or workbook_cache["digest"] != digest:
-                    st.session_state.pop("excel_workbook", None)
-                    workbook_cache = {
-                        "digest": digest, "sheets": excel_sheet_names(content),
-                        "content": content, "file_name": file_name,
-                    }
-                    st.session_state["excel_workbook"] = workbook_cache
+                if "sheets" not in workbook_cache:
+                    workbook_cache["sheets"] = excel_sheet_names(content)
                 sheet_names = workbook_cache["sheets"]
                 default_sheet = next(
                     (index for index, name in enumerate(sheet_names) if name.casefold() == "sales"), 0,
@@ -4524,52 +5326,38 @@ with st.sidebar:
                     workbook_cache["sheet"] = sheet
                     workbook_cache["frame_preview_only"] = automatic_selected
                 excel_frame = workbook_cache["frame"]
+                workbook_cache.pop("load_error", None)
                 excel_source = f"{file_name} / {sheet}"
-                with st.expander("Worksheet preview"):
-                    st.dataframe(excel_frame.head(10), hide_index=True, width="stretch")
-                if any(name.casefold() == "sales" for name in sheet_names):
-                    with st.expander("Create region summary"):
-                        if "backup" not in workbook_cache:
-                            workbook_cache["backup"] = memoryview(content).tobytes()
-                        stem = Path(file_name).stem
+                if workbook_cache.get("edited"):
+                    with st.expander("Workbook downloads"):
                         st.download_button(
-                            "Download original backup", data=workbook_cache["backup"],
-                            file_name=f"{stem}_backup.xlsx", mime=EXCEL_MIME,
-                            key=f"region_backup_{digest}",
+                            "Download current working copy", data=content,
+                            file_name=f"{Path(file_name).stem}_edited.xlsx", mime=EXCEL_MIME,
+                            key=f"working_copy_download_{digest}",
                         )
-                        confirmed = st.checkbox(
-                            "I confirm: add Region_Summary to a copy of this workbook.",
-                            key=f"confirm_region_summary_{digest}",
+                        st.download_button(
+                            "Download original upload", data=workbook_cache["original_content"],
+                            file_name=f"{Path(file_name).stem}_original.xlsx", mime=EXCEL_MIME,
+                            key=f"working_copy_original_{digest}",
                         )
-                        if st.button(
-                            "Create Region_Summary", key=f"create_region_summary_{digest}",
-                            disabled=not confirmed,
-                        ):
-                            try:
-                                backup, updated = write_region_summary(content, confirmed=confirmed)
-                            except ValueError as error:
-                                st.error(str(error))
-                            else:
-                                workbook_cache["backup"] = backup
-                                workbook_cache["region_summary_output"] = updated
-                        if "region_summary_output" in workbook_cache:
-                            st.success("Region_Summary is ready. The original workbook is unchanged.")
-                            st.download_button(
-                                "Download workbook with Region_Summary",
-                                data=workbook_cache["region_summary_output"],
-                                file_name=f"{stem}_region_summary.xlsx", mime=EXCEL_MIME,
-                                key=f"region_summary_download_{digest}",
-                            )
-                else:
-                    st.info(
-                        "This workbook doesn't have a Sales sheet. You can still query the selected "
-                        "worksheet. To create Region_Summary, add a Sales sheet and upload the file again."
-                    )
+                with st.expander("Worksheet preview"):
+                    st.dataframe(excel_frame.head(10).style.format(na_rep=""), hide_index=True, width="stretch")
             except ValueError as error:
                 excel_load_error = str(error)
+                workbook_cache["load_error"] = excel_load_error
                 st.warning(str(error))
+        elif remembered_workbook and remembered_workbook.get("load_error"):
+            excel_load_error = remembered_workbook["load_error"]
+            st.warning(excel_load_error)
         else:
             st.session_state.pop("excel_workbook", None)
+
+        st.selectbox(
+            "Excel chart placement", ["same_sheet", "new_sheet"],
+            format_func=lambda value: {"same_sheet": "Same worksheet", "new_sheet": "New dashboard tab"}[value],
+            key="excel_chart_placement",
+            help="Charts and supporting tables are added in unused space. Existing data cells are not overwritten.",
+        )
 
     st.markdown('<div class="recent-label">Recent chats</div>', unsafe_allow_html=True)
     recent_chats_placeholder = st.empty()
@@ -4638,14 +5426,26 @@ if image_uploads:
 submitted_question = None if image_uploads else question or voice_question
 if submitted_question:
     command = parse_workbook_command(submitted_question)
+    calculation_explanation = explain_previous_calculation(submitted_question, history)
+    exploration = uploaded_data_message(
+        submitted_question, automatic_selected or excel_selected
+        or requested_source_kinds(submitted_question) == {"excel"},
+    )
     if is_previous_question_request(submitted_question):
         history.append({
             "kind": "recall", "question": submitted_question,
             "answer": recall_previous_question(history),
         })
+    elif calculation_explanation:
+        history.append({
+            "kind": "calculation_explanation", "question": submitted_question,
+            "answer": calculation_explanation,
+        })
+    elif exploration is not None:
+        history.append(exploration)
     elif command:
         action, target = command
-        cached_workbook = st.session_state.get("excel_workbook")
+        cached_workbook = active_excel_workbook()
         pending_action = {"action": action}
         if action == "close":
             mode_notice = (
@@ -4664,6 +5464,9 @@ if submitted_question:
         elif cached_workbook is None:
             pending_action = {"action": "open"}
             command_answer = "Upload an Excel workbook first, then ask me to open a worksheet."
+        elif not cached_workbook.get("sheets"):
+            pending_action = {"action": "open"}
+            command_answer = cached_workbook.get("load_error", "The uploaded workbook has no readable worksheets.")
         else:
             selected_sheet = resolve_workbook_sheet(target or "", cached_workbook["sheets"])
             if selected_sheet is None:
@@ -4680,16 +5483,42 @@ if submitted_question:
         if pending_action is not None:
             st.session_state["pending_workbook_action"] = pending_action
             st.rerun()
+    elif (
+        is_excel_chart_request(submitted_question) or is_excel_edit_request(submitted_question)
+        or result_sheet_request(submitted_question) is not None
+    ):
+        edit_sources = requested_source_kinds(submitted_question)
+        sql_edit = "sql" in edit_sources or (
+            not automatic_selected and not excel_selected and edit_sources != {"excel"}
+        )
+        available_workbook = None if sql_edit else active_excel_workbook()
+        edit_message = {
+            "kind": "excel_chart" if is_excel_chart_request(submitted_question)
+            else "excel_sheet_result" if result_sheet_request(submitted_question) is not None
+            else "excel_clean" if workbook_clean_request(submitted_question) is not None else "excel_edit",
+            "question": submitted_question,
+            **({"edit_base_digest": available_workbook["digest"]} if available_workbook else {}),
+        }
+        if sql_edit:
+            edit_message["sql_only"] = True
+            edit_message["error"] = (
+                "Excel charts are built from an uploaded workbook. Select Automatic or Excel workbook, or explicitly "
+                "name Excel, to add a chart to your workbook."
+                if edit_message["kind"] == "excel_chart" else
+                "SQL tables are read-only. Select Automatic or Excel workbook, or explicitly name Excel, "
+                "to edit an uploaded workbook."
+            )
+        history.append(edit_message)
     elif source_mode_for_question(
         submitted_question, "automatic" if automatic_selected else "excel" if excel_selected else "sql",
     ) == "automatic":
-        available_workbook = st.session_state.get("excel_workbook")
+        available_workbook = None if requested_source_kinds(submitted_question) == {"sql"} else active_excel_workbook()
         history.append({
             "kind": "automatic", "question": submitted_question,
             "workbook_content": available_workbook["content"] if available_workbook else None,
         })
     elif excel_selected:
-        available_workbook = st.session_state.get("excel_workbook")
+        available_workbook = active_excel_workbook()
         if not available_workbook or available_workbook.get("content") is None:
             history.append({
                 "kind": "excel", "question": submitted_question,
@@ -4719,7 +5548,7 @@ for index, message in enumerate(history):
     if kind in {"excel", "database"} and source_mode_for_question(
         message["question"], "excel" if kind == "excel" else "sql",
     ) == "automatic":
-        workbook = st.session_state.get("excel_workbook")
+        workbook = active_excel_workbook()
         content = message.get("excel_content") or (workbook.get("content") if workbook else None)
         for key in (
             "answer", "error", "result", "excel_download", "source_labels", "source_warnings", "sql_only",
@@ -4727,7 +5556,13 @@ for index, message in enumerate(history):
         ):
             message.pop(key, None)
         message.update(kind="automatic", workbook_content=content)
-    with st.chat_message("user"):
+    if (
+        message.get("kind") == "automatic" and index == len(history) - 1
+        and requested_source_kinds(message["question"]) != {"sql"}
+    ):
+        prepare_automatic_workbook(message, active_excel_workbook(), retry_failed=True)
+    turn = st.container(key=f"chat_turn_{index}")
+    with turn.chat_message("user"):
         if message.get("kind") == "image":
             st.write(f"Uploaded image: {message['image_name']}")
             if message.get("image_bytes"):
@@ -4736,18 +5571,38 @@ for index, message in enumerate(history):
                 st.write(message["question"])
         else:
             st.write(message["question"])
-    with st.chat_message("assistant"):
+    with turn.chat_message("assistant"):
         answer = None
-        if message.get("kind") in {"workbook_command", "recall"}:
+        pending = "answer" not in message and "error" not in message
+        if message.get("kind") in {"workbook_command", "recall", "calculation_explanation"}:
             answer = message["answer"]
             st.write(answer)
+            if message.get("kind") == "workbook_command" and split_workbook_chart_command(message["question"]):
+                if st.button("Retry chart request", key=f"retry_workbook_chart_{index}"):
+                    replacement = uploaded_data_message(message["question"], True)
+                    if replacement is not None:
+                        message.clear()
+                        message.update(replacement)
+                        st.rerun()
+                    else:
+                        st.warning("This chart request could not be planned from the active workbook.")
+        elif message.get("kind") in {"excel_edit", "excel_sheet_result", "excel_chart", "excel_clean"}:
+            with st.spinner(
+                "Adding the chart to your Excel working copy..." if message.get("kind") == "excel_chart"
+                else "Safely cleaning your uploaded table..." if message.get("kind") == "excel_clean"
+                else "Updating your Excel working copy..."
+            ) if pending else nullcontext():
+                answer = display_excel_edit(message, str(index))
+        elif message.get("kind") == "uploaded_data":
+            with st.spinner("Exploring your uploaded data...") if pending else nullcontext():
+                answer = display_uploaded_data(message, str(index))
         elif message.get("kind") == "excel":
-            with st.spinner("Querying your worksheet..."):
+            with st.spinner("Querying your worksheet...") if pending else nullcontext():
                 answer = display_excel_response(message, str(index))
             if answer:
                 message["answer"] = answer
         elif message.get("kind") in {"automatic", "database"}:
-            with st.spinner("Selecting sources and calculating..."):
+            with st.spinner("Selecting sources and calculating...") if pending else nullcontext():
                 if message.get("kind") == "database" and (
                     message.get("legacy_employee") or (
                         "answer" not in message and "error" not in message and (
@@ -4772,7 +5627,7 @@ for index, message in enumerate(history):
             elif answer:
                 st.markdown(answer)
         else:
-            with st.spinner("Thinking..."):
+            with st.spinner("Thinking...") if pending else nullcontext():
                 answer = display_employee_message(message, str(index), conversation_context(history[:index]))
         if read_answers_aloud and answer:
             audio_response = synthesize_speech(answer)
