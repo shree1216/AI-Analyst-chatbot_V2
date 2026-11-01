@@ -957,7 +957,16 @@ class WorkforceTests(unittest.TestCase):
     def test_image_retry_ui_updates_existing_message_once(self):
         image = BytesIO()
         self.chatbot.Image.new("RGB", (32, 32), "red").save(image, format="PNG")
-        self.chatbot.get_azure_openai_client.clear()
+        unconfigured_app = employee_app().run(timeout=30)
+        unconfigured_app.session_state["chat_history"] = [{
+            "kind": "image", "image_name": "test.png", "image_bytes": image.getvalue(),
+            "question": "Describe it", "answer": None, "error": "Azure image analysis timed out.",
+        }]
+        unconfigured_app.run(timeout=30)
+        unconfigured_app.button(key="retry_image_0").click().run(timeout=30)
+        self.assertEqual(len(unconfigured_app.exception), 0)
+        self.assertIsNone(unconfigured_app.session_state["chat_history"][0]["answer"])
+        self.chatbot.st.cache_resource.clear()
         settings = {
             "AZURE_OPENAI_ENDPOINT": "https://example.test", "AZURE_OPENAI_API_KEY": "test",
             "AZURE_OPENAI_API_VERSION": "test", "AZURE_OPENAI_DEPLOYMENT_MINI": "test-vision",
@@ -984,7 +993,7 @@ class WorkforceTests(unittest.TestCase):
                 app.run(timeout=30)
                 client.return_value.chat.completions.create.assert_called_once()
         finally:
-            self.chatbot.get_azure_openai_client.clear()
+            self.chatbot.st.cache_resource.clear()
 
     def test_pdf_request_preserves_sales_filter(self):
         request = self.chatbot.translate_question("Create a Sales department PDF")
