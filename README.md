@@ -1346,11 +1346,45 @@ before switching that runtime to SQL Server mode. Do not switch the public demo
 until a reachable host, driver and credentials are configured.
 
 SQL authentication requires both username and password, encrypts the connection,
-and validates the server certificate. No certificate-trust bypass is enabled.
+and validates the server certificate by default. Set
+`WORKFORCE_SQL_TRUST_SERVER_CERTIFICATE=yes` only for a local SQL Server that uses
+a self-signed certificate (such as SQL Server Express reached from Docker on the
+same PC); never enable it for a hosted or network database.
 Connection attempts have a 10-second login timeout. SQL mode never silently
 falls back to demo data. After changing database settings, reboot the app to
 discard any previously cached database engine, then select **Test employee data
 connection** to verify the actual database row count.
+
+### Docker on the same PC as SQL Server Express
+
+Inside a container, `localhost\SQLEXPRESS` and Windows authentication are not
+available. The Docker image installs Microsoft ODBC Driver 18, and connects over
+TCP to the Windows host with a read-only SQL login:
+
+1. In SQL Server Configuration Manager, enable TCP/IP for `SQLEXPRESS`, set
+   **IPAll → TCP Port** to `1433` (clear TCP Dynamic Ports), and restart the service.
+2. Enable SQL Server and Windows authentication mode, then create a login that
+   is only a `db_datareader` member of `EmployeeDB`.
+3. Create a git-ignored `.env.docker` with container-only overrides:
+
+   ```text
+   WORKFORCE_SQL_SERVER=host.docker.internal
+   WORKFORCE_SQL_PORT=1433
+   WORKFORCE_SQL_DRIVER=ODBC Driver 18 for SQL Server
+   WORKFORCE_SQL_USERNAME=workforce_reader
+   WORKFORCE_SQL_PASSWORD=set-your-password-here
+   WORKFORCE_SQL_TRUST_SERVER_CERTIFICATE=yes
+   ```
+
+4. Build and run (later env files override earlier ones):
+
+   ```powershell
+   docker build -t workforce-compass .
+   docker run -d --name workforce-compass -p 8501:8501 --env-file .env --env-file .env.docker workforce-compass
+   ```
+
+Keep Windows Firewall blocking inbound port 1433 from other machines; Docker
+Desktop reaches the host without opening it to the network.
 
 `localhost` on the cloud server cannot address a database on your laptop.
 If EmployeeDB exists only on your PC, either run Streamlit on that PC or arrange

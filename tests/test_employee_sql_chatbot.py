@@ -95,6 +95,24 @@ class WorkforceTests(unittest.TestCase):
         self.assertNotIn("test-only-password", str(url))
         self.assertEqual(create.call_args.kwargs["connect_args"], {"timeout": 10})
 
+    def test_sql_auth_can_opt_in_to_trusting_a_self_signed_certificate(self):
+        environment = {
+            key: value for key, value in TEST_ENVIRONMENT.items() if not key.upper().startswith("WORKFORCE_")
+        }
+        environment.update({
+            "WORKFORCE_SQL_USERNAME": "readonly-user", "WORKFORCE_SQL_PASSWORD": "test-only-password",
+            "WORKFORCE_SQL_TRUST_SERVER_CERTIFICATE": "YES",
+        })
+        self.chatbot.get_engine.clear()
+        self.addCleanup(self.chatbot.get_engine.clear)
+        with patch.dict(os.environ, environment, clear=True), patch.multiple(
+            self.chatbot, DATA_MODE="sqlserver", SERVER="host.docker.internal", DATABASE="EmployeeDB",
+        ), patch.object(self.chatbot, "create_engine") as create:
+            self.chatbot.get_engine()
+        url = create.call_args.args[0]
+        self.assertEqual(url.query["Encrypt"], "yes")
+        self.assertEqual(url.query["TrustServerCertificate"], "yes")
+
     def test_local_employee_db_preserves_windows_authentication(self):
         environment = {
             key: value for key, value in TEST_ENVIRONMENT.items() if not key.upper().startswith("WORKFORCE_")
@@ -122,6 +140,7 @@ class WorkforceTests(unittest.TestCase):
             {"WORKFORCE_SQL_PORT": "invalid"},
             {"WORKFORCE_SQL_PORT": "0"},
             {"WORKFORCE_SQL_PORT": "65536"},
+            {"WORKFORCE_SQL_TRUST_SERVER_CERTIFICATE": "maybe"},
         ):
             self.chatbot.get_engine.clear()
             with self.subTest(settings=list(settings)), patch.dict(

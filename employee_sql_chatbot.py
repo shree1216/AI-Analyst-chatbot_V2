@@ -361,8 +361,12 @@ def get_engine() -> Engine:
     connection_options = {
         "driver": os.getenv("WORKFORCE_SQL_DRIVER", "ODBC Driver 17 for SQL Server").strip(),
     }
+    trust_certificate = os.getenv("WORKFORCE_SQL_TRUST_SERVER_CERTIFICATE", "no").strip().lower()
+    if trust_certificate not in {"yes", "no"}:
+        raise ValueError("WORKFORCE_SQL_TRUST_SERVER_CERTIFICATE must be 'yes' or 'no'.")
     if username:
-        connection_options.update({"Encrypt": "yes", "TrustServerCertificate": "no"})
+        # "yes" is only for a local SQL Server with a self-signed certificate (e.g. Docker -> SQLEXPRESS).
+        connection_options.update({"Encrypt": "yes", "TrustServerCertificate": trust_certificate})
     else:
         connection_options["trusted_connection"] = "yes"
     port_text = os.getenv("WORKFORCE_SQL_PORT", "").strip()
