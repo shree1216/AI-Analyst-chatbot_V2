@@ -1,0 +1,80 @@
+{
+  "tables": [
+    {
+      "name": "Employees",
+      "file": "Employees.csv",
+      "columns": [
+        {
+          "name": "Employee ID",
+          "kind": "text"
+        },
+        {
+          "name": "Name",
+          "kind": "text"
+        },
+        {
+          "name": "Age",
+          "kind": "integer"
+        },
+        {
+          "name": "Gender",
+          "kind": "text"
+        },
+        {
+          "name": "Department",
+          "kind": "text"
+        },
+        {
+          "name": "City",
+          "kind": "text"
+        },
+        {
+          "name": "Status",
+          "kind": "text"
+        },
+        {
+          "name": "Job Title",
+          "kind": "text"
+        },
+        {
+          "name": "Salary",
+          "kind": "integer"
+        },
+        {
+          "name": "Joining Date",
+          "kind": "datetime"
+        },
+        {
+          "name": "Email",
+          "kind": "text"
+        },
+        {
+          "name": "Phone Number",
+          "kind": "text"
+        }
+      ],
+      "rows": 150,
+      "sha256": "366baeb98094224e084e047b5e44443a43acf5afeb0dfbc6139c6c6a3684cac4"
+    },
+    {
+      "name": "sql_products",
+      "file": "sql_products.csv",
+      "columns": [
+        {
+          "name": "code",
+          "kind": "text"
+        },
+        {
+          "name": "product",
+          "kind": "text"
+        },
+        {
+          "name": "price",
+          "kind": "decimal"
+        }
+      ],
+      "rows": 4,
+      "sha256": "07fcedde98c597e3f0b135e2e4124601e6b5d61473b8e23a637cd869579e8827"
+    }
+  ]
+}

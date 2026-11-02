@@ -976,34 +976,32 @@ class WorkforceTests(unittest.TestCase):
     def test_image_retry_ui_updates_existing_message_once(self):
         image = BytesIO()
         self.chatbot.Image.new("RGB", (32, 32), "red").save(image, format="PNG")
-        self.chatbot.get_azure_openai_client.clear()
+        self.chatbot.st.cache_resource.clear()
+        self.addCleanup(self.chatbot.st.cache_resource.clear)
         settings = {
             "AZURE_OPENAI_ENDPOINT": "https://example.test", "AZURE_OPENAI_API_KEY": "test",
             "AZURE_OPENAI_API_VERSION": "test", "AZURE_OPENAI_DEPLOYMENT_MINI": "test-vision",
         }
-        try:
-            with patch.dict(os.environ, settings), patch("openai.AzureOpenAI") as client:
-                choice = client.return_value.chat.completions.create.return_value.choices[0]
-                choice.message.content = "A red square."
-                choice.message.refusal = None
-                choice.finish_reason = "stop"
-                app = employee_app().run(timeout=30)
-                app.session_state["chat_history"] = [{
-                    "kind": "image", "image_name": "test.png", "image_bytes": image.getvalue(),
-                    "question": "Describe it", "answer": None, "error": "Azure image analysis timed out.",
-                }]
-                app.run(timeout=30)
-                self.assertEqual(len(app.exception), 0)
-                self.assertIn("timed out", app.warning[0].value)
-                app.button(key="retry_image_0").click().run(timeout=30)
-                self.assertEqual(len(app.exception), 0)
-                self.assertEqual(len(app.session_state["chat_history"]), 1)
-                self.assertEqual(app.session_state["chat_history"][0]["answer"], "A red square.")
-                self.assertNotIn("error", app.session_state["chat_history"][0])
-                app.run(timeout=30)
-                client.return_value.chat.completions.create.assert_called_once()
-        finally:
-            self.chatbot.get_azure_openai_client.clear()
+        with patch.dict(os.environ, settings), patch("openai.AzureOpenAI") as client:
+            choice = client.return_value.chat.completions.create.return_value.choices[0]
+            choice.message.content = "A red square."
+            choice.message.refusal = None
+            choice.finish_reason = "stop"
+            app = employee_app().run(timeout=30)
+            app.session_state["chat_history"] = [{
+                "kind": "image", "image_name": "test.png", "image_bytes": image.getvalue(),
+                "question": "Describe it", "answer": None, "error": "Azure image analysis timed out.",
+            }]
+            app.run(timeout=30)
+            self.assertEqual(len(app.exception), 0)
+            self.assertIn("timed out", app.warning[0].value)
+            app.button(key="retry_image_0").click().run(timeout=30)
+            self.assertEqual(len(app.exception), 0)
+            self.assertEqual(len(app.session_state["chat_history"]), 1)
+            self.assertEqual(app.session_state["chat_history"][0]["answer"], "A red square.")
+            self.assertNotIn("error", app.session_state["chat_history"][0])
+            app.run(timeout=30)
+            client.return_value.chat.completions.create.assert_called_once()
 
     def test_pdf_request_preserves_sales_filter(self):
         request = self.chatbot.translate_question("Create a Sales department PDF")

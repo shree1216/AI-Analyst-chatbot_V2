@@ -958,8 +958,10 @@ the new **Data source** controls appear; local tests alone do not update it.
 | `workbook_charts.py` | Prompt-driven native Excel charts added on new worksheets without re-saving existing parts |
 | `backend_diagnostics.py` | Privacy-safe request traces, rotating server log files, and session log downloads |
 | `source_queries.py` | Live SQL/Excel source discovery, source-plan validation, and bounded cross-source execution |
-| `employee_dataset.xlsx` | Synthetic 150-employee sample dataset |
-| `sql_products.csv` | Small product catalog loaded as `sql_products` in demo mode |
+| `employee_dataset.xlsx` | Synthetic 150-employee sample dataset used to create the local database |
+| `demo_data/` | Demo-mode tables (CSV + `schema.json`), kept in sync with the local database |
+| `demo_tables.py` | Reads and writes the `demo_data/` tables |
+| `sync_local_database.py` | Mirrors the local EmployeeDB to Azure SQL and `demo_data/` |
 | `generate_employee_dataset.py` | Recreates the sample Excel dataset |
 | `import_employees_data.py` | Creates `EmployeeDB` and imports `dbo.Employees` |
 | `.env.example` | Template for optional Azure and SMTP settings |
@@ -967,6 +969,7 @@ the new **Data source** controls appear; local tests alone do not update it.
 | `tests/test_employee_sql_chatbot.py` | Isolated routing, report, PDF, UI, and SMTP regression tests |
 | `packages.txt` | Linux native libraries for Streamlit Community Cloud |
 | `tests/test_demo_database.py` | Real SQLite demo queries and cloud-mode UI regression tests |
+| `tests/test_database_sync.py` | Demo data format and local-to-cloud sync tests |
 | `tests/test_excel_support.py` | Workbook validation, arbitrary-column queries, Excel exports, and source-selection regression tests |
 | `tests/test_workbook_operations.py` | Calculation semantics, cross-sheet operations, invalid plans, and expansion limits |
 | `tests/test_backend_diagnostics.py` | Log rotation, isolation, metadata restrictions, failure handling, and step traces |
@@ -1268,8 +1271,9 @@ other confidential information.
    renders `Show a bar chart of employee count by department`, and downloads a PDF.
    Share the URL shown by Streamlit after these checks succeed.
 
-Demo mode loads `employee_dataset.xlsx` (as `Employees`) and `sql_products.csv`
-(as `sql_products`) into SQLite once per application process,
+Demo mode loads every table in `demo_data/` (one CSV per table, described by
+`demo_data/schema.json`) into SQLite. The data is reloaded automatically when
+those files change, so pushed data updates appear without restarting the app. It
 uses the same query validation and bound parameters as the local app, and rejects
 database writes. No SQL Server, ODBC driver configuration, or cloud database
 account is required. The original SQL Server mode remains the default when
@@ -1323,6 +1327,41 @@ Use `Remove-Item Env:\WORKFORCE_DATA_MODE` afterward to restore the default for
 future launches in that terminal (unless the mode is also set in `.env`).
 Free hosting may put inactive apps to sleep; the hosted URL remains shareable,
 but this is not a promise of continuous uptime.
+
+### Keep the hosted apps in sync with the local database
+
+`sync_local_database.py` copies changes from the local `EmployeeDB` (SQL Server
+Express, Windows authentication) to both hosted apps:
+
+- **Azure SQL** (used by the Azure Container App): each changed table, including
+  new tables, is recreated with the local schema and rows in one transaction, and
+  the app's read-only user is granted `SELECT`. Tables deleted locally are dropped
+  only if the sync created them; cloud-only tables are never touched.
+- **`demo_data/`** (used by Streamlit Community Cloud): the CSV files are
+  regenerated and pushed to `main` from a separate clone in
+  `%LOCALAPPDATA%\WorkforceCompass\repo`, so your working copy is not modified.
+  Pull to see these automatic commits locally. Pushes that only change
+  `demo_data/` do not rebuild the Azure app.
+
+Runs with no local changes do nothing. Azure SQL access uses your signed-in
+Azure CLI account (`az login`), so no database password is stored. Set the
+`SYNC_*` values from `.env.example` in your git-ignored `.env`, then:
+
+```powershell
+python sync_local_database.py            # sync once
+python sync_local_database.py --install-task --interval 1   # sync every minute
+python sync_local_database.py --uninstall-task
+```
+
+The scheduled task runs while you are signed in to Windows. Changes typically
+appear in the Azure app within a minute, and in the Streamlit app after it
+picks up the GitHub push (usually one to two minutes). Activity and errors are
+logged to `%LOCALAPPDATA%\WorkforceCompass\sync.log`. The demo export requires
+`dbo.Employees` to keep the columns the app uses; otherwise only Azure SQL is
+updated and the log explains why. Tables over 50,000 rows are not exported to
+`demo_data/`. When `SYNC_CLOUD_RESOURCE_GROUP` is set and this PC's public IP
+changes, the job adds the new IP to the Azure SQL firewall rule
+`WorkforceCompassSync`.
 
 ### SQL Server deployment
 

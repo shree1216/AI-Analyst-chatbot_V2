@@ -1,0 +1,151 @@
+Employee ID,Name,Age,Gender,Department,City,Status,Job Title,Salary,Joining Date,Email,Phone Number
+EMP001,Allison Hill,60,Male,Sales,Kolkata,Active,Environmental health practitioner,66048,2019-02-18,rhodespatricia@example.org,001-260-501-3389
+EMP002,Meredith Barnes,35,Male,IT,Kolkata,On Leave,"Production assistant, radio",43434,2021-06-28,blakeerik@example.com,942-335-1161x55940
+EMP003,Jamie Arnold,54,Male,Marketing,Chennai,Inactive,Water engineer,34165,2022-11-29,janetwilliams@example.org,001-341-431-6475x25534
+EMP004,Danielle Ford,21,Male,IT,Mumbai,Active,Geophysicist/field seismologist,96237,2026-03-26,gabriellecameron@example.org,505.964.1395
+EMP005,Thomas Ellis,58,Male,Marketing,Mumbai,On Leave,Geochemist,123850,2019-02-18,julieryan@example.net,001-369-265-3287
+EMP006,Brittany Moore,54,Female,IT,Chennai,Inactive,"Pharmacist, hospital",107236,2017-11-02,djames@example.net,280-618-4514x627
+EMP007,Pamela Romero,37,Male,IT,Kolkata,Active,Claims inspector/assessor,85392,2021-11-01,ericfarmer@example.net,001-380-395-7015x43039
+EMP008,Rose Spence,41,Female,IT,Mumbai,On Leave,Site engineer,130072,2018-11-24,donnaarroyo@example.org,989-363-8346x578
+EMP009,Austin Smith,41,Male,Sales,Chennai,Inactive,"Surveyor, building",42676,2020-09-02,adrianzimmerman@example.org,510.451.8347
+EMP010,Sonya Johnston,42,Female,Marketing,Bengaluru,Active,Financial manager,135791,2024-10-20,glee@example.net,(956)467-0106x51333
+EMP011,Donald Wright,22,Female,Marketing,Delhi,On Leave,Call centre manager,79615,2024-04-18,williamsyvette@example.org,432-867-7360
+EMP012,James House,25,Female,Operations,Hyderabad,Inactive,"Programme researcher, broadcasting/film/video",146057,2021-08-11,uhorton@example.net,+1-972-434-3098x05009
+EMP013,Jordan York,43,Male,Operations,Delhi,Active,Broadcast presenter,36006,2017-11-30,richarddavid@example.net,799.609.1699
+EMP014,Mike Allen,34,Female,Sales,Pune,On Leave,Occupational hygienist,60512,2018-12-26,stephen10@example.com,+1-791-618-3842x513
+EMP015,Roy Warner,26,Female,HR,Chennai,Inactive,Veterinary surgeon,113320,2025-10-03,contrerasangela@example.net,524-711-8244
+EMP016,Mark Baker,43,Male,HR,Bengaluru,Active,Records manager,57460,2021-01-11,davisrodney@example.com,2053242786
+EMP017,Stephen Mckee,37,Male,Marketing,Kolkata,On Leave,Sports administrator,52431,2017-05-15,brandi26@example.org,8454053315
+EMP018,Cynthia Martin,54,Male,IT,Chennai,Inactive,"Editor, film/video",79735,2023-10-09,whitesandra@example.com,+1-534-221-6073x37543
+EMP019,Jennifer Ramirez,37,Male,Operations,Bengaluru,Active,Building control surveyor,140474,2021-07-04,darlene68@example.com,8147294019
+EMP020,Emily Obrien,23,Male,Sales,Pune,On Leave,Sales promotion account executive,71347,2018-09-22,mlam@example.com,7607883561
+EMP021,Belinda Mccullough,45,Female,Sales,Mumbai,Inactive,"Runner, broadcasting/film/video",149686,2022-01-07,snguyen@example.com,+1-823-266-2994
+EMP022,Daniel Floyd,56,Female,IT,Kolkata,Active,Training and development officer,95435,2022-03-29,rramos@example.org,272.214.8951x34332
+EMP023,John Atkinson,45,Female,IT,Bengaluru,On Leave,"Buyer, industrial",48301,2024-07-03,kmercado@example.org,001-967-263-2016x328
+EMP024,Sylvia Martinez,35,Female,Operations,Hyderabad,Inactive,Contracting civil engineer,86155,2024-08-30,stephanie79@example.net,968.372.7743x48734
+EMP025,Cynthia Rogers,57,Female,HR,Mumbai,Active,"Sound technician, broadcasting/film/video",48131,2018-02-16,edwardreyes@example.org,001-831-266-5876x036
+EMP026,Pamela James,52,Female,Sales,Pune,On Leave,Accounting technician,36175,2022-09-28,karen68@example.net,001-489-937-3467x0656
+EMP027,Veronica Ferguson,27,Male,Operations,Mumbai,Inactive,"Nurse, mental health",133819,2026-05-12,millerroy@example.com,(804)665-3755
+EMP028,Sandra King,47,Male,Finance,Chennai,Active,Ceramics designer,108104,2024-10-04,currybrett@example.com,510.403.3092
+EMP029,Brian Gould,49,Female,Marketing,Pune,On Leave,"Psychologist, occupational",31504,2021-02-12,gary91@example.org,619-304-9663x1931
+EMP030,Kylie Williams,27,Female,Operations,Bengaluru,Inactive,Site engineer,44621,2024-01-17,casey50@example.com,916.857.2628x4987
+EMP031,Leslie Morris,38,Female,IT,Chennai,Active,Financial trader,30425,2018-03-26,nicole37@example.net,+1-665-607-5273x545
+EMP032,Kellie Lee,36,Male,Marketing,Delhi,On Leave,Financial controller,144100,2023-09-03,ppeters@example.net,777.801.4363x4957
+EMP033,Krista Bell MD,60,Female,Operations,Hyderabad,Inactive,Information officer,109818,2021-01-13,davidlee@example.org,001-682-533-7498x9413
+EMP034,Eric Erickson,32,Male,HR,Pune,Active,Computer games developer,51174,2021-06-04,mccannangela@example.net,(771)409-4777
+EMP035,Dawn Hensley,54,Male,Marketing,Bengaluru,On Leave,Clothing/textile technologist,94042,2017-11-14,kvasquez@example.net,+1-502-829-4131x86999
+EMP036,Jeremy Dalton,21,Male,HR,Pune,Inactive,"Pilot, airline",135745,2021-12-14,lynchjody@example.org,+1-934-612-3281x2067
+EMP037,Dwayne Campbell,39,Male,Sales,Mumbai,Active,Professor Emeritus,145082,2017-12-20,sandrafrench@example.net,001-336-218-3242
+EMP038,Eric Curry,56,Male,Sales,Kolkata,On Leave,"Teacher, adult education",93699,2021-09-01,smartinez@example.com,001-664-288-7719x065
+EMP039,Vernon Huff,24,Male,IT,Kolkata,Inactive,Teaching laboratory technician,92296,2026-09-30,keyemily@example.com,001-802-978-7429
+EMP040,Julie Ortiz,55,Male,HR,Hyderabad,Active,IT sales professional,144351,2018-07-15,marksteele@example.com,+1-968-807-1545x16808
+EMP041,Joseph Dean,58,Female,IT,Hyderabad,On Leave,Research scientist (physical sciences),128994,2024-04-11,harrisandrea@example.com,371.509.3248x086
+EMP042,Susan Murray MD,32,Female,Finance,Kolkata,Inactive,"Designer, exhibition/display",115180,2025-03-27,william46@example.com,737.682.6398x2146
+EMP043,Diane Evans,43,Female,Marketing,Chennai,Active,Theatre manager,45860,2026-08-16,cgrimes@example.net,855.288.6753x3963
+EMP044,John Mcintyre,35,Male,Sales,Bengaluru,On Leave,Museum/gallery curator,32757,2023-04-30,tylerjohnson@example.net,001-851-471-8702
+EMP045,Richard Baker,57,Male,Marketing,Mumbai,Inactive,Youth worker,30942,2023-07-09,christianmelissa@example.net,(357)980-9134x3161
+EMP046,Elijah Johnson,24,Male,IT,Delhi,Active,"Journalist, broadcasting",148675,2017-09-17,michael62@example.org,569.922.2196x93792
+EMP047,Julia Estrada,22,Female,Sales,Hyderabad,On Leave,"Psychologist, occupational",61195,2021-08-26,charleslandry@example.net,664-674-3671x3695
+EMP048,Ronald Foster,37,Female,IT,Hyderabad,Inactive,Actuary,47342,2026-05-21,lozanojulie@example.com,001-739-453-3942x10470
+EMP049,Edward Burgess,56,Female,IT,Pune,Active,Economist,91993,2020-03-04,kristinwalter@example.com,784.324.7451x71236
+EMP050,Alexis Herrera,46,Male,Sales,Delhi,On Leave,"Programme researcher, broadcasting/film/video",116374,2023-01-11,brenda51@example.net,970.698.5931
+EMP051,Audrey Williams,47,Female,Finance,Chennai,Inactive,Applications developer,91213,2021-12-08,pwilson@example.net,(367)958-6926
+EMP052,Teresa Ramirez,23,Male,Sales,Chennai,Active,Metallurgist,125448,2020-06-15,pwallace@example.com,958-350-6431
+EMP053,Maria Harper,41,Male,IT,Mumbai,On Leave,Advertising art director,54931,2017-08-14,john29@example.org,283-693-3529
+EMP054,Brianna Anderson,54,Female,IT,Chennai,Inactive,Fitness centre manager,54050,2019-09-23,guerreroanthony@example.org,(339)950-2402x681
+EMP055,Ivan Wheeler,37,Female,IT,Pune,Active,Production engineer,39880,2025-04-30,soniawilliams@example.net,447.300.7661x77115
+EMP056,Marcus Richards,48,Male,Sales,Kolkata,On Leave,"Journalist, broadcasting",100855,2023-03-28,shawn96@example.org,001-318-736-7365x766
+EMP057,Maurice Brooks,20,Male,IT,Mumbai,Inactive,"Designer, ceramics/pottery",83269,2024-10-28,davischristopher@example.com,352-880-9885
+EMP058,Maurice Christensen,51,Female,IT,Pune,Active,Arts development officer,82565,2021-08-26,michael98@example.org,(573)815-8514
+EMP059,Vanessa Cardenas,23,Male,Finance,Delhi,On Leave,Visual merchandiser,81173,2026-03-25,lynchdiane@example.net,302-444-5502x296
+EMP060,Valerie Davis,36,Female,HR,Chennai,Inactive,Set designer,121303,2020-06-01,vbarnes@example.org,(645)999-1022x901
+EMP061,Karla Ramos,55,Female,IT,Mumbai,Active,Government social research officer,68890,2020-06-04,reeddaniel@example.net,+1-497-684-0369x00343
+EMP062,Bryan Jimenez,33,Male,Marketing,Kolkata,On Leave,Planning and development surveyor,101066,2019-09-30,omarpadilla@example.net,+1-751-860-6071
+EMP063,Michelle Butler,23,Female,Sales,Delhi,Inactive,Colour technologist,106569,2023-08-25,burchgeorge@example.net,651.761.3696x816
+EMP064,Richard Jones,50,Male,Sales,Hyderabad,Active,Clothing/textile technologist,40500,2025-10-14,rebeccabailey@example.net,+1-923-912-4329x2127
+EMP065,Sonia Day,31,Male,Marketing,Delhi,On Leave,IT trainer,118501,2022-02-19,scottharrison@example.net,649-305-8147x7005
+EMP066,Vanessa Davis,35,Female,Sales,Hyderabad,Inactive,"Therapist, music",62271,2025-05-20,jford@example.net,2799359782
+EMP067,Steven Cooper,57,Male,Marketing,Delhi,Active,Chartered accountant,84948,2025-05-05,benjaminzimmerman@example.com,789.325.5466x59051
+EMP068,Jasmine King,57,Female,HR,Mumbai,On Leave,Toxicologist,117782,2019-04-26,christopher25@example.com,+1-762-291-4865x2816
+EMP069,Christopher Lewis,40,Male,HR,Chennai,Inactive,"Radiographer, diagnostic",47154,2020-01-10,zoemoore@example.com,888-480-5929
+EMP070,Ronald Wise,39,Female,HR,Pune,Active,Diagnostic radiographer,39508,2024-03-15,jenkinserica@example.org,994.973.8347x359
+EMP071,Paula Shaw,20,Female,Marketing,Hyderabad,On Leave,Personal assistant,43104,2019-07-07,laurietaylor@example.com,4756818141
+EMP072,Jose Guerra,24,Male,Marketing,Bengaluru,Inactive,"Chemist, analytical",47361,2020-07-14,bwilkerson@example.com,2687536153
+EMP073,Sara Santos,42,Male,IT,Bengaluru,Active,Dancer,67353,2019-02-06,mitchellmaria@example.net,(477)890-1043
+EMP074,Dwayne Turner,30,Female,Marketing,Kolkata,On Leave,Art gallery manager,69651,2020-10-24,nfowler@example.com,417-698-0893
+EMP075,Lucas Allen,59,Male,Operations,Pune,Inactive,Pension scheme manager,102692,2019-12-11,millsmichael@example.net,+1-788-680-6706
+EMP076,Heather Jones,39,Male,IT,Bengaluru,Active,Financial adviser,45129,2018-07-10,dennis58@example.com,+1-227-772-2170x4303
+EMP077,Kaylee Hays,26,Male,HR,Bengaluru,On Leave,Speech and language therapist,109276,2024-10-23,benjamin34@example.com,001-705-641-5667x65277
+EMP078,Monica Miller,33,Female,IT,Kolkata,Inactive,Town planner,113130,2019-10-30,manuel15@example.net,647-296-2757x0596
+EMP079,Mark Cox,36,Female,HR,Pune,Active,"Designer, jewellery",36658,2017-04-15,melindagregory@example.com,4219355690
+EMP080,Jacqueline Hines,25,Female,HR,Delhi,On Leave,"Teacher, secondary school",30464,2019-02-06,raymond43@example.org,9275868144
+EMP081,Donna Hendricks DDS,41,Male,Operations,Bengaluru,Inactive,Community education officer,51178,2019-01-25,hayesrachel@example.com,455-718-8442
+EMP082,Barbara Harris,48,Female,Marketing,Delhi,Active,Corporate treasurer,44663,2020-10-14,jjohnson@example.net,(878)329-1146x786
+EMP083,Evan Jones,24,Male,Marketing,Delhi,On Leave,"Psychologist, prison and probation services",139392,2025-07-23,david89@example.org,001-626-380-1824x22535
+EMP084,Mark Pierce,43,Male,Finance,Mumbai,Inactive,Comptroller,35482,2021-11-28,shawgary@example.net,(229)695-9001
+EMP085,Pamela Butler,39,Female,Sales,Bengaluru,Active,Airline pilot,57535,2025-03-25,dawn47@example.org,+1-464-771-0276x77359
+EMP086,Emma Travis,35,Male,HR,Pune,On Leave,Location manager,103385,2023-07-17,kathleenrobertson@example.org,537-414-7321x04696
+EMP087,Taylor Griffith,46,Male,IT,Pune,Inactive,Energy manager,51299,2019-06-21,dferrell@example.com,670-916-8733x9500
+EMP088,Sarah Chambers,31,Female,Sales,Mumbai,Active,Higher education lecturer,126542,2025-11-20,booneryan@example.com,001-356-850-6098x3584
+EMP089,Pamela Ramirez,41,Female,Operations,Pune,On Leave,Youth worker,126345,2018-10-12,theresalong@example.com,+1-252-239-8680
+EMP090,Gary Wells,35,Female,IT,Pune,Inactive,"Programmer, multimedia",121917,2019-04-17,markaustin@example.org,(794)795-8887x9470
+EMP091,Veronica Silva,26,Female,Sales,Pune,Active,Aid worker,91694,2024-10-31,tammy99@example.org,001-509-272-8962x3091
+EMP092,Jason Gutierrez,34,Male,Finance,Bengaluru,On Leave,"Engineer, electronics",70001,2023-09-27,vsalas@example.net,7284385786
+EMP093,Joseph Payne,34,Male,Sales,Kolkata,Inactive,"Geneticist, molecular",55313,2024-12-29,susanramirez@example.com,644.637.5758
+EMP094,Michael James,45,Female,HR,Pune,Active,Nutritional therapist,39099,2022-08-18,kellyroberts@example.net,657-447-3384
+EMP095,Patrick Allen,37,Female,Operations,Hyderabad,On Leave,Arts administrator,82386,2025-10-16,danawilliams@example.com,271-320-8267x73454
+EMP096,Crystal Rodgers,54,Female,Sales,Delhi,Inactive,Applications developer,144955,2019-09-26,lkhan@example.org,(972)440-0499x1547
+EMP097,Julie Lee,36,Male,Marketing,Bengaluru,Active,"Clinical scientist, histocompatibility and immunogenetics",35014,2022-05-20,jessicawong@example.net,(805)749-3296
+EMP098,Michael Lopez,26,Female,HR,Kolkata,On Leave,Counselling psychologist,133078,2024-11-17,shari04@example.com,774.554.9904
+EMP099,Bryan Parker,40,Female,Marketing,Hyderabad,Inactive,"Optician, dispensing",45157,2025-04-22,hannah45@example.net,932.572.7956
+EMP100,Melanie Larson,44,Male,HR,Delhi,Active,Ceramics designer,122901,2025-09-12,xrice@example.org,001-410-788-3982
+EMP101,Jaah,47,Male,Marketing,Pune,On Leave,Television production assistant,100575,2025-01-27,nolansean@example.org,628.267.9087x406
+EMP102,Shree,32,Female,Finance,Delhi,Inactive,Local government officer,117062,2017-11-04,michaelcesar@example.com,8468226567
+EMP103,Jahnavi,41,Female,Operations,Pune,Active,Contracting civil engineer,46334,2022-09-03,whiteamanda@example.net,(830)504-7868
+EMP104,  Gregory Hill,39,Female,Operations,Chennai,On Leave,"Clinical scientist, histocompatibility and immunogenetics",72753,2017-04-22,bmendez@example.org,211.890.7903
+EMP105,Joshua Webster  ,45,Female,Marketing,Mumbai,Inactive,Banker,55144,2019-02-21,jim95@example.net,+1-453-842-8364x408
+EMP106,  Amber Cooper  ,46,Female,Operations,Kolkata,Active,Museum/gallery curator,148332,2025-09-05,heather62@example.com,(428)873-3427x0866
+EMP107,Dalton Lucas,31,Female,Finance,Hyderabad,On Leave,"Production assistant, television",139278,2023-01-26,nicholsmaria@example.org,769-690-1398x373
+EMP108,Alexis Giles,20,Female,HR,Mumbai,Inactive,Commercial/residential surveyor,86346,2024-11-26,heatherpadilla@example.com,685.746.7854
+EMP109,Kathleen Garcia,57,Female,Finance,Chennai,Active,"Psychotherapist, child",87954,2022-03-16,nathangutierrez@example.net,420.548.9964
+EMP110,James Whitaker,33,Female,Operations,Mumbai,On Leave,Restaurant manager,116356,2026-02-15,jonathan77@example.com,(252)328-7280
+EMP111,Mary Duran,25,Female,Marketing,Kolkata,Inactive,Passenger transport manager,112960,2019-02-05,carloshernandez@example.org,275.609.9770x08860
+EMP112,Donna Shaw,59,Female,Sales,Pune,Active,Planning and development surveyor,128453,2019-10-22,hullalice@example.org,898.945.4615
+EMP113,Wanda Perez,35,Female,IT,Pune,On Leave,Catering manager,56100,2017-04-18,sullivannicholas@example.com,2025176591
+EMP114,Sean Clay,29,Male,Sales,Mumbai,Inactive,Public relations officer,92277,2021-05-15,glassgabrielle@example.com,+1-890-325-0392
+EMP115,Justin Knight,59,Male,Finance,Chennai,Active,Neurosurgeon,146147,2025-12-14,patrick21@example.net,001-250-616-3159x9965
+EMP116,Joanne Perez,60,Male,Operations,Kolkata,On Leave,Surgeon,80328,2023-02-22,llopez@example.net,(719)343-1142x6265
+EMP117,Tommy Wallace,51,Female,IT,Mumbai,Inactive,Geophysicist/field seismologist,115990,2018-07-01,christopherjordan@example.net,+1-786-810-1581
+EMP118,Jason Maxwell,20,Male,Finance,Mumbai,Active,"Surveyor, land/geomatics",53053,2020-11-20,ginajackson@example.com,647-521-2646x4715
+EMP119,Kathleen Jensen,53,Female,Sales,Hyderabad,On Leave,"Programmer, systems",62662,2018-07-30,kevinrush@example.com,+1-965-775-6924x593
+EMP120,James Flores,27,Female,IT,Pune,Inactive,Recycling officer,90901,2026-07-22,markramirez@example.com,(619)339-8280x737
+EMP121,Rebecca Ortiz,53,Female,Finance,Hyderabad,Active,Restaurant manager,136824,2019-02-15,john26@example.com,279-779-6886
+EMP122,Robin Wheeler,52,Female,Marketing,Chennai,On Leave,Chartered certified accountant,147598,2018-08-14,dianekelly@example.net,+1-509-965-6101x438
+EMP123,Joel Frazier,30,Female,Finance,Bengaluru,Inactive,"Restaurant manager, fast food",128536,2019-04-28,whitney71@example.com,(911)925-4573x87571
+EMP124,Eric Patrick,35,Female,Marketing,Chennai,Active,Colour technologist,112149,2017-02-21,deborah23@example.net,(482)458-6736
+EMP125,Jessica Johnson,35,Female,Finance,Delhi,On Leave,Visual merchandiser,123525,2020-02-12,yvargas@example.org,001-933-341-9182x553
+EMP126,Scott Rose,38,Male,HR,Bengaluru,Inactive,Intelligence analyst,71904,2023-05-15,wmatthews@example.com,392.449.9125x134
+EMP127,Charles Price,54,Male,IT,Mumbai,Active,"Therapist, occupational",60311,2019-02-07,fhenderson@example.net,+1-928-227-4225
+EMP128,Tiffany Washington,44,Male,Operations,Mumbai,On Leave,"Engineer, broadcasting (operations)",38418,2023-04-16,fortiz@example.com,001-677-421-9034x043
+EMP129,Krystal Barton,46,Female,HR,Hyderabad,Inactive,Research scientist (life sciences),91069,2026-02-09,armstrongjoseph@example.net,(680)778-3613x407
+EMP130,Angie Grimes,46,Male,IT,Pune,Active,Commercial/residential surveyor,85069,2020-10-15,lisamatthews@example.com,001-696-429-2330x958
+EMP131,Michael Roberts,44,Male,Marketing,Chennai,On Leave,"Geologist, engineering",92518,2025-07-05,taylorkaren@example.com,9424232536
+EMP132,Debra Perry,20,Female,HR,Pune,Inactive,Production engineer,81116,2018-01-16,powellkara@example.net,(577)859-0175x186
+EMP133,Kathleen Morris,46,Male,Finance,Mumbai,Active,Herpetologist,65774,2022-07-03,ashleewashington@example.com,+1-600-417-0127x70632
+EMP134,Sherri Davis,47,Female,Sales,Chennai,On Leave,Media planner,74057,2021-01-06,watsonrebecca@example.org,9643361103
+EMP135,Darrell Frazier,45,Male,Finance,Mumbai,Inactive,Acupuncturist,111560,2016-11-23,lisa62@example.com,436-811-1554
+EMP136,Nicole Anderson,54,Male,Finance,Hyderabad,Active,Customer service manager,103975,2017-12-03,bishopfrank@example.com,001-732-869-7311x2196
+EMP137,Charles Hill,21,Male,Operations,Chennai,On Leave,Chartered accountant,47786,2020-12-24,kimberly04@example.org,398.236.4037x61379
+EMP138,Dr. Bonnie Valencia,49,Male,Sales,Bengaluru,Inactive,"Teacher, adult education",79689,2023-12-02,amy27@example.org,6918043006
+EMP139,James Davidson,40,Male,Finance,Bengaluru,Active,Soil scientist,74236,2019-05-10,christopher18@example.org,(285)569-1463
+EMP140,Jeffrey Chavez,44,Female,Finance,Bengaluru,On Leave,Transport planner,139433,2017-09-10,elizabeth21@example.org,001-620-327-5884x252
+EMP141,Alyssa Roman,25,Female,Sales,Kolkata,Inactive,Glass blower/designer,100702,2025-09-02,bakertheresa@example.net,777-485-0792
+EMP142,Brian Berry,23,Female,IT,Kolkata,Active,Commercial art gallery manager,38993,2020-08-23,williamsmichelle@example.org,5757622086
+EMP143,Thomas Flores,22,Male,IT,Mumbai,On Leave,Careers adviser,139999,2026-06-25,david02@example.org,606.617.4451x87053
+EMP144,Dana Richardson,21,Male,IT,Mumbai,Inactive,"Research officer, political party",92070,2020-01-31,edwardrandolph@example.org,585.505.0641
+EMP145,Tyrone Kaufman,27,Male,Finance,Kolkata,Active,Curator,63586,2021-07-08,williamsjesse@example.net,(457)519-1826x19906
+EMP146,Samuel Howe,43,Male,Marketing,Hyderabad,On Leave,"Nurse, learning disability",128032,2022-04-23,shawn31@example.org,(891)321-2775
+EMP147,Traci Clark,27,Male,HR,Delhi,Inactive,Insurance account manager,105849,2024-08-22,melissa12@example.net,690-435-2135x6804
+EMP148,Jared Chavez,21,Female,Marketing,Kolkata,Active,Statistician,149016,2021-01-03,murraylinda@example.org,600-332-3651
+EMP149,Austin Orr,44,Female,Operations,Mumbai,On Leave,"Producer, radio",39961,2018-12-13,steinmaria@example.com,207-802-9667
+EMP150,Carrie Lewis,57,Male,Sales,Kolkata,Inactive,"Embryologist, clinical",131250,2021-06-08,sean20@example.net,+1-493-847-6870x146

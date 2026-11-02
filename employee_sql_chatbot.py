@@ -69,6 +69,7 @@ from data_explorer import (
     is_generic_chart_request, is_overview_request, overview_answer, plan_charts,
 )
 from backend_diagnostics import BackendTrace, diagnostic_log, execution_code_log
+from demo_tables import demo_data_version, load_demo_tables
 from source_queries import (
     SALES_PLANNING_RULES, SourceMatchError, allows_unmatched_sources, discover_excel_sources, discover_sql_sources, execute_source_plan,
     local_source_plan, product_units_plan, requested_source_kinds, source_mode_for_question, source_planner_prompt,
@@ -86,7 +87,7 @@ if DATA_MODE not in {"sqlserver", "demo"}:
 SERVER = os.getenv("WORKFORCE_SQL_SERVER", r"localhost\SQLEXPRESS").strip()
 DATABASE = os.getenv("WORKFORCE_SQL_DATABASE", "EmployeeDB").strip()
 EMPLOYEE_TABLE = "Employees" if DATA_MODE == "demo" else "dbo.Employees"
-SOURCE_LABEL = "Bundled synthetic employee_dataset.xlsx" if DATA_MODE == "demo" else f"{DATABASE}.dbo.Employees"
+SOURCE_LABEL = "Bundled demo data (demo_data/Employees.csv)" if DATA_MODE == "demo" else f"{DATABASE}.dbo.Employees"
 TABLE = (
     "(SELECT [Employee ID] AS [emp_id], [Name] AS [name], [Age] AS [age], "
     "[Gender] AS [gender], [Department] AS [department], [City] AS [city], "
@@ -339,23 +340,28 @@ chat_scroll_component = st.components.v2.component(
 )
 
 
+@st.cache_resource(max_entries=1)
+def get_demo_engine(data_version: str) -> Engine:
+    tables = load_demo_tables()
+    employees = tables.get("Employees")
+    if employees is None:
+        raise ValueError("Demo dataset is missing the Employees table.")
+    missing = set(EMPLOYEE_COLUMN_NAMES) - set(employees.columns)
+    if missing:
+        raise ValueError(f"Demo dataset is missing columns: {', '.join(sorted(missing))}")
+    employees["Joining Date"] = pd.to_datetime(employees["Joining Date"], errors="raise").dt.strftime("%Y-%m-%d")
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool,
+    )
+    with engine.begin() as connection:
+        for name, frame in tables.items():
+            frame.to_sql(name, connection, index=False)
+        connection.exec_driver_sql("PRAGMA query_only = ON")
+    return engine
+
+
 @st.cache_resource
-def get_engine() -> Engine:
-    if DATA_MODE == "demo":
-        employees = pd.read_excel(Path(__file__).with_name("employee_dataset.xlsx"))
-        missing = set(EMPLOYEE_COLUMN_NAMES) - set(employees.columns)
-        if missing:
-            raise ValueError(f"Demo dataset is missing columns: {', '.join(sorted(missing))}")
-        employees["Joining Date"] = pd.to_datetime(employees["Joining Date"], errors="raise").dt.strftime("%Y-%m-%d")
-        products = pd.read_csv(Path(__file__).with_name("sql_products.csv"), dtype={"code": str, "product": str})
-        engine = create_engine(
-            "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool,
-        )
-        with engine.begin() as connection:
-            employees.to_sql("Employees", connection, index=False)
-            products.to_sql("sql_products", connection, index=False)
-            connection.exec_driver_sql("PRAGMA query_only = ON")
-        return engine
+def get_sql_server_engine() -> Engine:
     username = os.getenv("WORKFORCE_SQL_USERNAME", "").strip()
     password = os.getenv("WORKFORCE_SQL_PASSWORD", "")
     if bool(username) != bool(password):
@@ -386,6 +392,22 @@ def get_engine() -> Engine:
         query=connection_options,
     )
     return create_engine(database_url, pool_pre_ping=True, pool_recycle=1800, connect_args={"timeout": 10})
+
+
+class EngineProvider:
+    """Returns the active engine; demo engines are rebuilt when the bundled demo data changes."""
+
+    def __call__(self) -> Engine:
+        if DATA_MODE == "demo":
+            return get_demo_engine(demo_data_version())
+        return get_sql_server_engine()
+
+    def clear(self) -> None:
+        get_demo_engine.clear()
+        get_sql_server_engine.clear()
+
+
+get_engine = EngineProvider()
 
 
 def limit_query(sql: str, limit: int) -> str:
@@ -1154,7 +1176,7 @@ def get_demo_query_lock() -> Lock:
     return Lock()
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def list_database_tables() -> list[dict[str, Any]]:
     with get_demo_query_lock() if DATA_MODE == "demo" else nullcontext():
         sources, _ = discover_sql_sources(get_engine(), BackendTrace([]))

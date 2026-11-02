@@ -17,6 +17,7 @@ from streamlit.testing.v1 import AppTest
 from streamlit.runtime.scriptrunner import RerunData, RerunException
 
 from backend_diagnostics import BackendTrace, diagnostic_log
+from demo_tables import load_demo_tables
 from excel_support import read_excel_sheet, regional_sales_plan
 from source_queries import (
     DataSource, allows_unmatched_sources, compile_source_query, discover_excel_sources, discover_sql_sources,
@@ -1313,7 +1314,7 @@ class SourceQueryTests(unittest.TestCase):
             client.chat.completions.create.assert_not_called()
 
     def test_automatic_ui_queries_both_sources_and_displays_sources_and_download(self):
-        employees = pd.read_excel(ROOT / "employee_dataset.xlsx")
+        employees = load_demo_tables()["Employees"]
         budgets = employees.groupby("Department")["Salary"].sum().reset_index(name="Budget")
         budgets["Budget"] += 1000
         output = BytesIO()
@@ -1367,7 +1368,7 @@ class SourceQueryTests(unittest.TestCase):
             self.assertEqual(client.chat.completions.create.call_count, 1)
 
     def test_explicit_both_sources_works_from_excel_database_and_previous_failed_messages(self):
-        employees = pd.read_excel(ROOT / "employee_dataset.xlsx")
+        employees = load_demo_tables()["Employees"]
         budgets = employees.groupby("Department")["Salary"].sum().reset_index(name="Budget")
         budgets["Budget"] += 1000
         output = BytesIO()
@@ -1514,7 +1515,7 @@ class SourceQueryTests(unittest.TestCase):
             "sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False},
         )
         self.addCleanup(engine.dispose)
-        products = pd.read_csv(ROOT / "sql_products.csv")
+        products = load_demo_tables()["sql_products"]
         plans = [
             data_plan(sql=[{"source": "sql_1", "query": query(
                 columns=[], metrics=[{"function": "avg", "column": "price"}],

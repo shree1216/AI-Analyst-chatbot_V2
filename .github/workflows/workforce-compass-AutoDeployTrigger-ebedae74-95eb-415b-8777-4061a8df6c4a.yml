@@ -6,9 +6,9 @@ on:
   push:
     branches: 
       [ main ]
-    paths:
-    - '**'
-    - '.github/workflows/workforce-compass-AutoDeployTrigger-ebedae74-95eb-415b-8777-4061a8df6c4a.yml'
+    # The Azure app reads Azure SQL directly, so demo data syncs do not need a rebuild.
+    paths-ignore:
+    - 'demo_data/**'
 
   # Allow manual trigger 
   workflow_dispatch:      

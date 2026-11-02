@@ -11,6 +11,7 @@ import streamlit as st
 from sqlalchemy.exc import SQLAlchemyError
 from streamlit.testing.v1 import AppTest
 from backend_diagnostics import BackendTrace, diagnostic_log
+from demo_tables import REQUIRED_EMPLOYEE_COLUMNS, load_demo_tables
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,7 +34,7 @@ class DemoDatabaseTests(unittest.TestCase):
     def setUpClass(cls):
         with patch("dotenv.load_dotenv"), patch.dict(os.environ, TEST_ENVIRONMENT, clear=True):
             cls.chatbot = importlib.import_module("employee_sql_chatbot")
-        cls.employees = pd.read_excel(ROOT / "employee_dataset.xlsx")
+        cls.employees = load_demo_tables()["Employees"]
 
     def setUp(self):
         self.enterContext(patch("dotenv.load_dotenv"))
@@ -42,7 +43,7 @@ class DemoDatabaseTests(unittest.TestCase):
         self.enterContext(patch.multiple(
             self.chatbot, DATA_MODE="demo", EMPLOYEE_TABLE="Employees",
             TABLE=self.chatbot.TABLE.replace("dbo.Employees", "Employees"),
-            SOURCE_LABEL="Bundled synthetic employee_dataset.xlsx",
+            SOURCE_LABEL="Bundled demo data (demo_data/Employees.csv)",
         ))
         self.chatbot.get_engine.clear()
         self.chatbot.get_employee_names.clear()
@@ -137,7 +138,7 @@ class DemoDatabaseTests(unittest.TestCase):
         fixture["Salary"] = [80000, 80001, 79999, 90000, None]
         self.engine.dispose()
         self.chatbot.get_engine.clear()
-        with patch.object(self.chatbot.pd, "read_excel", return_value=fixture):
+        with patch.object(self.chatbot, "load_demo_tables", return_value={"Employees": fixture}):
             self.engine = self.chatbot.get_engine()
         self.assertEqual(self.query("How many female employees have a salary above 80000?").iloc[0, 0], 1)
         self.assertEqual(self.query("How many female employees have a salary at least 80000?").iloc[0, 0], 2)
@@ -161,7 +162,7 @@ class DemoDatabaseTests(unittest.TestCase):
         fixture["Joining Date"] = ["2022-12-31", "2023-01-01", "2023-12-31", "2024-01-01", None]
         self.engine.dispose()
         self.chatbot.get_engine.clear()
-        with patch.object(self.chatbot.pd, "read_excel", return_value=fixture):
+        with patch.object(self.chatbot, "load_demo_tables", return_value={"Employees": fixture}):
             self.engine = self.chatbot.get_engine()
         self.assertEqual(self.query("How many employees joined during 2023?").iloc[0, 0], 2)
 
@@ -223,9 +224,10 @@ class DemoDatabaseTests(unittest.TestCase):
                 self.assertTrue(result["department"].is_unique)
 
     def test_demo_database_includes_bundled_product_table(self):
-        expected = pd.read_csv(ROOT / "sql_products.csv", dtype={"code": str, "product": str})
+        self.assertEqual(set(REQUIRED_EMPLOYEE_COLUMNS), set(self.chatbot.EMPLOYEE_COLUMN_NAMES))
+        expected = load_demo_tables()["sql_products"]
         result = self.chatbot.run_query("SELECT code, product, price FROM sql_products ORDER BY code")
-        pd.testing.assert_frame_equal(result, expected.sort_values("code").reset_index(drop=True))
+        pd.testing.assert_frame_equal(result, expected.sort_values("code").reset_index(drop=True), check_dtype=False)
         tables = {table["name"]: table for table in self.chatbot.list_database_tables()}
         self.assertEqual(set(tables), {"main.Employees", "main.sql_products"})
         self.assertEqual(tables["main.Employees"]["rows"], len(self.employees))
@@ -266,10 +268,30 @@ class DemoDatabaseTests(unittest.TestCase):
         self.assertEqual(counts, [len(self.employees)] * 12)
 
     def test_invalid_demo_dataset_fails_explicitly(self):
-        self.chatbot.get_engine.clear()
-        with patch.object(self.chatbot.pd, "read_excel", return_value=pd.DataFrame({"Name": ["Demo"]})):
-            with self.assertRaisesRegex(ValueError, "Demo dataset is missing columns"):
-                self.chatbot.get_engine()
+        for tables, message in (
+            ({"Employees": pd.DataFrame({"Name": ["Demo"]})}, "Demo dataset is missing columns"),
+            ({"sql_products": pd.DataFrame({"code": ["P1"]})}, "missing the Employees table"),
+        ):
+            self.chatbot.get_engine.clear()
+            with self.subTest(message=message), patch.object(self.chatbot, "load_demo_tables", return_value=tables):
+                with self.assertRaisesRegex(ValueError, message):
+                    self.chatbot.get_engine()
+
+    def test_demo_engine_reloads_when_bundled_data_changes(self):
+        products = load_demo_tables()["sql_products"]
+        changed = {**load_demo_tables(), "sql_products": pd.concat(
+            [products, pd.DataFrame({"code": ["P99"], "product": ["Stapler"], "price": [12.5]})],
+            ignore_index=True,
+        )}
+        self.assertIs(self.chatbot.get_engine(), self.engine)
+        with patch.object(self.chatbot, "demo_data_version", return_value="changed-version"), patch.object(
+            self.chatbot, "load_demo_tables", return_value=changed,
+        ):
+            reloaded = self.chatbot.get_engine()
+            self.assertIsNot(reloaded, self.engine)
+            count = self.chatbot.run_query("SELECT COUNT(*) FROM sql_products").iloc[0, 0]
+        self.assertEqual(count, len(products) + 1)
+        reloaded.dispose()
 
     def test_report_has_real_data_and_generates_pdf(self):
         question = "Create a PDF report comparing department pay"
