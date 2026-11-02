@@ -253,7 +253,7 @@ class DemoDatabaseTests(unittest.TestCase):
         self.assertIn("main.Employees", listing)
         self.assertIn(f"{len(self.employees)} rows", listing)
         self.assertIn("main.sql_products", listing)
-        self.assertIn("4 rows", listing)
+        self.assertIn(f"{len(load_demo_tables()['sql_products'])} rows", listing)
         self.assertIn("<span>price</span>", listing)
 
     def test_demo_database_rejects_writes_and_supports_parallel_reads(self):
@@ -392,7 +392,7 @@ class DemoDatabaseTests(unittest.TestCase):
 
     def test_employee_trace_includes_sql_and_result_details(self):
         message = {"question": "How many employees?", "request": None, "pending_query": True}
-        self.assertIn("150 employees", self.chatbot.display_employee_message(message, "detailed_log_schema"))
+        self.assertIn(f"{len(self.employees)} employees", self.chatbot.display_employee_message(message, "detailed_log_schema"))
         self.assertEqual(message["backend_log"][0]["route"], "sqlite_demo")
         self.assertEqual(message["backend_log"][-1]["event"], "request_completed")
         queries = [event for event in message["backend_log"] if event["event"] == "query_started"]

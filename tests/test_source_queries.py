@@ -1552,7 +1552,7 @@ class SourceQueryTests(unittest.TestCase):
             for question, expected, source in (
                 ("What is the average price in sql_products?", products["price"].mean(), "sql_products"),
                 ("How many distinct products exist in sql_products?", products["product"].nunique(), "sql_products"),
-                ("How many employees?", 150, "Employees"),
+                ("How many employees?", len(load_demo_tables()["Employees"]), "Employees"),
             ):
                 app.chat_input[0].set_value(question).run(timeout=30)
                 self.assertEqual(len(app.exception), 0)
