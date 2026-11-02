@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 import pandas as pd
+import streamlit as st
 from sqlalchemy.exc import SQLAlchemyError
 from streamlit.testing.v1 import AppTest
 from backend_diagnostics import BackendTrace, diagnostic_log
@@ -45,12 +46,14 @@ class DemoDatabaseTests(unittest.TestCase):
         ))
         self.chatbot.get_engine.clear()
         self.chatbot.get_employee_names.clear()
+        self.chatbot.list_database_tables.clear()
         self.engine = self.chatbot.get_engine()
 
     def tearDown(self):
         self.engine.dispose()
         self.chatbot.get_engine.clear()
         self.chatbot.get_employee_names.clear()
+        self.chatbot.list_database_tables.clear()
 
     def query(self, question, *, known_template=False):
         translate = self.chatbot.translate_known_question if known_template else self.chatbot.translate_question
@@ -218,6 +221,38 @@ class DemoDatabaseTests(unittest.TestCase):
                 result = self.chatbot.run_query(request.sql, request.parameters)
                 self.assertEqual(len(result), plan["limit"])
                 self.assertTrue(result["department"].is_unique)
+
+    def test_demo_database_includes_bundled_product_table(self):
+        expected = pd.read_csv(ROOT / "sql_products.csv", dtype={"code": str, "product": str})
+        result = self.chatbot.run_query("SELECT code, product, price FROM sql_products ORDER BY code")
+        pd.testing.assert_frame_equal(result, expected.sort_values("code").reset_index(drop=True))
+        tables = {table["name"]: table for table in self.chatbot.list_database_tables()}
+        self.assertEqual(set(tables), {"main.Employees", "main.sql_products"})
+        self.assertEqual(tables["main.Employees"]["rows"], len(self.employees))
+        self.assertEqual(tables["main.sql_products"]["rows"], len(expected))
+        self.assertEqual([name for name, _ in tables["main.sql_products"]["columns"]], ["code", "product", "price"])
+
+    def test_database_tables_browser_loads_only_when_opened(self):
+        app = employee_app().run(timeout=30)
+        self.assertEqual(len(app.exception), 0)
+        self.assertEqual([item.label for item in app.sidebar.expander if item.label == "Database tables"],
+                         ["Database tables"])
+        self.assertFalse(any("db-table" in item.value for item in app.sidebar.markdown))
+        st.cache_data.clear()
+        app.session_state["database_tables"] = True
+        with patch("pandas.read_sql", side_effect=SQLAlchemyError("private connection details")):
+            app.run(timeout=30)
+        self.assertEqual(len(app.exception), 0)
+        self.assertTrue(any("Could not list database tables" in item.value for item in app.sidebar.warning))
+        self.assertFalse(any("private connection details" in item.value for item in app.sidebar.warning))
+        app.session_state["database_tables"] = True
+        app.run(timeout=30)
+        listing = next(item.value for item in app.sidebar.markdown if "db-table" in item.value)
+        self.assertIn("main.Employees", listing)
+        self.assertIn(f"{len(self.employees)} rows", listing)
+        self.assertIn("main.sql_products", listing)
+        self.assertIn("4 rows", listing)
+        self.assertIn("<span>price</span>", listing)
 
     def test_demo_database_rejects_writes_and_supports_parallel_reads(self):
         with self.engine.connect() as connection:

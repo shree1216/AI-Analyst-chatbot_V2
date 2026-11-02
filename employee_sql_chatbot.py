@@ -347,11 +347,13 @@ def get_engine() -> Engine:
         if missing:
             raise ValueError(f"Demo dataset is missing columns: {', '.join(sorted(missing))}")
         employees["Joining Date"] = pd.to_datetime(employees["Joining Date"], errors="raise").dt.strftime("%Y-%m-%d")
+        products = pd.read_csv(Path(__file__).with_name("sql_products.csv"), dtype={"code": str, "product": str})
         engine = create_engine(
             "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool,
         )
         with engine.begin() as connection:
             employees.to_sql("Employees", connection, index=False)
+            products.to_sql("sql_products", connection, index=False)
             connection.exec_driver_sql("PRAGMA query_only = ON")
         return engine
     username = os.getenv("WORKFORCE_SQL_USERNAME", "").strip()
@@ -1150,6 +1152,50 @@ def is_safe_generated_query(sql: str) -> bool:
 @st.cache_resource
 def get_demo_query_lock() -> Lock:
     return Lock()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def list_database_tables() -> list[dict[str, Any]]:
+    with get_demo_query_lock() if DATA_MODE == "demo" else nullcontext():
+        sources, _ = discover_sql_sources(get_engine(), BackendTrace([]))
+    tables = []
+    for source in sources.values():
+        row_count = run_query(f"SELECT COUNT(*) AS row_count FROM {source.table}").iloc[0, 0]
+        tables.append({
+            "name": source.label, "rows": int(row_count),
+            "columns": [(name, (source.sql_types or {}).get(name, kind)) for name, kind in source.schema.items()],
+        })
+    return sorted(tables, key=lambda table: table["name"].casefold())
+
+
+def render_database_tables() -> None:
+    tables_panel = st.expander(
+        "Database tables", key="database_tables", on_change="rerun", icon=":material/table_view:",
+    )
+    with tables_panel:
+        if not tables_panel.open:
+            return
+        try:
+            tables = list_database_tables()
+        except (SQLAlchemyError, ValueError) as error:
+            logger.warning("Database table listing failed: %s", type(error).__name__)
+            st.warning("Could not list database tables. Use Test employee data connection to check access.")
+            return
+        if not tables:
+            st.info("No readable tables were found.")
+            return
+        items = []
+        for table in tables:
+            columns = "".join(
+                f'<li><span>{escape(name)}</span><code>{escape(column_type)}</code></li>'
+                for name, column_type in table["columns"]
+            )
+            items.append(
+                f'<details class="db-table"><summary><span class="db-table-name">{escape(table["name"])}</span>'
+                f'<span class="db-table-rows">{table["rows"]:,} rows</span></summary>'
+                f'<ul class="db-table-columns">{columns}</ul></details>'
+            )
+        st.markdown("".join(items), unsafe_allow_html=True)
 
 
 def run_query(sql: str, parameters: dict[str, Any] | None = None) -> pd.DataFrame:
@@ -4925,6 +4971,69 @@ def apply_theme() -> None:
                 text-transform: uppercase;
             }
 
+            .db-table {
+                border-bottom: 1px solid var(--wc-line);
+                font-size: 0.82rem;
+            }
+
+            .db-table summary {
+                align-items: center;
+                cursor: pointer;
+                display: flex;
+                gap: 0.4rem;
+                list-style: none;
+                padding: 0.4rem 0;
+            }
+
+            .db-table summary::-webkit-details-marker {
+                display: none;
+            }
+
+            .db-table summary::before {
+                color: var(--wc-muted);
+                content: "+";
+                font-weight: 700;
+                text-align: center;
+                width: 0.9rem;
+            }
+
+            .db-table[open] summary::before {
+                content: "\\2212";
+            }
+
+            .db-table-name {
+                color: var(--wc-ink);
+                flex: 1;
+                font-weight: 600;
+                overflow-wrap: anywhere;
+            }
+
+            .db-table-rows {
+                color: var(--wc-muted);
+                font-size: 0.72rem;
+                white-space: nowrap;
+            }
+
+            .db-table-columns {
+                list-style: none;
+                margin: 0 0 0.5rem 1.3rem;
+                padding: 0;
+            }
+
+            .db-table-columns li {
+                color: var(--wc-muted);
+                display: flex;
+                gap: 0.5rem;
+                justify-content: space-between;
+                margin: 0;
+                padding: 0.12rem 0;
+            }
+
+            .db-table-columns code {
+                font-size: 0.68rem;
+                white-space: nowrap;
+            }
+
             .recent-chat {
                 border-radius: 6px;
                 overflow: hidden;
@@ -5245,6 +5354,7 @@ with st.sidebar:
     if not excel_selected:
         backend = "SQLite demo (not SQL Server)" if DATA_MODE == "demo" else "SQL Server"
         if st.button("Test employee data connection", key="test_employee_connection"):
+            list_database_tables.clear()
             connection_trace = BackendTrace([])
             st.session_state["employee_connection_log"] = connection_trace.events
             st.session_state.pop("employee_connection_log_error", None)
@@ -5289,6 +5399,7 @@ with st.sidebar:
                     f"Verified {backend}: {connection_status['count']:,} employee rows "
                     f"(last checked {connection_status['checked_at']})."
                 )
+        render_database_tables()
     if excel_selected or automatic_selected:
         upload = st.file_uploader(
             "Upload Excel or CSV file", type=["xlsx", "csv"], max_upload_size=10,

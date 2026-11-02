@@ -1514,11 +1514,7 @@ class SourceQueryTests(unittest.TestCase):
             "sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False},
         )
         self.addCleanup(engine.dispose)
-        with engine.begin() as connection:
-            pd.DataFrame({
-                "code": ["A", "B", "C", "D"], "product": ["One", "Two", "Three", "Four"],
-                "price": [10, 20, 30, 40],
-            }).to_sql("sql_products", connection, index=False)
+        products = pd.read_csv(ROOT / "sql_products.csv")
         plans = [
             data_plan(sql=[{"source": "sql_1", "query": query(
                 columns=[], metrics=[{"function": "avg", "column": "price"}],
@@ -1553,8 +1549,8 @@ class SourceQueryTests(unittest.TestCase):
             app.radio(key="data_source").set_value("Employee database").run(timeout=30)
             app.session_state["excel_workbook"] = {"content": workbook_bytes()}
             for question, expected, source in (
-                ("What is the average price in sql_products?", 25, "sql_products"),
-                ("How many distinct products exist in sql_products?", 4, "sql_products"),
+                ("What is the average price in sql_products?", products["price"].mean(), "sql_products"),
+                ("How many distinct products exist in sql_products?", products["product"].nunique(), "sql_products"),
                 ("How many employees?", 150, "Employees"),
             ):
                 app.chat_input[0].set_value(question).run(timeout=30)

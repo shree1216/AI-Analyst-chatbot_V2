@@ -89,6 +89,9 @@ are not a replacement for database permissions or access controls.
 
 - Automatically discover SQL tables and Excel worksheets, select only the sources
   needed for a question, and compare SQL actuals with Excel targets/budgets/lookups.
+- Browse the connected database from **Database tables** in the sidebar: open it
+  to list every readable table with its row count, then select **+** beside a
+  table to see its columns and types. Tables load only when the panel is opened.
 - Ask natural-language questions about employees, departments, salaries, cities,
   employment status, and joining dates.
 - Generate workforce breakdowns and interactive charts.
@@ -956,6 +959,7 @@ the new **Data source** controls appear; local tests alone do not update it.
 | `backend_diagnostics.py` | Privacy-safe request traces, rotating server log files, and session log downloads |
 | `source_queries.py` | Live SQL/Excel source discovery, source-plan validation, and bounded cross-source execution |
 | `employee_dataset.xlsx` | Synthetic 150-employee sample dataset |
+| `sql_products.csv` | Small product catalog loaded as `sql_products` in demo mode |
 | `generate_employee_dataset.py` | Recreates the sample Excel dataset |
 | `import_employees_data.py` | Creates `EmployeeDB` and imports `dbo.Employees` |
 | `.env.example` | Template for optional Azure and SMTP settings |
@@ -1264,7 +1268,8 @@ other confidential information.
    renders `Show a bar chart of employee count by department`, and downloads a PDF.
    Share the URL shown by Streamlit after these checks succeed.
 
-Demo mode loads `employee_dataset.xlsx` into SQLite once per application process,
+Demo mode loads `employee_dataset.xlsx` (as `Employees`) and `sql_products.csv`
+(as `sql_products`) into SQLite once per application process,
 uses the same query validation and bound parameters as the local app, and rejects
 database writes. No SQL Server, ODBC driver configuration, or cloud database
 account is required. The original SQL Server mode remains the default when
@@ -1354,6 +1359,28 @@ Connection attempts have a 10-second login timeout. SQL mode never silently
 falls back to demo data. After changing database settings, reboot the app to
 discard any previously cached database engine, then select **Test employee data
 connection** to verify the actual database row count.
+
+#### Azure Container Apps with Azure SQL
+
+The Docker image above listens on port **8501**. Set the Container App ingress
+target port to **8501**, not the default port 80. Use the SQL settings above as
+container environment variables, with the Azure SQL server's
+`<server>.database.windows.net` hostname and port `1433`.
+Keep certificate validation enabled.
+
+Store the SQL username and password as Container Apps secrets and reference them
+from `WORKFORCE_SQL_USERNAME` and `WORKFORCE_SQL_PASSWORD`; do not bake credentials
+into the image. Use a dedicated read-only database user with `SELECT` grants only
+on the tables approved for the chatbot. Schema discovery respects that user's
+table visibility.
+
+Before importing local data, compare the destination schema and rows. If matching
+copies already exist, connect to them without overwriting data. After deploying
+the connection settings, verify the new revision is healthy, test the employee
+data connection, and ask questions against each approved table in the hosted app.
+Automatic source selection and flexible table questions also require the Azure
+OpenAI settings listed above. Without those settings, choose **Employee database**
+for supported template questions such as `How many employees do we have?`.
 
 ### Docker on the same PC as SQL Server Express
 
