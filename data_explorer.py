@@ -31,6 +31,7 @@ AVERAGE_FIRST = re.compile(r"salary|salaries|pay|wage|rating|score|price|rate|ag
 COLORS = ["#0F766E", "#2563EB", "#D97706", "#DB2777", "#64748B", "#65A30D", "#7C3AED", "#DC2626"]
 MAX_CATEGORIES = 25
 MAX_AUTO_CHARTS = 4
+MAX_SCATTER_POINTS = 500
 
 
 # --------------------------------------------------------------------------- upload conversion
@@ -139,7 +140,8 @@ def _to_number(value: Any) -> float | None:
     if isinstance(value, str):
         text = re.sub(r"(?i)^(?:rs\.?|inr|usd)\s*|[\s,₹$€£]", "", value.strip())
         if _PLAIN_NUMBER.fullmatch(text):
-            return float(text)
+            number = float(text)
+            return number if math.isfinite(number) else None
     return None
 
 
@@ -275,13 +277,14 @@ def overview_answer(frame: pd.DataFrame, summary: pd.DataFrame, source: str) -> 
 
 @dataclass
 class ChartSpec:
-    kind: str                     # "group", "count", "time", "histogram"
-    chart_type: str               # "bar", "column", "line", "pie", "histogram"
+    kind: str                     # group, count, time, histogram, scatter
+    chart_type: str
     measure: str | None = None
     dimension: str | None = None
     aggregate: str = "count"      # count, sum, average, median, min, max
     period: str = "year"          # year or month for time charts
     noun: str = "rows"
+    category_limit: int = MAX_CATEGORIES
 
 
 @dataclass
@@ -307,7 +310,9 @@ _GENERIC_CHARTS = re.compile(
     r"(?:\s+(?:for|from|of|on|about)\s+(?:the\s+|this\s+|my\s+)?(?:data|dataset|file|sheet|csv|table))?(?:\s+please)?",
     re.I,
 )
-_CHART_WORDS = re.compile(r"\b(?:charts?|graphs?|plots?|dashboard|visuali[sz]e|visuali[sz]ation|histogram|pie|trend)\b", re.I)
+_CHART_WORDS = re.compile(
+    r"\b(?:charts?|graphs?|plots?|dashboard|visuali[sz]e|visuali[sz]ation|histogram|pie|trend|scatter|correlation|relationship)\b", re.I,
+)
 
 
 def chart_presentation_question(question: str) -> str:
@@ -403,9 +408,13 @@ def _usable_dimension(column: str, kind: str, frame: pd.DataFrame) -> bool:
 
 
 def _requested_type(text: str) -> str | None:
-    for pattern, kind in ((r"\bpie|donut|doughnut|share|proportion|percentage\b", "pie"), (r"\bline|trend\b", "line"),
-                          (r"\bhistogram|distribution|spread\b", "histogram"), (r"\bcolumn|vertical\b", "column"),
-                          (r"\bbar\b|horizontal", "bar")):
+    for pattern, kind in (
+        (r"\b(?:scatter|relationship|correlation)\b", "scatter"),
+        (r"\b(?:donut|doughnut)\b", "doughnut"), (r"\b(?:pie|share|proportion|percentage)\b", "pie"),
+        (r"\barea\s+(?:chart|graph|plot)\b", "area"), (r"\b(?:line|trend)\b", "line"),
+        (r"\b(?:histogram|distribution|spread)\b", "histogram"), (r"\b(?:column|vertical)\b", "column"),
+        (r"\bbar\b|horizontal", "bar"),
+    ):
         if re.search(pattern, text):
             return kind
     return None
@@ -430,7 +439,8 @@ def plan_charts(question: str, frame: pd.DataFrame) -> list[ChartSpec] | None:
     vocabulary = (
         "please can could you me make create generate build draw show give plot produce add insert "
         "a an the my this data file chart charts graph graphs plot plots "
-        "bar column vertical horizontal line pie donut doughnut histogram distribution spread trend "
+        "bar column vertical horizontal line pie donut doughnut area scatter histogram distribution spread trend "
+        "relationship correlation between vs versus against and "
         "average avg mean total sum median highest maximum max largest lowest minimum min smallest "
         "how many number of count headcount by per for each every across in within "
         "year yearly annual annually month monthly over time"
@@ -469,6 +479,18 @@ def _plan_charts(question: str, frame: pd.DataFrame) -> list[ChartSpec] | None:
     noun_match = re.search(rf"\b({_COUNT_NOUNS})\b", text)
     noun = noun_match[1] if noun_match and noun_match[1] not in {"row", "rows", "record", "records", "sales"} else _default_noun(frame)
 
+    if requested == "scatter":
+        pair = re.search(
+            r"\b(?:scatter(?:\s+(?:chart|plot|graph))?(?:\s+(?:of|for|showing))?|"
+            r"(?:relationship|correlation)\s+between)\s+(?P<x>.+?)\s+"
+            r"(?:vs\.?|versus|against|and)\s+(?P<y>.+)", text,
+        )
+        x = _find_column(pair["x"], columns, numeric) if pair else None
+        y = _find_column(pair["y"], columns, numeric) if pair else None
+        if x is None or y is None or x == y:
+            return None
+        return [ChartSpec("scatter", "scatter", y, x, "none", noun=noun)]
+
     aggregate, measure = None, None
     for pattern, name in _AGGREGATE_WORDS:
         match = re.search(rf"\b(?:{pattern})\b\s*(?:the\s+|of\s+)?(?P<rest>.*)", text)
@@ -487,6 +509,8 @@ def _plan_charts(question: str, frame: pd.DataFrame) -> list[ChartSpec] | None:
         else None
     )
     if period and date_columns:
+        if requested == "histogram":
+            return None
         stems = {_stem(word)[:4] for word in _words(text) if len(word) > 3}
         date_column = next((column for column in date_columns if any(token[:4] in stems for token in _column_tokens(column))),
                            date_columns[0] if len(date_columns) == 1 else None)
@@ -494,7 +518,7 @@ def _plan_charts(question: str, frame: pd.DataFrame) -> list[ChartSpec] | None:
             return None
         if measure is not None and aggregate in {None, "count"}:
             aggregate = "average" if AVERAGE_FIRST.search(measure) else "sum"
-        return [ChartSpec("time", "line" if requested in {None, "line"} else "column", measure if aggregate != "count" else None,
+        return [ChartSpec("time", requested or "line", measure if aggregate != "count" else None,
                           date_column, aggregate or "count", period, noun)]
 
     dimension = None
@@ -531,10 +555,11 @@ def _plan_charts(question: str, frame: pd.DataFrame) -> list[ChartSpec] | None:
     if measure is not None:
         if aggregate in {None, "count"}:
             aggregate = "average" if AVERAGE_FIRST.search(measure) else "sum"
-        return [ChartSpec("group", requested if requested in {"bar", "column", "pie", "line"} else "bar",
+        return [ChartSpec("group", requested if requested in {"bar", "column", "pie", "doughnut", "line", "area"} else "bar",
                           measure, dimension, aggregate, noun=noun)]
     if aggregate == "count" or _CHART_WORDS.search(text) or re.search(r"\b(?:breakdown|split|distribution)\b", text):
-        return [ChartSpec("count", requested if requested in {"bar", "column", "pie"} else "bar", None, dimension, "count", noun=noun)]
+        return [ChartSpec("count", requested if requested in {"bar", "column", "pie", "doughnut", "line", "area"} else "bar",
+                          None, dimension, "count", noun=noun)]
     return None
 
 
@@ -571,6 +596,10 @@ def auto_charts(frame: pd.DataFrame) -> list[ChartSpec]:
         specs.append(ChartSpec("time", "line", None, date_columns[0], "count", period, noun))
     if measures:
         specs.append(ChartSpec("histogram", "histogram", measures[0], aggregate="count", noun=noun))
+    if len(specs) < MAX_AUTO_CHARTS and len(measures) > 1:
+        pairs = pd.DataFrame({column: numbers(frame[column]) for column in measures[:2]}).dropna()
+        if 2 <= len(pairs) <= MAX_SCATTER_POINTS:
+            specs.append(ChartSpec("scatter", "scatter", measures[1], measures[0], "none", noun=noun))
     if len(specs) < MAX_AUTO_CHARTS and len(dimensions) > 1:
         groups = categories(frame[dimensions[1]]).nunique()
         specs.append(ChartSpec("count", "pie" if groups <= 6 else "bar", None, dimensions[1], "count", noun=noun))
@@ -598,9 +627,52 @@ def _left_out(total: int, used: int, what: str) -> str:
     return f" {skipped:,} of {total:,} rows were left out because {what} was missing or unreadable." if skipped else ""
 
 
+def _chart_figure(table: pd.DataFrame, chart_type: str):
+    dimension, value = table.columns
+    if chart_type in {"pie", "doughnut"}:
+        if (table[value] < 0).any() or table[value].sum() <= 0:
+            raise ValueError("Pie and doughnut charts need nonnegative values and a positive total. Use a bar chart for signed values.")
+        figure = px.pie(table, names=dimension, values=value, hole=0.45 if chart_type == "doughnut" else 0,
+                        color_discrete_sequence=COLORS)
+        figure.update_traces(textinfo="label+percent", sort=False)
+        return figure
+    if chart_type == "scatter":
+        return px.scatter(table, x=dimension, y=value, color_discrete_sequence=COLORS)
+    if chart_type == "line":
+        return px.line(table, x=dimension, y=value, markers=True, color_discrete_sequence=COLORS)
+    if chart_type == "area":
+        figure = px.area(table, x=dimension, y=value, markers=True, color_discrete_sequence=COLORS)
+        figure.update_traces(fill="tozeroy")
+        return figure
+    if chart_type == "bar":
+        figure = px.bar(table, x=value, y=dimension, orientation="h", text=value, color_discrete_sequence=COLORS)
+        figure.update_yaxes(autorange="reversed", type="category")
+        return figure
+    return px.bar(table, x=dimension, y=value, text=value, color_discrete_sequence=COLORS)
+
+
 def build_chart(frame: pd.DataFrame, spec: ChartSpec) -> ChartResult:
     total = len(frame)
     noun = spec.noun
+    if spec.kind == "scatter":
+        if spec.dimension == spec.measure:
+            raise ValueError("Choose two different numeric columns for a scatter chart.")
+        table = pd.DataFrame({
+            spec.dimension: numbers(frame[spec.dimension]), spec.measure: numbers(frame[spec.measure]),
+        }).dropna().reset_index(drop=True)
+        if len(table) < 2:
+            raise ValueError("A scatter chart needs at least two rows with both numeric values.")
+        if len(table) > MAX_SCATTER_POINTS:
+            raise ValueError(f"A scatter chart supports at most {MAX_SCATTER_POINTS} points. Filter the data first; no rows were sampled.")
+        title = f"{spec.measure} vs {spec.dimension}"
+        explanation = f"Each point represents one row, comparing {spec.dimension} with {spec.measure} ({len(table):,} pairs)."
+        if len(table) >= 3 and table.nunique().min() > 1:
+            correlation = table.iloc[:, 0].corr(table.iloc[:, 1])
+            explanation += f" Pearson correlation is {correlation:.2f}; correlation does not establish cause and effect."
+        else:
+            explanation += "There is not enough variation or enough pairs to report a correlation."
+        explanation += _left_out(total, len(table), f"{spec.dimension} or {spec.measure}")
+        return _finish(ChartResult(title, "scatter", table, explanation, _chart_figure(table, "scatter")))
     if spec.kind == "time":
         when = dates(frame[spec.dimension])
         period = when.dt.year if spec.period == "year" else when.dt.to_period("M").astype(str).where(when.notna(), None)
@@ -636,8 +708,7 @@ def build_chart(frame: pd.DataFrame, spec: ChartSpec) -> ChartResult:
         explanation += (f" The highest was {peak[label]} with {_fmt(peak[value_name])}, and the lowest was "
                         f"{low[label]} with {_fmt(low[value_name])}.")
         explanation += _left_out(total, len(data), f"the {spec.dimension}" + (f" or {spec.measure}" if spec.measure else ""))
-        figure = px.line(table, x=label, y=value_name, markers=True, color_discrete_sequence=COLORS) if spec.chart_type == "line" \
-            else px.bar(table, x=label, y=value_name, text=value_name, color_discrete_sequence=COLORS)
+        figure = _chart_figure(table, spec.chart_type)
         if spec.period == "year":
             figure.update_xaxes(dtick=1)
         return _finish(ChartResult(title, spec.chart_type, table, explanation, figure))
@@ -682,9 +753,11 @@ def build_chart(frame: pd.DataFrame, spec: ChartSpec) -> ChartResult:
         table = data.groupby(spec.dimension)["value"].agg(method).rename(value_name).reset_index()
         table = table.sort_values(value_name, ascending=False, kind="stable").reset_index(drop=True)
     others = 0
-    if len(table) > MAX_CATEGORIES:
-        others = len(table) - MAX_CATEGORIES
-        table = table.head(MAX_CATEGORIES)
+    if len(table) > spec.category_limit:
+        if spec.chart_type in {"pie", "doughnut"}:
+            raise ValueError(f"Too many categories for a complete share chart. Filter to at most {spec.category_limit} groups or use a bar chart.")
+        others = len(table) - spec.category_limit
+        table = table.head(spec.category_limit)
     top, bottom = table.iloc[0], table.iloc[-1]
     if spec.kind == "count":
         title = f"{value_name} by {spec.dimension}"
@@ -705,17 +778,10 @@ def build_chart(frame: pd.DataFrame, spec: ChartSpec) -> ChartResult:
         )
         explanation += _left_out(total, len(data), f"the {spec.dimension} or {spec.measure}")
     if others:
-        explanation += f" Only the top {MAX_CATEGORIES} groups are shown; {others} smaller groups were left out."
-    if spec.chart_type == "pie":
-        figure = px.pie(table, names=spec.dimension, values=value_name, color_discrete_sequence=COLORS)
-        figure.update_traces(textinfo="label+percent", sort=False)
-    elif spec.chart_type == "column":
-        figure = px.bar(table, x=spec.dimension, y=value_name, text=value_name, color_discrete_sequence=COLORS)
-    elif spec.chart_type == "line":
-        figure = px.line(table, x=spec.dimension, y=value_name, markers=True, color_discrete_sequence=COLORS)
-    else:
-        figure = px.bar(table, x=value_name, y=spec.dimension, orientation="h", text=value_name, color_discrete_sequence=COLORS)
-        figure.update_yaxes(autorange="reversed", type="category")
+        explanation += f" Only the top {spec.category_limit} groups are shown; {others} smaller groups were left out."
+    if spec.chart_type in {"line", "area"}:
+        table = table.sort_values(spec.dimension, kind="stable").reset_index(drop=True)
+    figure = _chart_figure(table, spec.chart_type)
     pairs = possible_duplicates([str(label) for label in groups.dropna().unique()])
     note = (
         "Data note: some groups may be the same thing written differently ("
@@ -735,7 +801,7 @@ def _finish(result: ChartResult) -> ChartResult:
         title=result.title, height=max(380, len(result.table) * 26 + 120) if horizontal else 400,
         margin={"l": 24, "r": 48, "t": 64, "b": 40}, paper_bgcolor="#F7F8FA", plot_bgcolor="#FFFFFF", showlegend=False,
     )
-    if result.chart_type == "pie":
+    if result.chart_type in {"pie", "doughnut"}:
         figure.update_layout(showlegend=True)
     return result
 

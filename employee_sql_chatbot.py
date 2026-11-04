@@ -69,6 +69,7 @@ from data_explorer import (
     is_generic_chart_request, is_overview_request, overview_answer, plan_charts,
 )
 from backend_diagnostics import BackendTrace, diagnostic_log, execution_code_log
+from spreadsheet_analytics import render_spreadsheet_analysis
 from demo_tables import demo_data_version, load_demo_tables
 from source_queries import (
     SALES_PLANNING_RULES, SourceMatchError, allows_unmatched_sources, discover_excel_sources, discover_sql_sources, execute_source_plan,
@@ -2244,15 +2245,20 @@ def create_query_chart(result: pd.DataFrame, title: str, value_label: str, chart
         result[category_column] = [(lower + upper) / 2 for lower, upper in zip(bin_edges, bin_edges[1:])]
     is_salary = "salary" in value_label.lower()
     horizontal = chart_type == "bar"
-    if chart_type in {"pie", "donut"}:
+    if chart_type in {"pie", "donut", "doughnut"}:
         figure = px.pie(
             result, names=category_column, values=value_column,
-            hole=0.45 if chart_type == "donut" else 0,
+            hole=0.45 if chart_type in {"donut", "doughnut"} else 0,
             color_discrete_sequence=["#0F766E", "#2563EB", "#D97706", "#DB2777", "#64748B", "#65A30D"],
         )
         figure.update_traces(textinfo="label+percent", sort=False)
     elif chart_type == "line":
         figure = px.line(result, x=category_column, y=value_column, markers=True, color_discrete_sequence=["#0F766E"])
+    elif chart_type == "area":
+        figure = px.area(result, x=category_column, y=value_column, markers=True, color_discrete_sequence=["#0F766E"])
+        figure.update_traces(fill="tozeroy")
+    elif chart_type == "scatter":
+        figure = px.scatter(result, x=category_column, y=value_column, color_discrete_sequence=["#0F766E"])
     else:
         figure = px.bar(
             result,
@@ -4302,8 +4308,9 @@ def display_excel_edit(message: dict[str, Any], render_key: str) -> str | None:
                 "As before, entirely blank rows are excluded from subsequent chart and query analysis."
             )
     if message.get("kind") == "excel_chart" and len(message["result"].columns) == 2:
-        preview_type = {"doughnut": "donut", "area": "line", "scatter": "line"}.get(message["chart_type"], message["chart_type"])
-        preview = create_query_chart(message["result"], message["chart_title"], str(message["result"].columns[1]), preview_type)
+        preview = create_query_chart(
+            message["result"], message["chart_title"], str(message["result"].columns[1]), message["chart_type"],
+        )
         if preview is not None:
             st.plotly_chart(preview, key=f"excel_chart_preview_{render_key}", use_container_width=True,
                             config={"displayModeBar": False})
@@ -5517,6 +5524,17 @@ with st.sidebar:
         '<div class="sidebar-credit"><strong>Created by Vijayashree</strong><br>All rights reserved 2026</div>',
         unsafe_allow_html=True,
     )
+
+if (excel_selected or automatic_selected) and excel_frame is not None:
+    if st.toggle("Spreadsheet analysis", key="show_spreadsheet_analysis"):
+        analysis_workbook = active_excel_workbook()
+        if analysis_workbook is not None:
+            render_spreadsheet_analysis(
+                analysis_workbook["content"], analysis_workbook["preview_sheet"], excel_source,
+                f"analysis_{analysis_workbook['digest']}_{analysis_workbook['preview_sheet']}",
+            )
+else:
+    st.session_state.pop("spreadsheet_analysis_frame", None)
 
 # Empty-state greeting
 if not history:

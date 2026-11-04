@@ -4,25 +4,25 @@ name: Trigger auto deployment for workforce-compass
 on:
   # Automatically trigger it when detected changes in repo
   push:
-    branches: 
+    branches:
       [ main ]
     # The Azure app reads Azure SQL directly, so demo data syncs do not need a rebuild.
     paths-ignore:
     - 'demo_data/**'
 
-  # Allow manual trigger 
-  workflow_dispatch:      
+  # Allow manual trigger
+  workflow_dispatch:
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    permissions: 
+    permissions:
       id-token: write #This is required for requesting the OIDC JWT Token
       contents: read #Required when GH token is used to authenticate with private repo
 
     steps:
       - name: Checkout to the branch
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Azure Login
         uses: azure/login@v2
@@ -35,15 +35,30 @@ jobs:
         uses: azure/container-apps-deploy-action@v2
         with:
           appSourcePath: ${{ github.workspace }}
-          _dockerfilePathKey_: _dockerfilePath_
-          _targetLabelKey_: _targetLabel_
+          dockerfilePath: Dockerfile
           registryUrl: workforcecompassacr.azurecr.io
           registryUsername: ${{ secrets.WORKFORCECOMPASS_REGISTRY_USERNAME }}
           registryPassword: ${{ secrets.WORKFORCECOMPASS_REGISTRY_PASSWORD }}
           containerAppName: workforce-compass
           resourceGroup: workforce_rg1
           imageToBuild: workforcecompassacr.azurecr.io/workforce-compass:${{ github.sha }}
-          _buildArgumentsKey_: |
-            _buildArgumentsValues_
+          targetPort: "8501"
+          ingress: external
 
-
+      - name: Verify public app and publish its URL
+        env:
+          EXPECTED_IMAGE: workforcecompassacr.azurecr.io/workforce-compass:${{ github.sha }}
+        run: |
+          set -euo pipefail
+          deployed_image=$(az containerapp show --name workforce-compass --resource-group workforce_rg1 --query 'properties.template.containers[0].image' --output tsv)
+          if [ "$deployed_image" != "$EXPECTED_IMAGE" ]; then
+            echo "::error::Azure is not running the image built from this commit."
+            exit 1
+          fi
+          fqdn=$(az containerapp show --name workforce-compass --resource-group workforce_rg1 --query 'properties.configuration.ingress.fqdn' --output tsv)
+          if [ -z "$fqdn" ]; then
+            echo "::error::The Container App has no public hostname."
+            exit 1
+          fi
+          curl --fail --show-error --silent --retry 12 --retry-delay 5 --retry-all-errors --max-time 20 "https://${fqdn}/_stcore/health"
+          printf '\n### Hosted Workforce Compass\n\nhttps://%s\n\nDeployed commit: `%s`\n' "$fqdn" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"

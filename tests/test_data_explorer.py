@@ -12,7 +12,7 @@ import pandas as pd
 from streamlit.testing.v1 import AppTest
 
 from data_explorer import (
-    build_charts, csv_to_workbook, data_overview, is_overview_request, plan_charts,
+    ChartSpec, auto_charts, build_chart, build_charts, csv_to_workbook, data_overview, is_overview_request, plan_charts,
 )
 from excel_support import excel_sheet_names, generate_excel_download, read_excel_sheet
 
@@ -34,6 +34,61 @@ def staff_frame():
 
 
 class DataExplorerTests(unittest.TestCase):
+    def test_doughnut_area_and_scatter_prompts_use_the_requested_chart(self):
+        frame = staff_frame()
+        frame["Cost"] = frame["Salary"] / 2
+        for question, chart_type in (
+            ("draw a doughnut chart of department", "doughnut"),
+            ("draw a donut chart of total salary by department", "doughnut"),
+            ("show an area chart of total salary by joining date monthly", "area"),
+            ("show a scatter plot of salary vs cost", "scatter"),
+            ("show the relationship between salary and cost", "scatter"),
+        ):
+            with self.subTest(question=question):
+                specs = plan_charts(question, frame)
+                self.assertIsNotNone(specs)
+                charts, problems = build_charts(frame, specs)
+                self.assertEqual(problems, [])
+                chart = charts[0]
+                self.assertEqual(chart.chart_type, chart_type)
+                if chart_type == "doughnut":
+                    self.assertEqual(chart.figure.data[0].hole, 0.45)
+                    self.assertEqual(list(chart.figure.data[0].values), chart.table.iloc[:, 1].tolist())
+                else:
+                    self.assertEqual(list(chart.figure.data[0].y), chart.table.iloc[:, 1].tolist())
+
+    def test_scatter_counts_valid_pairs_and_reports_correlation_without_causality(self):
+        frame = pd.DataFrame({"Cost": [1, 2, 3, None, "bad"], "Revenue": [2, 4, 6, 8, 10]})
+        chart = build_chart(frame, ChartSpec("scatter", "scatter", "Revenue", "Cost", "none"))
+        self.assertEqual(chart.table.to_dict("list"), {"Cost": [1, 2, 3], "Revenue": [2, 4, 6]})
+        self.assertIn("correlation is 1.00", chart.explanation)
+        self.assertIn("does not establish cause", chart.explanation)
+        self.assertIn("2 of 5 rows were left out", chart.explanation)
+        frame = pd.DataFrame({"Cost": [1, 1, 1], "Revenue": [2, 4, 6]})
+        chart = build_chart(frame, ChartSpec("scatter", "scatter", "Revenue", "Cost", "none"))
+        self.assertIn("not enough variation", chart.explanation)
+
+    def test_scatter_point_limit_is_exact_and_never_silently_samples(self):
+        frame = pd.DataFrame({"Cost": range(501), "Revenue": range(501)})
+        spec = ChartSpec("scatter", "scatter", "Revenue", "Cost", "none")
+        self.assertEqual(len(build_chart(frame.iloc[:500], spec).table), 500)
+        with self.assertRaisesRegex(ValueError, "no rows were sampled"):
+            build_chart(frame, spec)
+        with self.assertRaisesRegex(ValueError, "at least two"):
+            build_chart(frame.iloc[:1], spec)
+        for question in (
+            "show a scatter plot of salary vs cost for active employees",
+            "show a scatter plot of salary vs cost and department",
+        ):
+            with self.subTest(question=question):
+                self.assertIsNone(plan_charts(question, staff_frame().assign(Cost=10)))
+
+    def test_numeric_only_auto_charts_include_relationship_without_identifiers(self):
+        frame = pd.DataFrame({"Employee ID": range(10), "Revenue": range(10), "Cost": range(10, 20)})
+        specs = auto_charts(frame)
+        self.assertTrue(any(spec.kind == "scatter" for spec in specs))
+        self.assertTrue(all(spec.measure != "Employee ID" and spec.dimension != "Employee ID" for spec in specs))
+
     def test_csv_preserves_headers_codes_large_ids_and_literal_formulas(self):
         content = csv_to_workbook(
             b' Name ,Name,,Code,Employee ID,Amount,Formula\n'

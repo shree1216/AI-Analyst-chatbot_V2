@@ -864,7 +864,7 @@ def apply_excel_dashboard(
     }
     start = 7
     for title, table, chart_type in charts:
-        _require(chart_type in {"bar", "column", "pie", "line", "histogram"}, "Unsupported dashboard chart type.")
+        _require(chart_type in {*CHART_TYPES, "histogram"}, "Unsupported dashboard chart type.")
         _require(0 < len(table) <= MAX_CHART_POINTS and len(table.columns) == 2,
                  f"Each dashboard chart needs two columns and at most {MAX_CHART_POINTS} points.")
         cells[start - 1] = [title]

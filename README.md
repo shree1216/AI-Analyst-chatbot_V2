@@ -2,15 +2,18 @@
 
 [![Tests](https://github.com/shree1216/AI-Analyst-chatbot_V2/actions/workflows/tests.yml/badge.svg)](https://github.com/shree1216/AI-Analyst-chatbot_V2/actions/workflows/tests.yml)
 
-**[Open the live Workforce Compass demo](https://workforce-compass-vijayashree.streamlit.app/)**
+**[Open Workforce Compass on Azure](https://workforce-compass.wittysky-384da614.centralus.azurecontainerapps.io/)**
+
+[Separate Streamlit portfolio demo](https://workforce-compass-vijayashree.streamlit.app/)
 
 Ask workforce questions in plain English. Explore department pay and headcount,
 build PDF business reports, and email the results from one Streamlit application.
 
 Built with **Python, SQL Server, Azure OpenAI, and Streamlit** using a synthetic
 150-employee dataset. This is a portfolio application, not a production HR system.
-The local setup uses SQL Server; the optional cloud demo uses the bundled
-synthetic dataset in a read-only, in-memory SQLite database.
+The Azure deployment connects directly to Azure SQL and does not need the local
+Streamlit process or SQL Server running. The local setup uses SQL Server; the
+separate Streamlit portfolio demo uses bundled synthetic data in read-only SQLite.
 
 [Getting Started](#local-setup-on-windows) | [Example Questions](#example-questions) |
 [Architecture](#architecture) | [Tests](#tests) | [Deployment Notes](#deployment-note)
@@ -141,6 +144,43 @@ Azure or a SQL connection and use the full selected sheet, not its sidebar previ
 If a sheet has too few suitable columns, fewer charts are shown with an explicit
 error when none can be built. Missing or unreadable values excluded from a chart
 are explained. Chart data and the overview can be downloaded as Excel.
+
+#### Interactive spreadsheet analysis
+
+After uploading a file, enable **Spreadsheet analysis** above the chat. It works
+locally without Azure or SQL and always reads the full selected worksheet, not
+just the sidebar preview.
+
+- Filter several columns together using category selections, inclusive numeric
+  or date ranges, or literal case-insensitive text matching for high-cardinality
+  text. Choose whether missing/unreadable values should be included.
+- Build grouped summaries with row counts, sum, average, median, minimum or
+  maximum; inspect monthly/yearly trends, numeric distributions, or relationships
+  between two measures.
+- Choose bar, column, pie, doughnut, line, area, histogram or scatter charts as
+  appropriate to the analysis. **Auto** uses pie charts for small category-count
+  shares, bars for group comparisons and lines for chronological trends.
+- Inspect the exact **Supporting table** and **Filtered data**. Select
+  **Prepare Excel download**, then **Download analysis with chart** for a separate
+  workbook containing filtered rows, analysis settings, supporting numbers and a
+  native editable chart. The uploaded working copy is not modified.
+
+These filters apply only to the analysis panel; chat questions still use the
+selected source sheet without the panel's filters. Empty results show an explicit
+warning. Interactive summaries retain all groups up to 500; larger summaries or
+scatter plots require filtering rather than silently dropping/sampling rows.
+Pie/doughnut charts reject negative values or a zero total; use bars for signed
+business measures such as losses or variances.
+
+Chat also supports **draw a doughnut chart of Region**, **show an area chart of
+total Revenue monthly**, and **show a scatter plot of Revenue vs Cost** (replace
+the names with actual columns). Scatter plots retain each valid numeric pair,
+explain exclusions, and report Pearson correlation when enough varying pairs
+exist, without implying causality. Their Excel downloads preserve the selected
+chart type. Automatic chart suggestions can include a relationship chart when
+two suitable numeric measures are available and the point limit is satisfied.
+More complex filtered or multi-measure chat requests continue to use the
+existing validated planner instead of ignoring conditions.
 
 Charts appear in the chat and **Download Excel with charts** includes native,
 editable Excel charts, original data and supporting numbers. **Same worksheet**
@@ -953,6 +993,8 @@ the new **Data source** controls appear; local tests alone do not update it.
 | --- | --- |
 | `employee_sql_chatbot.py` | Main Streamlit application |
 | `excel_support.py` | Bounded Excel parsing, worksheet schema inference, and literal-safe workbook exports |
+| `data_explorer.py` | Local chart planning, business-oriented suggestions, cleaning for analysis and exact supporting tables |
+| `spreadsheet_analytics.py` | Read-only interactive filters, grouped summaries, chart selection and analysis workbook exports |
 | `workbook_operations.py` | Bounded, read-only workbook calculations, expressions, lookups, joins, rankings, and pivots |
 | `workbook_edits.py` | Validated Excel row/column edits, ordered transformations and atomic working-copy serialization |
 | `workbook_charts.py` | Prompt-driven native Excel charts added on new worksheets without re-saving existing parts |
@@ -1250,6 +1292,29 @@ Do not commit real employee names, email addresses, phone numbers, salaries, or
 other confidential information.
 
 ## Deployment Note
+
+### Live Azure application
+
+Use <https://workforce-compass.wittysky-384da614.centralus.azurecontainerapps.io/>
+to open the hosted application from any device. `http://localhost:8501` is only a
+local development instance; pushing to GitHub does not redirect an already-open
+localhost browser tab or stop its local process.
+
+Code changes must be **committed and pushed to `main`**. The **Trigger auto
+deployment for workforce-compass** GitHub Actions workflow builds the repository's
+Dockerfile, pushes an image tagged with that commit, and deploys it to the
+`workforce-compass` Azure Container App on port 8501. Wait for the workflow to
+succeed, then open or reload the Azure URL above. The workflow summary also
+publishes the live URL and deployed commit after checking the public health endpoint.
+Uncommitted local changes cannot appear in the hosted application.
+
+The Azure app reads **Azure SQL**, not CSV files pushed to `demo_data/`. Those
+files supply the separate Streamlit demo; data-only updates to that directory
+intentionally do not rebuild the Azure image. To update Azure's data, use the
+existing database sync described below or update the approved Azure SQL tables
+directly. The hosted app itself does not depend on the sync computer remaining
+online; later changes made only in local SQL Server still need to be synchronized.
+Do not upload credentials to GitHub; keep the existing Azure secret references.
 
 ### Free hosted portfolio demo (no laptop or SQL Server required)
 
