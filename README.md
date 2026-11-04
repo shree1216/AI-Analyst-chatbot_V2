@@ -1308,7 +1308,10 @@ Azure Container App. The explicit image update preserves the existing Azure SQL
 secret references and ingress configuration (public HTTPS, target port 8501).
 The workflow waits for that exact image's revision to become ready, rather than
 treating a successful image build or an older healthy revision as deployment
-success. Wait for the workflow to
+success. A preflight check requires a single application container: adding another
+Streamlit container would make both processes compete for port 8501. Both the
+public health endpoint and application page must respond successfully.
+Wait for the workflow to
 succeed, then open or reload the Azure URL above. The workflow summary also
 publishes the live URL and deployed commit after checking the public health endpoint.
 Uncommitted local changes cannot appear in the hosted application.

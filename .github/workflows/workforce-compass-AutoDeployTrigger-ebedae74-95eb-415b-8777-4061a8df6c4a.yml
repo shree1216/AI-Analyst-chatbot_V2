@@ -34,6 +34,16 @@ jobs:
           tenant-id: ${{ secrets.WORKFORCECOMPASS_AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.WORKFORCECOMPASS_AZURE_SUBSCRIPTION_ID }}
 
+      - name: Check the application container layout
+        run: |
+          set -euo pipefail
+          count=$(az containerapp show --name workforce-compass --resource-group workforce_rg1 --query 'length(properties.template.containers)' --output tsv)
+          name=$(az containerapp show --name workforce-compass --resource-group workforce_rg1 --query 'properties.template.containers[0].name' --output tsv)
+          if [ "$count" != 1 ] || [ "$name" != simple-hello-world-container ]; then
+            echo "::error::Expected one application container named simple-hello-world-container. Multiple Streamlit containers would compete for port 8501."
+            exit 1
+          fi
+
       - name: Log in to the container registry
         uses: docker/login-action@v3
         with:
@@ -78,4 +88,5 @@ jobs:
             exit 1
           fi
           curl --fail --show-error --silent --retry 12 --retry-delay 5 --retry-all-errors --max-time 20 "https://${fqdn}/_stcore/health"
+          curl --fail --show-error --silent --retry 12 --retry-delay 5 --retry-all-errors --max-time 20 --output /dev/null "https://${fqdn}/"
           printf '\n### Hosted Workforce Compass\n\nhttps://%s\n\nDeployed commit: `%s`\n' "$fqdn" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
