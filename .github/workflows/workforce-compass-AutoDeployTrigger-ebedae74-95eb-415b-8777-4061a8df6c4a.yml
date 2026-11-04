@@ -16,6 +16,9 @@ on:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CONTAINER_IMAGE: workforcecompassacr.azurecr.io/workforce-compass:${{ github.sha }}
     permissions:
       id-token: write #This is required for requesting the OIDC JWT Token
       contents: read #Required when GH token is used to authenticate with private repo
@@ -31,28 +34,42 @@ jobs:
           tenant-id: ${{ secrets.WORKFORCECOMPASS_AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.WORKFORCECOMPASS_AZURE_SUBSCRIPTION_ID }}
 
-      - name: Build and push container image to registry
-        uses: azure/container-apps-deploy-action@v2
+      - name: Log in to the container registry
+        uses: docker/login-action@v3
         with:
-          appSourcePath: ${{ github.workspace }}
-          dockerfilePath: Dockerfile
-          registryUrl: workforcecompassacr.azurecr.io
-          registryUsername: ${{ secrets.WORKFORCECOMPASS_REGISTRY_USERNAME }}
-          registryPassword: ${{ secrets.WORKFORCECOMPASS_REGISTRY_PASSWORD }}
-          containerAppName: workforce-compass
-          resourceGroup: workforce_rg1
-          imageToBuild: workforcecompassacr.azurecr.io/workforce-compass:${{ github.sha }}
-          targetPort: "8501"
-          ingress: external
+          registry: workforcecompassacr.azurecr.io
+          username: ${{ secrets.WORKFORCECOMPASS_REGISTRY_USERNAME }}
+          password: ${{ secrets.WORKFORCECOMPASS_REGISTRY_PASSWORD }}
 
-      - name: Verify public app and publish its URL
-        env:
-          EXPECTED_IMAGE: workforcecompassacr.azurecr.io/workforce-compass:${{ github.sha }}
+      - name: Build and push the commit image
         run: |
           set -euo pipefail
-          deployed_image=$(az containerapp show --name workforce-compass --resource-group workforce_rg1 --query 'properties.template.containers[0].image' --output tsv)
-          if [ "$deployed_image" != "$EXPECTED_IMAGE" ]; then
-            echo "::error::Azure is not running the image built from this commit."
+          docker build --file Dockerfile --tag "$CONTAINER_IMAGE" .
+          docker push "$CONTAINER_IMAGE"
+
+      - name: Update the existing application container
+        run: |
+          set -euo pipefail
+          az containerapp update --name workforce-compass --resource-group workforce_rg1 \
+            --container-name simple-hello-world-container --image "$CONTAINER_IMAGE" --output none
+
+      - name: Verify public app and publish its URL
+        run: |
+          set -euo pipefail
+          verified=false
+          for attempt in $(seq 1 30); do
+            deployed_image=$(az containerapp show --name workforce-compass --resource-group workforce_rg1 --query "properties.template.containers[?name=='simple-hello-world-container'].image | [0]" --output tsv)
+            latest=$(az containerapp show --name workforce-compass --resource-group workforce_rg1 --query 'properties.latestRevisionName' --output tsv)
+            ready=$(az containerapp show --name workforce-compass --resource-group workforce_rg1 --query 'properties.latestReadyRevisionName' --output tsv)
+            if [ "$deployed_image" = "$CONTAINER_IMAGE" ] && [ -n "$ready" ] && [ "$latest" = "$ready" ]; then
+              verified=true
+              break
+            fi
+            echo "Waiting for the commit image to become ready (attempt ${attempt}/30)."
+            sleep 10
+          done
+          if [ "$verified" != true ]; then
+            echo "::error::The image built from this commit did not become the ready revision."
             exit 1
           fi
           fqdn=$(az containerapp show --name workforce-compass --resource-group workforce_rg1 --query 'properties.configuration.ingress.fqdn' --output tsv)
