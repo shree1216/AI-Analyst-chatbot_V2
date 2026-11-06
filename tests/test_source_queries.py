@@ -18,7 +18,7 @@ from streamlit.runtime.scriptrunner import RerunData, RerunException
 
 from backend_diagnostics import BackendTrace, diagnostic_log
 from demo_tables import load_demo_tables
-from excel_support import read_excel_sheet, regional_sales_plan
+from excel_support import MAX_EXCEL_ROWS, read_excel_sheet, regional_sales_plan
 from source_queries import (
     DataSource, allows_unmatched_sources, compile_source_query, discover_excel_sources, discover_sql_sources,
     execute_source_plan, local_source_plan, requested_source_kinds, source_planner_prompt,
@@ -1069,7 +1069,8 @@ class SourceQueryTests(unittest.TestCase):
             pd.DataFrame({"A": [None, None, 1, 2, 3, 4]}).to_excel(writer, index=False, sheet_name="Data")
         self.assertEqual(read_excel_sheet(content.getvalue(), "Data", preview_rows=3)["A"].tolist(), [1, 2, 3])
         self.assertEqual(len(read_excel_sheet(content.getvalue(), "Data")), 4)
-        for invalid in (0, -1, True, 50_001):
+        self.assertEqual(len(read_excel_sheet(content.getvalue(), "Data", preview_rows=MAX_EXCEL_ROWS)), 4)
+        for invalid in (0, -1, True, MAX_EXCEL_ROWS + 1):
             with self.subTest(preview=invalid), self.assertRaises(ValueError):
                 read_excel_sheet(content.getvalue(), "Data", preview_rows=invalid)
 
