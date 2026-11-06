@@ -51,7 +51,7 @@ from backend_runtime import refresh_backend_modules
 refresh_backend_modules()
 
 from excel_support import (
-    EXCEL_MIME, FORMULA_CACHE_VERSION, append_result_sheet, date_derivation_description, excel_sheet_names, generate_excel_download,
+    EXCEL_MIME, FORMULA_CACHE_VERSION, MAX_UPLOAD_MB, append_result_sheet, date_derivation_description, excel_sheet_names, generate_excel_download,
     is_calendar_year_column, preserve_formula_values, query_sales_total, read_excel_sheet,
     regional_sales_plan, spreadsheet_answer, spreadsheet_schema,
 )
@@ -66,10 +66,10 @@ from workbook_charts import (
 )
 from data_explorer import (
     _find_column, build_charts, chart_presentation_question, charts_answer, csv_to_workbook, data_overview, is_chart_question,
-    is_generic_chart_request, is_overview_request, overview_answer, plan_charts,
+    is_generic_chart_request, is_overview_request, overview_answer, parquet_to_workbook, plan_charts,
 )
 from backend_diagnostics import BackendTrace, diagnostic_log, execution_code_log
-from spreadsheet_analytics import render_spreadsheet_analysis
+from spreadsheet_analytics import filter_rows, render_spreadsheet_analysis
 from demo_tables import demo_data_version, load_demo_tables
 from source_queries import (
     SALES_PLANNING_RULES, SourceMatchError, allows_unmatched_sources, discover_excel_sources, discover_sql_sources, execute_source_plan,
@@ -3723,11 +3723,13 @@ def remember_excel_upload(content: bytes, file_name: str) -> dict[str, Any]:
     workbook = st.session_state.get("excel_workbook")
     if workbook is None or workbook.get("upload_digest", workbook.get("digest")) != digest:
         workbook = {"content": content, "file_name": file_name, "digest": digest, "upload_digest": digest}
-        if Path(file_name).suffix.casefold() == ".csv":
+        extension = Path(file_name).suffix.casefold()
+        converter = {".csv": csv_to_workbook, ".parquet": parquet_to_workbook}.get(extension)
+        if converter is not None:
             try:
-                workbook["content"] = csv_to_workbook(content, file_name)
+                workbook["content"] = converter(content, file_name)
             except ValueError as error:
-                logger.warning("CSV upload failed: %s", type(error).__name__)
+                logger.warning("%s upload failed: %s", extension[1:].upper(), type(error).__name__)
                 workbook.update(content=None, load_error=str(error))
             else:
                 workbook["digest"] = sha256(workbook["content"]).hexdigest()
@@ -3803,7 +3805,7 @@ def uploaded_data_message(question: str, enabled: bool) -> dict[str, Any] | None
             return None
         return {
             "kind": "uploaded_data", "question": question,
-            "error": "Upload an Excel (.xlsx) or CSV file and choose a worksheet first.",
+            "error": "Upload an Excel (.xlsx), CSV or Parquet file and choose a worksheet first.",
         }
     message = {
         "kind": "uploaded_data", "question": question, "analysis_question": analysis_question,
@@ -3858,6 +3860,7 @@ def uploaded_data_message(question: str, enabled: bool) -> dict[str, Any] | None
         message.update(
             frame=frame, chart_specs=specs, source=f"{workbook['file_name']} / {sheet}", source_sheet=sheet,
             file_name=workbook["file_name"], edit_base_digest=workbook["digest"],
+            chart_upload_digest=workbook.get("upload_digest", workbook["digest"]),
             workbook_content=workbook["content"],
             chart_placement=chart_placement_for_question(
                 question, st.session_state.get("excel_chart_placement", "same_sheet"),
@@ -3870,6 +3873,25 @@ def uploaded_data_message(question: str, enabled: bool) -> dict[str, Any] | None
 
 
 def display_uploaded_data(message: dict[str, Any], render_key: str) -> str | None:
+    if message.get("chart_specs") is not None:
+        workbook = active_excel_workbook()
+        if (
+            workbook is not None
+            and workbook.get("upload_digest", workbook["digest"]) == message.get("chart_upload_digest")
+            and workbook.get("preview_sheet") == message["source_sheet"]
+        ):
+            filter_state = st.session_state.get("spreadsheet_chart_filters")
+            signature = ((), None)
+            if (
+                st.session_state.get("show_spreadsheet_analysis") and filter_state is not None
+                and filter_state["key"] == f"analysis_{workbook['digest']}_{message['source_sheet']}"
+            ):
+                signature = (tuple(filter_state["filters"]), filter_state["error"])
+            if signature != message.get("chart_filter_signature"):
+                for key in ("answer", "error", "charts", "chart_problems", "dashboard_workbook",
+                            "excel_download", "dashboard_sheet", "dashboard_summary", "supporting_table_export"):
+                    message.pop(key, None)
+                message["chart_filter_signature"] = signature
     if "answer" not in message and "error" not in message:
         trace = BackendTrace(message.setdefault("backend_log", []))
         message["request_id"] = trace.request_id
@@ -3882,6 +3904,15 @@ def display_uploaded_data(message: dict[str, Any], render_key: str) -> str | Non
                 message.update(result=frame, summary=summary, answer=overview_answer(frame, summary, message["source"]))
                 trace.record_code("result_ready", data_overview, rows=len(frame), columns=len(frame.columns))
             else:
+                filters, filter_error = message.get("chart_filter_signature", ((), None))
+                if filter_error:
+                    raise ValueError(filter_error)
+                if filters:
+                    frame = filter_rows(frame, list(filters))
+                if frame.empty:
+                    raise ValueError("No rows match these filters. Widen or remove a filter.")
+                if message.get("generic_charts"):
+                    specs = plan_charts(message["analysis_question"], frame) or []
                 charts, problems = build_charts(frame, specs)
                 message["chart_problems"] = problems
                 if not charts:
@@ -3909,7 +3940,7 @@ def display_uploaded_data(message: dict[str, Any], render_key: str) -> str | Non
                     dashboard_workbook=exported.content, dashboard_sheet=exported.sheet,
                     excel_download=exported.content,
                 )
-                if message.get("native_dashboard"):
+                if message.get("native_dashboard") and not message.get("native_dashboard_applied"):
                     workbook = active_excel_workbook()
                     if workbook is None or workbook.get("content") is None:
                         raise ValueError("The workbook was unloaded. Upload it again before building a dashboard.")
@@ -3927,7 +3958,13 @@ def display_uploaded_data(message: dict[str, Any], render_key: str) -> str | Non
                         f"'{exported.sheet}'. Download the Excel dashboard to open it in Excel. "
                         "Existing data cells and your original upload were not changed."
                     )
+                    old_key = f"analysis_{workbook['digest']}_{message['source_sheet']}_"
+                    new_key = f"analysis_{updated['digest']}_{message['source_sheet']}_"
+                    for widget_key in list(st.session_state):
+                        if widget_key.startswith(old_key) and widget_key not in {old_key + "export", old_key + "download"}:
+                            st.session_state[new_key + widget_key[len(old_key):]] = st.session_state[widget_key]
                     st.session_state["excel_workbook"] = updated
+                    message["native_dashboard_applied"] = True
                     message["refresh_sidebar"] = True
                 trace.record_code("result_ready", build_charts, rows=len(frame), columns=len(frame.columns))
             trace.record("request_completed", route="uploaded_data", status="success")
@@ -3940,9 +3977,10 @@ def display_uploaded_data(message: dict[str, Any], render_key: str) -> str | Non
             trace.record("request_failed", route="uploaded_data", status="failed", error_type=type(error).__name__)
         finally:
             if "answer" in message or "error" in message:
-                message.pop("frame", None)
-                message.pop("chart_specs", None)
-                message.pop("workbook_content", None)
+                if message.get("chart_specs") is None:
+                    message.pop("frame", None)
+                    message.pop("chart_specs", None)
+                    message.pop("workbook_content", None)
             if trace.file_error:
                 message["backend_log_error"] = trace.file_error
         if "answer" in message and message.pop("refresh_sidebar", False):
@@ -3961,6 +3999,8 @@ def display_uploaded_data(message: dict[str, Any], render_key: str) -> str | Non
             st.rerun()
         return None
     st.caption("Sources used: " + message["source"] + ".")
+    if message.get("chart_filter_signature", ((), None))[0]:
+        st.caption("Spreadsheet filters applied to these charts and their downloads. Source worksheet cells are unchanged.")
     if "summary" in message:
         st.write(message["answer"])
         result = message["result"]
@@ -4143,14 +4183,14 @@ def display_excel_edit(message: dict[str, Any], render_key: str) -> str | None:
                 raise ValueError(
                     "Excel charts are built from uploaded Excel workbooks only. SQL remains read-only."
                     if message.get("kind") == "excel_chart"
-                    else "Safe cleanup is enabled for uploaded Excel and CSV files only. SQL remains read-only."
+                    else "Safe cleanup is enabled for uploaded Excel, CSV and Parquet files only. SQL remains read-only."
                     if message.get("kind") == "excel_clean"
                     else "Row and column edits are enabled for uploaded Excel workbooks only. SQL remains read-only."
                 )
             workbook = active_excel_workbook()
             if workbook is None or workbook.get("content") is None:
                 upload_error = (
-                    "Upload an Excel or CSV file before cleaning a table." if message.get("kind") == "excel_clean"
+                    "Upload an Excel, CSV or Parquet file before cleaning a table." if message.get("kind") == "excel_clean"
                     else "Upload an Excel workbook before adding a chart." if message.get("kind") == "excel_chart"
                     else "Upload an Excel workbook before changing worksheets."
                 )
@@ -5277,8 +5317,12 @@ def apply_theme() -> None:
                 font-size: 0.88rem;
             }
 
-            [data-testid="stChatMessage"][data-stale="true"],
-            [data-testid="stChatMessage"] [data-stale="true"] {
+            [data-testid="stElementContainer"][data-stale="true"] {
+                opacity: 1 !important;
+                transition: none !important;
+            }
+
+            [data-testid="stChatMessage"]:has([data-stale="false"] .response-pending) [data-stale="true"] {
                 visibility: hidden;
             }
 
@@ -5431,7 +5475,8 @@ with st.sidebar:
         render_database_tables()
     if excel_selected or automatic_selected:
         upload = st.file_uploader(
-            "Upload Excel or CSV file", type=["xlsx", "csv"], max_upload_size=10,
+            "Upload Excel, CSV or Parquet file", type=["xlsx", "csv", "parquet"], max_upload_size=MAX_UPLOAD_MB,
+            help=f"Up to {MAX_UPLOAD_MB} MB per file; up to 1,000,000 rows, 100 columns and 5,000,000 data cells per sheet.",
             key=f"excel_upload_{st.session_state.get('excel_uploader_version', 0)}",
             on_change=synchronize_excel_upload,
         )
@@ -5533,8 +5578,11 @@ if (excel_selected or automatic_selected) and excel_frame is not None:
                 analysis_workbook["content"], analysis_workbook["preview_sheet"], excel_source,
                 f"analysis_{analysis_workbook['digest']}_{analysis_workbook['preview_sheet']}",
             )
+    else:
+        st.session_state.pop("spreadsheet_chart_filters", None)
 else:
     st.session_state.pop("spreadsheet_analysis_frame", None)
+    st.session_state.pop("spreadsheet_chart_filters", None)
 
 # Empty-state greeting
 if not history:
@@ -5729,6 +5777,8 @@ for index, message in enumerate(history):
     with turn.chat_message("assistant"):
         answer = None
         pending = "answer" not in message and "error" not in message
+        if pending:
+            st.markdown('<span class="response-pending" aria-hidden="true"></span>', unsafe_allow_html=True)
         if message.get("kind") in {"workbook_command", "recall", "calculation_explanation"}:
             answer = message["answer"]
             st.write(answer)

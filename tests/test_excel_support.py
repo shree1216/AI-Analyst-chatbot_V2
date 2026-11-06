@@ -15,6 +15,7 @@ import pandas as pd
 from streamlit.testing.v1 import AppTest
 
 from excel_support import (
+    MAX_EXCEL_BYTES, MAX_EXCEL_CELLS, MAX_EXCEL_EXPANDED_BYTES, MAX_EXCEL_ROWS, MAX_UPLOAD_MB,
     excel_sheet_names, generate_excel_download, query_sales_total, read_excel_sheet,
     spreadsheet_answer, spreadsheet_schema, write_region_summary,
 )
@@ -72,7 +73,7 @@ class ExcelFileTests(unittest.TestCase):
         self.assertEqual(read_excel_sheet(content, "Inventory").iloc[0].tolist(), ["Widget", 7])
 
     def test_invalid_archives_and_unknown_sheets_are_explicit(self):
-        for content in (b"", b"not an excel file", b"x" * 10_000_001):
+        for content in (b"", b"not an excel file"):
             with self.subTest(length=len(content)), self.assertRaises(ValueError):
                 excel_sheet_names(content)
         with self.assertRaisesRegex(ValueError, "couldn't find the selected worksheet"):
@@ -80,8 +81,47 @@ class ExcelFileTests(unittest.TestCase):
         expanded = BytesIO()
         with ZipFile(expanded, "w", compression=ZIP_DEFLATED) as archive:
             archive.writestr("oversized", b"x" * 50_000_001)
-        with self.assertRaisesRegex(ValueError, "50 MB"):
-            excel_sheet_names(expanded.getvalue())
+        with patch("excel_support.MAX_EXCEL_EXPANDED_BYTES", 50_000_000):
+            with self.assertRaisesRegex(ValueError, "50 MB"):
+                excel_sheet_names(expanded.getvalue())
+
+    def test_large_file_limits_and_exact_upload_boundary(self):
+        self.assertEqual(MAX_UPLOAD_MB, 20)
+        self.assertEqual(MAX_EXCEL_BYTES, 20 * 1024 * 1024)
+        self.assertEqual(MAX_EXCEL_EXPANDED_BYTES, 1_000_000_000)
+        content = workbook_bytes()
+        with patch("excel_support.MAX_EXCEL_BYTES", len(content)):
+            self.assertEqual(excel_sheet_names(content), ["Sales", "Inventory"])
+            with self.assertRaisesRegex(ValueError, "20 MB"):
+                excel_sheet_names(content + b"x")
+        with ZipFile(BytesIO(content)) as source:
+            output = BytesIO()
+            with ZipFile(output, "w") as archive:
+                for item in source.infolist():
+                    archive.writestr(item, source.read(item.filename))
+                archive.writestr("large.bin", b"x" * 10_000_001)
+        self.assertGreater(len(output.getvalue()), 10_000_000)
+        self.assertEqual(read_excel_sheet(output.getvalue(), "Inventory").iloc[0].tolist(), ["Widget", 7])
+        output = BytesIO()
+        with ZipFile(BytesIO(content)) as source, ZipFile(output, "w", ZIP_DEFLATED) as archive:
+            for item in source.infolist():
+                archive.writestr(item.filename, source.read(item.filename))
+            archive.writestr("expanded.bin", b"x" * 50_000_001)
+        self.assertEqual(excel_sheet_names(output.getvalue()), ["Sales", "Inventory"])
+        with patch("excel_support.MAX_EXCEL_EXPANDED_BYTES", len(content) - 1):
+            with self.assertRaisesRegex(ValueError, "expanded workbook"):
+                excel_sheet_names(content)
+
+    def test_upload_over_twenty_mb_is_rejected_before_parsing(self):
+        with self.assertRaisesRegex(ValueError, "20 MB"):
+            excel_sheet_names(b"x" * (20 * 1024 * 1024 + 1))
+
+    def test_streamlit_server_and_workbook_upload_limits_agree(self):
+        import tomllib
+
+        with (ROOT / ".streamlit" / "config.toml").open("rb") as config_file:
+            config = tomllib.load(config_file)
+        self.assertEqual(config["server"]["maxUploadSize"], MAX_UPLOAD_MB)
 
     def test_invalid_headers_empty_sheets_and_extra_cells_are_rejected(self):
         for rows in (
@@ -94,16 +134,27 @@ class ExcelFileTests(unittest.TestCase):
         self.assertEqual(read_excel_sheet(workbook_bytes({"Sheet": [("Header",)]}), "Sheet").shape, (0, 1))
 
     def test_actual_row_limit(self):
+        self.assertEqual(MAX_EXCEL_ROWS, 1_000_000)
         rows = [("Number",)] + [(value,) for value in range(50_001)]
         content = workbook_bytes({"Data": rows})
-        with self.assertRaisesRegex(ValueError, "50,000"):
-            read_excel_sheet(content, "Data")
-        content = workbook_bytes({"Data": rows[:-1]})
-        self.assertEqual(len(read_excel_sheet(content, "Data")), 50_000)
+        self.assertEqual(len(read_excel_sheet(content, "Data")), 50_001)
+        with patch("excel_support.MAX_EXCEL_ROWS", 3):
+            with self.assertRaisesRegex(ValueError, "3 data rows"):
+                read_excel_sheet(workbook_bytes({"Data": rows[:5]}), "Data")
+            self.assertEqual(len(read_excel_sheet(workbook_bytes({"Data": rows[:4]}), "Data")), 3)
         content = workbook_bytes({"Data": [
             tuple(f"Column {index}" for index in range(100)), tuple(range(100)),
         ]})
         self.assertEqual(read_excel_sheet(content, "Data").shape, (1, 100))
+
+    def test_data_cell_limit_is_enforced_without_truncating(self):
+        self.assertEqual(MAX_EXCEL_CELLS, 5_000_000)
+        with patch("excel_support.MAX_EXCEL_CELLS", 4):
+            content = workbook_bytes({"Data": [("A", "B"), (1, 2), (3, 4)]})
+            self.assertEqual(read_excel_sheet(content, "Data").shape, (2, 2))
+            content = workbook_bytes({"Data": [("A", "B"), (1, 2), (3, 4), (5, 6)]})
+            with self.assertRaisesRegex(ValueError, "4 data cells"):
+                read_excel_sheet(content, "Data")
 
     def test_trailing_empty_formatted_header_cells_do_not_invalidate_data(self):
         content = workbook_bytes({"products": [

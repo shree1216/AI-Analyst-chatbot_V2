@@ -101,7 +101,7 @@ are not a replacement for database permissions or access controls.
 - Create business reports with key metrics, applied scope, factual findings, and
     relevant analyst notes.
 - Download reports as PDF files.
-- Upload `.xlsx` or `.csv` files with arbitrary columns and select a worksheet to query.
+- Upload `.xlsx`, `.csv` or `.parquet` files with arbitrary columns and select a worksheet to query.
 - Download query results and report summaries, breakdowns, and source data as Excel workbooks.
 - Look up employee details such as department, city, email, and phone number.
 - Azure OpenAI support for structured column queries; results are rendered directly
@@ -112,6 +112,8 @@ are not a replacement for database permissions or access controls.
 - General answers use the last six exchanges in the current chat, with long
     messages shortened. Previous-question recall uses actual session history.
     **New chat** clears that history; it is not persistent memory across sessions.
+  Previous messages remain fully readable while a response is generated; a
+  loading indicator appears in the pending reply without dimming the screen.
 - Analyze uploaded JPG, PNG, and WebP images when Azure OpenAI is configured.
 
 To analyze an image, attach it using the upload button in the message box and
@@ -123,13 +125,22 @@ Image analysis allows 60 seconds and up to 2,000 completion tokens per request.
 Images must be smaller than 4 MB; high-detail vision
 is used for readability, but extracted text and numbers should still be checked.
 
-### Explore uploaded Excel and CSV data
+### Explore uploaded Excel, CSV and Parquet data
 
-In **Automatic (SQL + Excel)** or **Excel workbook** mode, upload an `.xlsx` or
-`.csv` file (up to 10 MB). For a workbook with several sheets, choose **Worksheet**
-in the sidebar. CSV files become a single-sheet Excel working copy; the original
+In **Automatic (SQL + Excel)** or **Excel workbook** mode, upload an `.xlsx`,
+`.csv` or `.parquet` file (up to 20 MB per file). For a workbook with several sheets, choose **Worksheet**
+in the sidebar. CSV and Parquet files become a single-sheet Excel working copy; the original
 file is not modified. Quoted values and comma, semicolon, tab and pipe delimiters
 are supported. Invalid row widths produce an upload error rather than dropping data.
+
+Parquet supports flat text, numeric, boolean, date and timezone-free timestamp
+columns. Its row, column, cell and expanded-data limits are checked before
+loading values. Large integers and decimals are retained as text to preserve
+precision. Nested/binary/unsupported columns, text exceeding Excel's cell length,
+and timestamps finer than milliseconds produce actionable errors rather than
+silent conversion. Convert those columns to text, flatten them, or cast timestamps
+to milliseconds before uploading. Entirely empty rows are ignored, as in Excel.
+Filters, chat charts and native Excel downloads also work with Parquet uploads.
 
 Ask **open the file** or **show me the data** to see the complete selected sheet
 in a scrollable table; click a column header to sort. The summary includes row and
@@ -165,9 +176,16 @@ just the sidebar preview.
   workbook containing filtered rows, analysis settings, supporting numbers and a
   native editable chart. The uploaded working copy is not modified.
 
-These filters apply only to the analysis panel; chat questions still use the
-selected source sheet without the panel's filters. Empty results show an explicit
-warning. Interactive summaries retain all groups up to 500; larger summaries or
+These filters update both the analysis panel and uploaded-data charts in chat for
+the same file and worksheet, including charts already displayed and their Excel
+downloads. Supporting tables and dashboard counts use the same filtered rows.
+Removing filters or turning off **Spreadsheet analysis** restores unfiltered
+charts. Filters do not carry over to another upload or worksheet. Non-chart chat
+questions still use the full source sheet. Filtering does not rewrite source
+cells or reapply workbook edits: saved native charts are snapshots; updated
+filtered charts are available in the chart download. Empty or invalid filters
+show an explicit warning instead of stale charts/downloads.
+Interactive summaries retain all groups up to 500; larger summaries or
 scatter plots require filtering rather than silently dropping/sampling rows.
 Pie/doughnut charts reject negative values or a zero total; use bars for signed
 business measures such as losses or variances.
@@ -220,7 +238,7 @@ overrides that selection. Existing data cells, formulas, PivotTables, slicers,
 charts and images are preserved. The source sheet stays selected for follow-up
 questions, and a hidden source-range name separates the original data from added
 supporting cells when querying or reuploading the export. Reopening a cached
-answer does not insert duplicate charts. CSV uploads export as `.xlsx` because
+answer does not insert duplicate charts. CSV and Parquet uploads export as `.xlsx` because
 CSV cannot store charts. Row/column edits on a same-sheet chart workbook require
 the original upload; the editing engine cannot safely move the inline chart data.
 This is a prompt-driven spreadsheet/dashboard workflow, not a complete Quadratic
@@ -544,8 +562,15 @@ modes. **New chat** clears recall history; it cannot recover another session's
 questions.
 
 Use unique, nonempty text column headers in the first row. Workbooks must be
-smaller than 10 MB (50 MB expanded), with at most 50,000 data rows and 100 columns
-per selected sheet. Sheets without a header row, missing/duplicate headers, encrypted files,
+no larger than 20 MB (1,000 MB expanded), with at most 1,000,000 data rows,
+100 columns and 5 million data cells per selected sheet. CSV and Parquet uploads have the
+same file, row, column and cell limits. These limits are checked without silently
+truncating data. The sidebar in Automatic mode is only a preview; full-sheet
+validation runs when the sheet is analyzed. Large uploads and direct spreadsheet
+analysis do not raise the separate 50,000-row limits for complex AI-planned
+calculations, SQL results or combined-source operations; those routes report
+their limits explicitly. Restart Streamlit after changing upload configuration.
+Sheets without a header row, missing/duplicate headers, encrypted files,
 and legacy `.xls` files are not supported. Formulas are not executed: only values
 last saved by Excel are read, so recalculate and save the workbook first if needed.
 Use Excel date cells or unambiguous ISO text such as `2025-01-31` for date operations.
@@ -881,7 +906,8 @@ two-call AI budget with truncated-response recovery. A first missing-data refusa
 also gets one schema-grounded recheck; an actual lack of matching names or dates
 still fails explicitly without changing the workbook. All steps and serialization
 must succeed before the active workbook is replaced; a failure leaves it unchanged.
-Limits remain 20 steps, 50,000 worksheet rows, 100 columns and 5 million cells;
+Complex calculations retain limits of 20 steps, 50,000 input/result rows,
+100 worksheet columns and 5 million cells;
 each insertion step accepts at most 1,000 new rows.
 
 Ordinary cell styles, row heights, column widths, other worksheets and existing

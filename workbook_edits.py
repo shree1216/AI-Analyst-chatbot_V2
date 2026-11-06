@@ -473,7 +473,7 @@ def _edit_frame(
             _keys(step, {"rows", "before"}, {"rows"})
             rows = step["rows"]
             _require(isinstance(rows, list) and 1 <= len(rows) <= 1000, "Add between 1 and 1,000 rows per step.")
-            _require(len(frame) + len(rows) <= MAX_EXCEL_ROWS, "The added rows exceed the 50,000-row limit.")
+            _require(len(frame) + len(rows) <= MAX_EXCEL_ROWS, f"The added rows exceed the {MAX_EXCEL_ROWS:,}-row limit.")
             columns = _headers(frame, identity)
             for row in rows:
                 _require(isinstance(row, dict) and set(row) <= set(columns), "New row values must use existing headers.")

@@ -145,7 +145,12 @@ def _filter_controls(frame: pd.DataFrame, key: str) -> list[ColumnFilter]:
 def render_spreadsheet_analysis(content: bytes, sheet: str, source: str, key: str) -> None:
     with st.container(border=True):
         st.subheader("Spreadsheet analysis")
-        st.caption(f"Source: {source}. Uses the full worksheet; filters do not change your workbook or chat answers.")
+        st.caption(
+            f"Source: {source}. Filters update analysis and chat charts for this worksheet, including chart downloads. "
+            "Source cells and non-chart chat answers are unchanged."
+        )
+        filter_state = {"key": key, "filters": [], "error": "Choose valid spreadsheet filters before charting."}
+        st.session_state["spreadsheet_chart_filters"] = filter_state
         try:
             cached = st.session_state.get("spreadsheet_analysis_frame")
             if cached is None or cached[0] != key:
@@ -155,6 +160,7 @@ def render_spreadsheet_analysis(content: bytes, sheet: str, source: str, key: st
             with st.expander("Filters", expanded=True):
                 filters = _filter_controls(frame, key)
             filtered = filter_rows(frame, filters)
+            filter_state.update(filters=filters, error=None)
             metrics = st.columns(3)
             metrics[0].metric("Source rows", f"{len(frame):,}")
             metrics[1].metric("Filtered rows", f"{len(filtered):,}")
@@ -232,4 +238,6 @@ def render_spreadsheet_analysis(content: bytes, sheet: str, source: str, key: st
                 st.caption("Includes filtered source rows, exact supporting numbers, analysis settings and a native editable chart.")
         except ValueError as error:
             logger.warning("Spreadsheet analysis failed: %s", type(error).__name__)
+            if filter_state["error"] is not None:
+                filter_state["error"] = str(error)
             st.warning(str(error))

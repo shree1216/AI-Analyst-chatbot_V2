@@ -26,9 +26,12 @@ import pandas as pd
 
 
 EXCEL_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-MAX_EXCEL_BYTES = 10_000_000
-MAX_EXCEL_ROWS = 50_000
+MAX_UPLOAD_MB = 20
+MAX_EXCEL_BYTES = MAX_UPLOAD_MB * 1024 * 1024
+MAX_EXCEL_EXPANDED_BYTES = 1_000_000_000
+MAX_EXCEL_ROWS = 1_000_000
 MAX_EXCEL_COLUMNS = 100
+MAX_EXCEL_CELLS = 5_000_000
 FORMULA_CACHE_VERSION = 2
 SOURCE_RANGE_NAME = "_WorkforceSourceData"
 SALES_SHEET_MISSING = (
@@ -65,7 +68,7 @@ def _excel_content(source: bytes | str | Path) -> bytes:
         except ValueError as error:
             raise ValueError("That file path isn't valid. Choose an .xlsx file and try again.") from error
     if not content or len(content) > MAX_EXCEL_BYTES:
-        raise ValueError("Upload an .xlsx workbook smaller than 10 MB.")
+        raise ValueError(f"Upload a nonempty .xlsx workbook no larger than {MAX_UPLOAD_MB} MB.")
     return content
 
 
@@ -73,8 +76,8 @@ def open_excel_workbook(content: bytes | str | Path) -> Workbook:
     content = _excel_content(content)
     try:
         with ZipFile(BytesIO(content)) as archive:
-            if sum(item.file_size for item in archive.infolist()) > 50_000_000:
-                raise ValueError("The expanded workbook must be smaller than 50 MB.")
+            if sum(item.file_size for item in archive.infolist()) > MAX_EXCEL_EXPANDED_BYTES:
+                raise ValueError(f"The expanded workbook must be no larger than {MAX_EXCEL_EXPANDED_BYTES // 1_000_000:,} MB.")
         return load_workbook(BytesIO(content), read_only=True, data_only=True)
     except OSError as error:
         raise ValueError(_excel_access_message(error)) from error
@@ -131,6 +134,8 @@ def excel_source_range(content: bytes, sheet: str) -> tuple[int, int] | None:
         _, _, last_column, last_row = range_boundaries(f"A1:{match[2]}{match[3]}")
         if not (1 <= last_column <= MAX_EXCEL_COLUMNS and 1 <= last_row <= MAX_EXCEL_ROWS + 1):
             raise ValueError("The saved source-data range exceeds the workbook data limits.")
+        if (last_row - 1) * last_column > MAX_EXCEL_CELLS:
+            raise ValueError("The saved source-data range exceeds the workbook cell limit.")
         return last_row, last_column
     return None
 
@@ -304,13 +309,23 @@ def _check_formula_values(content: bytes, sheet: str, last_row: int, last_column
         if part is None:
             return
         missing = []
-        for cell in ET.fromstring(archive.read(part)).iter(f"{_MAIN_NS}c"):
-            row, column = coordinate_to_tuple(cell.attrib["r"])
-            if cell.find(f"{_MAIN_NS}f") is None or row > last_row or (last_column is not None and column > last_column):
-                continue
-            value = cell.find(f"{_MAIN_NS}v")
-            if value is None or (value.text is None and cell.get("t") != "str"):
-                missing.append(cell.attrib["r"])
+        with archive.open(part) as document:
+            sheet_data = None
+            for event, element in ET.iterparse(document, events=("start", "end")):
+                if event == "start" and element.tag == f"{_MAIN_NS}sheetData":
+                    sheet_data = element
+                if event != "end" or element.tag != f"{_MAIN_NS}row":
+                    continue
+                for cell in element.iter(f"{_MAIN_NS}c"):
+                    row, column = coordinate_to_tuple(cell.attrib["r"])
+                    if cell.find(f"{_MAIN_NS}f") is None or row > last_row or (last_column is not None and column > last_column):
+                        continue
+                    value = cell.find(f"{_MAIN_NS}v")
+                    if (value is None or (value.text is None and cell.get("t") != "str")) and len(missing) < 5:
+                        missing.append(cell.attrib["r"])
+                element.clear()
+                if sheet_data is not None:
+                    sheet_data.clear()
         if missing:
             raise ValueError(
                 f"Worksheet '{sheet}' has formulas without saved calculation results at {', '.join(missing[:5])}. "
@@ -323,7 +338,7 @@ def read_excel_sheet(
     content: bytes | str | Path, sheet: str, *, preview_rows: int | None = None,
 ) -> pd.DataFrame:
     if preview_rows is not None and (type(preview_rows) is not int or not 1 <= preview_rows <= MAX_EXCEL_ROWS):
-        raise ValueError("Choose a preview size between 1 and 50,000 rows.")
+        raise ValueError(f"Choose a preview size between 1 and {MAX_EXCEL_ROWS:,} rows.")
     content = _excel_content(content)
     workbook = open_excel_workbook(content)
     try:
@@ -343,7 +358,7 @@ def read_excel_sheet(
         while header and header[-1] is None:
             header.pop()
         if not header or len(header) > MAX_EXCEL_COLUMNS:
-            raise ValueError(f"Worksheet '{sheet}': use a header row with 1 to 100 columns in row 1.")
+            raise ValueError(f"Worksheet '{sheet}': use a header row with 1 to {MAX_EXCEL_COLUMNS} columns in row 1.")
         if any(not isinstance(value, str) or not value.strip() for value in header):
             cells = [f"{get_column_letter(index + 1)}1" for index, value in enumerate(header)
                      if not isinstance(value, str) or not value.strip()]
@@ -370,7 +385,9 @@ def read_excel_sheet(
                     f"{get_column_letter(column)}{row_number}. Add a distinct text header in row 1, save, and upload again."
                 )
             if len(values) >= MAX_EXCEL_ROWS:
-                raise ValueError("A worksheet can contain at most 50,000 data rows.")
+                raise ValueError(f"A worksheet can contain at most {MAX_EXCEL_ROWS:,} data rows.")
+            if (len(values) + 1) * len(columns) > MAX_EXCEL_CELLS:
+                raise ValueError(f"A worksheet can contain at most {MAX_EXCEL_CELLS:,} data cells. Reduce its rows or columns.")
             values.append(tuple(row[:len(columns)]) + (None,) * max(0, len(columns) - len(row)))
             if any(value is not None for value in row):
                 populated_rows += 1
@@ -701,8 +718,11 @@ def generate_excel_download(tables: list[tuple[str, pd.DataFrame]]) -> bytes:
 def append_result_sheet(
     content: bytes, result: pd.DataFrame, title: str, *, after_sheet: str,
 ) -> tuple[bytes, str]:
-    if not 1 <= len(result.columns) <= MAX_EXCEL_COLUMNS or len(result) > MAX_EXCEL_ROWS:
-        raise ValueError("A saved result needs 1 to 100 columns and at most 50,000 rows.")
+    if not 1 <= len(result.columns) <= MAX_EXCEL_COLUMNS or len(result) > MAX_EXCEL_ROWS or result.size > MAX_EXCEL_CELLS:
+        raise ValueError(
+            f"A saved result needs 1 to {MAX_EXCEL_COLUMNS} columns, at most {MAX_EXCEL_ROWS:,} rows "
+            f"and {MAX_EXCEL_CELLS:,} cells."
+        )
     excel_sheet_names(content)
     with closing(load_workbook(BytesIO(content), data_only=False)) as workbook, closing(
         load_workbook(BytesIO(generate_excel_download([("Results", result)])))

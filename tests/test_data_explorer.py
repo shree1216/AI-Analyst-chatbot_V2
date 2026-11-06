@@ -1,6 +1,8 @@
 from io import BytesIO
 from zipfile import ZipFile
 from hashlib import sha256
+from datetime import date, datetime
+from decimal import Decimal
 import json
 import os
 from pathlib import Path
@@ -9,10 +11,13 @@ from unittest.mock import patch
 
 from openpyxl import load_workbook
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 from streamlit.testing.v1 import AppTest
 
 from data_explorer import (
-    ChartSpec, auto_charts, build_chart, build_charts, csv_to_workbook, data_overview, is_overview_request, plan_charts,
+    ChartSpec, auto_charts, build_chart, build_charts, csv_to_workbook, data_overview, is_overview_request,
+    parquet_to_workbook, plan_charts,
 )
 from excel_support import excel_sheet_names, generate_excel_download, read_excel_sheet
 
@@ -33,7 +38,91 @@ def staff_frame():
     })
 
 
+def parquet_bytes(table):
+    output = BytesIO()
+    pq.write_table(table, output)
+    return output.getvalue()
+
+
 class DataExplorerTests(unittest.TestCase):
+    def test_parquet_preserves_scalar_values_nulls_and_large_integer_precision(self):
+        table = pa.table({
+            " Name ": ["Ada", "Lin", "Grace"],
+            "Code": ["00123", "00456", None],
+            "Employee ID": pa.array([12345678901234567, None, 98765432109876543], type=pa.int64()),
+            "Amount": [12.5, None, 30],
+            "Enabled": [True, False, None],
+            "Date": [date(2025, 1, 1), None, date(2025, 2, 1)],
+            "Timestamp": [datetime(2025, 1, 1, 12, 30), None, datetime(2025, 2, 1, 12, 30)],
+            "Decimal": [Decimal("123456789012345.67"), None, Decimal("10.00")],
+            "Formula": ["=1+1", None, "plain text"],
+        })
+        content = parquet_to_workbook(parquet_bytes(table), "staff:upload.PARQUET")
+        self.assertEqual(excel_sheet_names(content), ["staff_upload"])
+        frame = read_excel_sheet(content, "staff_upload")
+        self.assertEqual(frame["Name"].tolist(), ["Ada", "Lin", "Grace"])
+        self.assertEqual(frame["Code"].iloc[0], "00123")
+        self.assertEqual(frame["Employee ID"].iloc[0], "12345678901234567")
+        self.assertTrue(pd.isna(frame["Employee ID"].iloc[1]))
+        self.assertEqual(frame["Employee ID"].iloc[2], "98765432109876543")
+        self.assertEqual(frame["Decimal"].iloc[0], "123456789012345.67")
+        self.assertEqual(frame["Amount"].iloc[0], 12.5)
+        self.assertEqual(frame["Enabled"].iloc[:2].tolist(), [True, False])
+        self.assertEqual(frame["Timestamp"].iloc[0], datetime(2025, 1, 1, 12, 30))
+        workbook = load_workbook(BytesIO(content), data_only=False)
+        self.addCleanup(workbook.close)
+        self.assertEqual(workbook.active["I2"].data_type, "s")
+        self.assertEqual(workbook.active["I2"].value, "=1+1")
+
+    def test_parquet_dictionary_and_empty_tables_use_clean_unique_headers(self):
+        table = pa.Table.from_arrays([
+            pa.array(["North", "South"]).dictionary_encode(), pa.array([1, 2]), pa.array([3, 4]),
+        ], names=["Group", " Group ", ""])
+        frame = read_excel_sheet(parquet_to_workbook(parquet_bytes(table), "data.parquet"), "data")
+        self.assertEqual(frame.columns.tolist(), ["Group", "Group (2)", "Column 3"])
+        self.assertEqual(frame["Group"].tolist(), ["North", "South"])
+        empty = pa.table({"Value": pa.array([], type=pa.int64())})
+        frame = read_excel_sheet(parquet_to_workbook(parquet_bytes(empty), "empty.parquet"), "empty")
+        self.assertEqual(frame.shape, (0, 1))
+
+    def test_parquet_limits_fail_before_decoding_and_accept_exact_bounds(self):
+        content = parquet_bytes(pa.table({"A": [1, 2], "B": [3, 4]}))
+        with patch("data_explorer.MAX_EXCEL_BYTES", len(content)):
+            self.assertEqual(len(read_excel_sheet(parquet_to_workbook(content, "data.parquet"), "data")), 2)
+            with self.assertRaisesRegex(ValueError, "20 MB"):
+                parquet_to_workbook(content + b"x", "data.parquet")
+        for constant, limit, message in (
+            ("MAX_EXCEL_ROWS", 1, "1 data rows"), ("MAX_EXCEL_COLUMNS", 1, "1 to 1 columns"),
+            ("MAX_EXCEL_CELLS", 3, "3 data cells"), ("MAX_EXCEL_EXPANDED_BYTES", 1, "expanded Parquet"),
+        ):
+            with self.subTest(constant=constant), patch(f"data_explorer.{constant}", limit):
+                with patch("data_explorer.pq.ParquetFile.read", side_effect=AssertionError("Decoded before validation")):
+                    with self.assertRaisesRegex(ValueError, message):
+                        parquet_to_workbook(content, "data.parquet")
+        with patch("data_explorer.MAX_EXCEL_ROWS", 2), patch("data_explorer.MAX_EXCEL_COLUMNS", 2), patch(
+            "data_explorer.MAX_EXCEL_CELLS", 4,
+        ):
+            self.assertEqual(read_excel_sheet(parquet_to_workbook(content, "data.parquet"), "data").shape, (2, 2))
+        with self.assertRaisesRegex(ValueError, "1 to 100 columns"):
+            parquet_to_workbook(parquet_bytes(pa.table({})), "empty.parquet")
+
+    def test_invalid_or_oversized_parquet_has_an_actionable_error(self):
+        for content in (b"", b"not parquet", b"x" * (20 * 1024 * 1024 + 1)):
+            with self.subTest(size=len(content)), self.assertRaisesRegex(ValueError, "Parquet"):
+                parquet_to_workbook(content, "bad.parquet")
+
+    def test_parquet_rejects_lossy_or_unsupported_values(self):
+        for array, expected in (
+            (pa.array([[1, 2]]), "Flatten nested"),
+            (pa.array([b"binary"]), "unsupported type"),
+            (pa.array([datetime(2025, 1, 1)], type=pa.timestamp("ms", tz="UTC")), "timezone-aware"),
+            (pa.array([datetime(2025, 1, 1, microsecond=1)]), "sub-millisecond"),
+            (pa.array(["x" * 32_768]), "32,767-character"),
+            (pa.array(["bad\x01text"]), "control characters"),
+        ):
+            with self.subTest(expected=expected), self.assertRaisesRegex(ValueError, expected):
+                parquet_to_workbook(parquet_bytes(pa.table({"Value": array})), "bad.parquet")
+
     def test_doughnut_area_and_scatter_prompts_use_the_requested_chart(self):
         frame = staff_frame()
         frame["Cost"] = frame["Salary"] / 2
@@ -123,6 +212,38 @@ class DataExplorerTests(unittest.TestCase):
         for content in (b"", b" \n\n", b"A,B\n1,2,3\n", b"A,B\n1\n", b'A,B\n"broken,2\n'):
             with self.subTest(content=content), self.assertRaises(ValueError):
                 csv_to_workbook(content, "bad.csv")
+
+    def test_csv_larger_than_ten_mb_is_converted_without_losing_rows(self):
+        text = "Name,Amount\n" + ("x" * 12_000 + ",10\n") * 1_000
+        self.assertGreater(len(text), 10_000_000)
+        content = csv_to_workbook(text.encode(), "large.csv")
+        frame = read_excel_sheet(content, "large")
+        self.assertEqual(frame.shape, (1_000, 2))
+        self.assertEqual(frame["Amount"].sum(), 10_000)
+        self.assertEqual(frame["Name"].str.len().tolist(), [12_000] * 1_000)
+
+    def test_csv_accepts_more_than_fifty_thousand_rows(self):
+        content = csv_to_workbook(b"Amount\n" + b"1\n" * 50_001, "large.csv")
+        frame = read_excel_sheet(content, "large")
+        self.assertEqual(len(frame), 50_001)
+        self.assertEqual(frame["Amount"].sum(), 50_001)
+
+    def test_csv_safety_limits_accept_boundary_and_reject_overflow(self):
+        content = b"Amount\n1\n2\n"
+        with patch("data_explorer.MAX_EXCEL_BYTES", len(content)):
+            self.assertEqual(len(read_excel_sheet(csv_to_workbook(content, "data.csv"), "data")), 2)
+            with self.assertRaisesRegex(ValueError, "20 MB"):
+                csv_to_workbook(content + b"\n", "data.csv")
+        with patch("data_explorer.MAX_EXCEL_ROWS", 2), patch("data_explorer.MAX_EXCEL_CELLS", 4):
+            self.assertEqual(len(read_excel_sheet(csv_to_workbook(b"A,B\n1,2\n3,4\n", "data.csv"), "data")), 2)
+            with self.assertRaisesRegex(ValueError, "2 data rows"):
+                csv_to_workbook(b"A\n1\n2\n3\n", "data.csv")
+            with self.assertRaisesRegex(ValueError, "4 data cells"):
+                csv_to_workbook(b"A,B,C\n1,2,3\n4,5,6\n", "data.csv")
+
+    def test_csv_over_twenty_mb_is_rejected_before_conversion(self):
+        with self.assertRaisesRegex(ValueError, "20 MB"):
+            csv_to_workbook(b"x" * (20 * 1024 * 1024 + 1), "large.csv")
 
     def test_overview_reports_types_and_missing_values_without_changing_data(self):
         frame = pd.DataFrame({
@@ -252,7 +373,7 @@ class UploadedDataUITests(unittest.TestCase):
     def start_app(self, content, name, mode="Automatic (SQL + Excel)"):
         self.upload = BytesIO(content)
         self.upload.name = name
-        self.enterContext(patch(
+        self.uploader = self.enterContext(patch(
             "streamlit.file_uploader",
             side_effect=lambda *args, **kwargs: self.upload if kwargs.get("key") == "excel_upload_0" else None,
         ))
@@ -261,6 +382,44 @@ class UploadedDataUITests(unittest.TestCase):
         app.run(timeout=30)
         self.assertEqual(len(app.exception), 0)
         return app
+
+    def test_parquet_upload_uses_twenty_mb_limit_and_filters_chart_exports(self):
+        frame = staff_frame()
+        content = frame.to_parquet(index=False)
+        app = self.start_app(content, "staff.parquet")
+        upload_call = next(call for call in self.uploader.call_args_list if call.kwargs.get("key") == "excel_upload_0")
+        self.assertEqual(upload_call.kwargs["max_upload_size"], 20)
+        self.assertEqual(upload_call.kwargs["type"], ["xlsx", "csv", "parquet"])
+        app.chat_input[0].set_value("show me the data").run(timeout=30)
+        self.assertEqual(len(app.session_state["chat_history"][-1]["result"]), len(frame))
+        app.toggle(key="show_spreadsheet_analysis").set_value(True).run(timeout=30)
+        key = f"analysis_{app.session_state['excel_workbook']['digest']}_staff"
+        app.multiselect(key=f"{key}_filters").set_value(["Department"]).run(timeout=30)
+        app.multiselect(key=f"{key}_filter_0_values").set_value(["IT"]).run(timeout=30)
+        app.chat_input[0].set_value("show total salary by department").run(timeout=30)
+        self.assertEqual(len(app.exception), 0)
+        message = app.session_state["chat_history"][-1]
+        self.assertNotIn("error", message)
+        self.assertEqual(message["charts"][0].table.to_dict("list"), {"Department": ["IT"], "Total Salary": [6400]})
+        self.assertEqual(message["source"], "staff.parquet / staff")
+        self.assertEqual(len(read_excel_sheet(message["excel_download"], "staff")), len(frame))
+        self.assertEqual(app.session_state["excel_workbook"]["upload_digest"], sha256(content).hexdigest())
+        download = message["excel_download"]
+        app.run(timeout=30)
+        self.assertEqual(app.session_state["chat_history"][-1]["excel_download"], download)
+
+    def test_invalid_parquet_upload_can_be_replaced_and_retried(self):
+        app = self.start_app(b"not parquet", "broken.parquet")
+        self.assertTrue(any("Parquet" in warning.value for warning in app.warning))
+        app.chat_input[0].set_value("show me the data").run(timeout=30)
+        self.assertIn("Parquet", app.session_state["chat_history"][-1]["error"])
+        self.upload = BytesIO(staff_frame().to_parquet(index=False))
+        self.upload.name = "fixed.parquet"
+        app.run(timeout=30)
+        app.button(key="retry_uploaded_data_0").click().run(timeout=30)
+        self.assertEqual(len(app.exception), 0)
+        self.assertNotIn("error", app.session_state["chat_history"][-1])
+        self.assertEqual(len(app.session_state["chat_history"][-1]["result"]), 16)
 
     def test_csv_upload_overview_and_four_charts_use_all_rows_and_survive_reruns(self):
         frame = staff_frame()

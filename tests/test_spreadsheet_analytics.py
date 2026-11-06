@@ -6,11 +6,12 @@ import unittest
 from unittest.mock import patch
 
 from openpyxl import load_workbook
+from openpyxl.utils.cell import range_boundaries
 import pandas as pd
 from streamlit.testing.v1 import AppTest
 
 from data_explorer import build_chart
-from excel_support import generate_excel_download, read_excel_sheet
+from excel_support import excel_sheet_names, generate_excel_download, read_excel_sheet
 from spreadsheet_analytics import ColumnFilter, analysis_spec, export_analysis, filter_rows
 
 
@@ -184,7 +185,106 @@ class SpreadsheetAnalyticsUITests(unittest.TestCase):
         self.assertTrue(any(button.label == "Download analysis with chart" for button in app.get("download_button")))
         app.chat_input[0].set_value("show total revenue by region").run(timeout=30)
         self.assertEqual(len(app.exception), 0)
+        self.assertEqual(app.session_state["chat_history"][-1]["charts"][0].table.iloc[:, 1].sum(), 900)
+
+    def test_existing_chat_charts_and_downloads_refresh_when_filters_change(self):
+        app = self.start_app()
+        original = app.session_state["excel_workbook"]["content"]
+        app.chat_input[0].set_value("show total revenue by region").run(timeout=30)
+        app.multiselect(key=f"{self.key}_filters").set_value(["Region"]).run(timeout=30)
+        app.multiselect(key=f"{self.key}_filter_0_values").set_value(["North"]).run(timeout=30)
+        message = app.session_state["chat_history"][-1]
+        self.assertEqual(message["charts"][0].table.to_dict("list"),
+                         {"Region": ["North"], "Total Revenue": [900]})
+        workbook = load_workbook(BytesIO(message["excel_download"]))
+        self.addCleanup(workbook.close)
+        chart = workbook["sales"]._charts[0]
+        reference = chart.series[0].val.numRef.f
+        sheet, cells = reference.split("!")
+        column, row, _, _ = range_boundaries(cells)
+        self.assertEqual(workbook[sheet.strip("'")].cell(row, column).value, 900)
+        supporting = message["supporting_table_export"]["excel_download"]
+        self.assertEqual(read_excel_sheet(supporting, excel_sheet_names(supporting)[0]).iloc[:, 1].sum(), 900)
+        pd.testing.assert_frame_equal(read_excel_sheet(message["excel_download"], "sales"), sales_frame(),
+                                      check_dtype=False, check_flags=False)
+        self.assertEqual(app.session_state["excel_workbook"]["content"], original)
+        download = message["excel_download"]
+        app.run(timeout=30)
+        self.assertEqual(app.session_state["chat_history"][-1]["excel_download"], download)
+        app.toggle(key="show_spreadsheet_analysis").set_value(False).run(timeout=30)
         self.assertEqual(app.session_state["chat_history"][-1]["charts"][0].table.iloc[:, 1].sum(), 2100)
+
+    def test_empty_or_invalid_filters_hide_cached_chat_charts_and_recover(self):
+        app = self.start_app()
+        app.chat_input[0].set_value("show total revenue by region").run(timeout=30)
+        app.multiselect(key=f"{self.key}_filters").set_value(["Region"]).run(timeout=30)
+        app.multiselect(key=f"{self.key}_filter_0_values").set_value([]).run(timeout=30)
+        message = app.session_state["chat_history"][-1]
+        self.assertIn("No rows match", message["error"])
+        self.assertNotIn("excel_download", message)
+        self.assertNotIn("charts", message)
+        self.assertEqual(len(app.get("plotly_chart")), 0)
+        app.multiselect(key=f"{self.key}_filter_0_values").set_value(["South"]).run(timeout=30)
+        message = app.session_state["chat_history"][-1]
+        self.assertNotIn("error", message)
+        self.assertEqual(message["charts"][0].table.iloc[:, 1].sum(), 1200)
+        app.multiselect(key=f"{self.key}_filters").set_value(["Revenue"]).run(timeout=30)
+        app.number_input(key=f"{self.key}_filter_1_lower").set_value(700.0).run(timeout=30)
+        self.assertIn("ordered lower and upper", app.session_state["chat_history"][-1]["error"])
+        self.assertEqual(len(app.get("plotly_chart")), 0)
+        app.number_input(key=f"{self.key}_filter_1_lower").set_value(300.0).run(timeout=30)
+        self.assertNotIn("error", app.session_state["chat_history"][-1])
+        self.assertEqual(app.session_state["chat_history"][-1]["charts"][0].table.iloc[:, 1].sum(), 1800)
+
+    def test_filters_do_not_affect_other_worksheets_or_replacement_uploads(self):
+        app = self.start_app()
+        app.chat_input[0].set_value("show total revenue by region").run(timeout=30)
+        app.multiselect(key=f"{self.key}_filters").set_value(["Region"]).run(timeout=30)
+        app.multiselect(key=f"{self.key}_filter_0_values").set_value(["North"]).run(timeout=30)
+        self.upload = BytesIO(generate_excel_download([
+            ("Other", sales_frame().assign(Revenue=10)), ("sales", sales_frame()),
+        ]))
+        self.upload.name = "other.xlsx"
+        app.run(timeout=30)
+        next(widget for widget in app.selectbox if widget.label == "Worksheet").set_value("Other").run(timeout=30)
+        app.chat_input[0].set_value("show total revenue by region").run(timeout=30)
+        self.assertEqual(app.session_state["chat_history"][-1]["charts"][0].table.iloc[:, 1].sum(), 60)
+        self.assertEqual(app.session_state["chat_history"][0]["charts"][0].table.iloc[:, 1].sum(), 900)
+        app.multiselect(key=f"analysis_{app.session_state['excel_workbook']['digest']}_Other_filters").set_value(["Region"]).run(timeout=30)
+        app.multiselect(key=f"analysis_{app.session_state['excel_workbook']['digest']}_Other_filter_0_values").set_value(["North"]).run(timeout=30)
+        app.chat_input[0].set_value("open sheet sales and show total revenue by region").run(timeout=30)
+        self.assertEqual(len(app.exception), 0)
+        self.assertEqual(app.session_state["chat_history"][-1]["charts"][0].table.iloc[:, 1].sum(), 2100)
+
+    def test_native_dashboard_filter_refresh_does_not_reapply_workbook_edits(self):
+        app = self.start_app()
+        app.multiselect(key=f"{self.key}_filters").set_value(["Region"]).run(timeout=30)
+        app.multiselect(key=f"{self.key}_filter_0_values").set_value(["North"]).run(timeout=30)
+        app.chat_input[0].set_value("create a dashboard in Excel").run(timeout=30)
+        self.assertEqual(len(app.exception), 0)
+        message = app.session_state["chat_history"][-1]
+        self.assertNotIn("error", message)
+        self.assertEqual(message["dashboard_rows"], 3)
+        content = app.session_state["excel_workbook"]["content"]
+        key = f"analysis_{app.session_state['excel_workbook']['digest']}_sales"
+        app.multiselect(key=f"{key}_filters").set_value(["Region"]).run(timeout=30)
+        app.multiselect(key=f"{key}_filter_0_values").set_value(["South"]).run(timeout=30)
+        self.assertEqual(len(app.exception), 0)
+        message = app.session_state["chat_history"][-1]
+        self.assertNotIn("error", message)
+        self.assertEqual(app.session_state["excel_workbook"]["content"], content)
+        self.assertEqual(message["dashboard_rows"], 3)
+        self.assertEqual(message["charts"][0].table.iloc[:, 1].sum(), 3)
+        exported = load_workbook(BytesIO(message["excel_download"]))
+        self.addCleanup(exported.close)
+        self.assertEqual(len(exported["sales"]._charts), len(message["charts"]))
+
+    def test_non_chart_questions_keep_the_unfiltered_source(self):
+        app = self.start_app()
+        app.multiselect(key=f"{self.key}_filters").set_value(["Region"]).run(timeout=30)
+        app.multiselect(key=f"{self.key}_filter_0_values").set_value(["North"]).run(timeout=30)
+        app.chat_input[0].set_value("show me the data").run(timeout=30)
+        self.assertEqual(len(app.session_state["chat_history"][-1]["result"]), 6)
 
     def test_empty_filter_shows_actionable_warning_and_no_stale_chart(self):
         app = self.start_app()

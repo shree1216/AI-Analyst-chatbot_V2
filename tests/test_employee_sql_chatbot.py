@@ -69,6 +69,21 @@ class WorkforceTests(unittest.TestCase):
         self.enterContext(patch("socket.create_connection", side_effect=AssertionError("Unexpected network access")))
         self.result = employee_fixture()
 
+    def test_loading_theme_preserves_history_and_only_hides_pending_stale_text(self):
+        with patch.object(self.chatbot.st, "markdown") as markdown:
+            self.chatbot.apply_theme()
+        styles = "\n".join(call.args[0] for call in markdown.call_args_list)
+        self.assertRegex(
+            styles,
+            r'\[data-testid="stElementContainer"\]\[data-stale="true"\]\s*\{\s*'
+            r'opacity: 1 !important;\s*transition: none !important;',
+        )
+        self.assertIn(
+            '[data-testid="stChatMessage"]:has([data-stale="false"] .response-pending) [data-stale="true"]',
+            styles,
+        )
+        self.assertNotIn('[data-testid="stChatMessage"] [data-stale="true"] {', styles)
+
     def test_employee_db_sql_auth_uses_configured_server_with_validated_tls(self):
         environment = {
             key: value for key, value in TEST_ENVIRONMENT.items() if not key.upper().startswith("WORKFORCE_")

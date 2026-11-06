@@ -1,4 +1,4 @@
-"""Upload conversion, data overview and question-driven charts for uploaded CSV/Excel data.
+"""Upload conversion, data overview and question-driven charts for uploaded tabular data.
 
 Everything here is deterministic (no AI): questions are matched to real column names, and
 values are cleaned only for analysis. The uploaded data itself is never rewritten.
@@ -6,7 +6,7 @@ values are cleaned only for analysis. The uploaded data itself is never rewritte
 import csv
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from io import StringIO
+from io import BytesIO, StringIO
 import math
 from pathlib import Path
 import re
@@ -15,8 +15,14 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import plotly.express as px
+import pyarrow as pa
+import pyarrow.parquet as pq
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 
-from excel_support import MAX_EXCEL_BYTES, MAX_EXCEL_COLUMNS, MAX_EXCEL_ROWS, generate_excel_download
+from excel_support import (
+    MAX_EXCEL_BYTES, MAX_EXCEL_CELLS, MAX_EXCEL_COLUMNS, MAX_EXCEL_EXPANDED_BYTES, MAX_EXCEL_ROWS,
+    MAX_UPLOAD_MB, generate_excel_download,
+)
 
 
 MISSING_TOKENS = {"", "na", "n/a", "nan", "null", "none", "nil", "-", "--", "?", "not available", "missing", "#n/a"}
@@ -75,10 +81,15 @@ def _numeric_column(values: pd.Series) -> pd.Series | None:
     return numbers.astype(object).where(numbers.notna(), None)
 
 
+def _table_workbook(frame: pd.DataFrame, file_name: str) -> bytes:
+    sheet = re.sub(r"[\[\]:*?/\\]", "_", Path(file_name).stem).strip().strip("'")[:31] or "Data"
+    return generate_excel_download([(sheet, frame)])
+
+
 def csv_to_workbook(content: bytes, file_name: str) -> bytes:
     """Convert an uploaded CSV into a one-sheet .xlsx so every workbook feature can use it."""
     if len(content) > MAX_EXCEL_BYTES:
-        raise ValueError("Upload a CSV file smaller than 10 MB.")
+        raise ValueError(f"Upload a CSV file no larger than {MAX_UPLOAD_MB} MB.")
     if not content.strip():
         raise ValueError("The CSV file is empty. Upload a CSV with a header row and data.")
     text = _decode(content)
@@ -103,6 +114,8 @@ def csv_to_workbook(content: bytes, file_name: str) -> bytes:
             rows.append(row)
             if len(rows) > MAX_EXCEL_ROWS:
                 raise ValueError(f"A CSV file can have at most {MAX_EXCEL_ROWS:,} data rows.")
+            if len(rows) * len(headers) > MAX_EXCEL_CELLS:
+                raise ValueError(f"A CSV file can have at most {MAX_EXCEL_CELLS:,} data cells. Reduce its rows or columns.")
     except csv.Error as error:
         raise ValueError(
             "Some CSV rows have a different number of values than the header. "
@@ -112,8 +125,64 @@ def csv_to_workbook(content: bytes, file_name: str) -> bytes:
     for column in frame.columns:
         converted = _numeric_column(frame[column])
         frame[column] = converted if converted is not None else frame[column].where(frame[column].str.strip() != "", None)
-    sheet = re.sub(r"[\[\]:*?/\\]", "_", Path(file_name).stem).strip().strip("'")[:31] or "Data"
-    return generate_excel_download([(sheet, frame)])
+    return _table_workbook(frame, file_name)
+
+
+def parquet_to_workbook(content: bytes, file_name: str) -> bytes:
+    """Read bounded, flat Parquet data into the existing Excel working-copy flow."""
+    if not content or len(content) > MAX_EXCEL_BYTES:
+        raise ValueError(f"Upload a nonempty Parquet file no larger than {MAX_UPLOAD_MB} MB.")
+    try:
+        with pq.ParquetFile(BytesIO(content), arrow_extensions_enabled=False) as parquet:
+            metadata, schema = parquet.metadata, parquet.schema_arrow
+            if not 1 <= len(schema) <= MAX_EXCEL_COLUMNS:
+                raise ValueError(f"A Parquet file needs 1 to {MAX_EXCEL_COLUMNS} columns.")
+            if metadata.num_rows > MAX_EXCEL_ROWS:
+                raise ValueError(f"A Parquet file can have at most {MAX_EXCEL_ROWS:,} data rows.")
+            if metadata.num_rows * len(schema) > MAX_EXCEL_CELLS:
+                raise ValueError(f"A Parquet file can have at most {MAX_EXCEL_CELLS:,} data cells.")
+            if sum(metadata.row_group(index).total_byte_size for index in range(metadata.num_row_groups)) > MAX_EXCEL_EXPANDED_BYTES:
+                raise ValueError(
+                    f"The expanded Parquet data must be no larger than {MAX_EXCEL_EXPANDED_BYTES // 1_000_000:,} MB."
+                )
+            types = [field.type.value_type if pa.types.is_dictionary(field.type) else field.type for field in schema]
+            for field, kind in zip(schema, types):
+                if not (
+                    pa.types.is_null(kind) or pa.types.is_boolean(kind) or pa.types.is_integer(kind)
+                    or pa.types.is_floating(kind) or pa.types.is_string(kind) or pa.types.is_large_string(kind)
+                    or pa.types.is_decimal(kind) or pa.types.is_date(kind)
+                    or (pa.types.is_timestamp(kind) and kind.tz is None)
+                ):
+                    raise ValueError(
+                        f"Parquet column '{field.name}' has unsupported type {kind}. "
+                        "Flatten nested columns and convert binary, timezone-aware or other unsupported values to text."
+                    )
+            table = parquet.read()
+        headers = _clean_headers(schema.names)
+        if any(ILLEGAL_CHARACTERS_RE.search(name) or len(name) > 32_767 for name in headers):
+            raise ValueError("The Parquet headers contain control characters or exceed the Excel cell length limit.")
+        columns = {}
+        for index, (name, kind) in enumerate(zip(headers, types)):
+            values = table.column(index).to_pylist()
+            if pa.types.is_integer(kind):
+                values = [str(value) if value is not None and abs(value) >= 10**15 else value for value in values]
+            elif pa.types.is_decimal(kind):
+                values = [None if value is None else str(value) for value in values]
+            elif pa.types.is_string(kind) or pa.types.is_large_string(kind):
+                if any(value is not None and len(value) > 32_767 for value in values):
+                    raise ValueError(f"Parquet column '{name}' contains text longer than the 32,767-character Excel cell limit.")
+                if any(value is not None and ILLEGAL_CHARACTERS_RE.search(value) for value in values):
+                    raise ValueError(f"Parquet column '{name}' contains control characters unsupported by Excel. Remove them and upload again.")
+            elif pa.types.is_timestamp(kind):
+                if any(
+                    value is not None and (pd.Timestamp(value).nanosecond or pd.Timestamp(value).microsecond % 1000)
+                    for value in values
+                ):
+                    raise ValueError(f"Parquet column '{name}' has sub-millisecond timestamps. Cast it to timestamp[ms] or text.")
+            columns[name] = pd.Series(values, dtype=object)
+        return _table_workbook(pd.DataFrame(columns), file_name)
+    except (pa.ArrowException, OSError) as error:
+        raise ValueError("Could not read this Parquet file. Upload a valid, unencrypted .parquet file.") from error
 
 
 # --------------------------------------------------------------------------- cleaning helpers
