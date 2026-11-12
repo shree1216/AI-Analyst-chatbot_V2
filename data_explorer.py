@@ -582,6 +582,23 @@ def _find_column(phrase: str, columns: list[str], allowed: set[str] | None = Non
             found = _find_column(rest, columns, allowed)
             if found is not None:
                 return found
+    if best is None:
+        # Fall back to a phrase found inside a header (e.g. 'data usage' -> Monthly_Data_Usage_GB) when unambiguous.
+        for length in range(min(len(tokens), 4), 0, -1):
+            window = tokens[:length]
+            if length == 1 and len(window[0]) < 4:
+                break
+            matches = [
+                column for column in columns
+                if (allowed is None or column in allowed) and any(
+                    _column_tokens(column)[start:start + length] == window
+                    for start in range(1, len(_column_tokens(column)) - length + 1)
+                )
+            ]
+            if len(matches) == 1:
+                return matches[0]
+            if matches:
+                break
     return best[2] if best else None
 
 

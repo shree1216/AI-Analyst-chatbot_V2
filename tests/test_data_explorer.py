@@ -157,6 +157,16 @@ class DataExplorerTests(unittest.TestCase):
         chart = build_chart(frame, ChartSpec("scatter", "scatter", "Revenue", "Cost", "none"))
         self.assertIn("not enough variation", chart.explanation)
 
+    def test_scatter_matches_phrases_inside_prefixed_headers_only_when_unique(self):
+        frame = pd.DataFrame({
+            "Monthly_Charge_USD": [10, 20, 30], "Monthly_Data_Usage_GB": [1.5, 2.5, 4.0],
+            "Daily_Call_Minutes": [5, 6, 7], "Monthly_Call_Minutes": [50, 60, 70],
+        })
+        spec = plan_charts("Scatter plot of data usage vs monthly charge", frame)[0]
+        self.assertEqual((spec.kind, spec.dimension, spec.measure),
+                         ("scatter", "Monthly_Data_Usage_GB", "Monthly_Charge_USD"))
+        self.assertIsNone(plan_charts("scatter plot of call minutes vs monthly charge", frame))
+
     def test_scatter_point_limit_is_exact_and_never_silently_samples(self):
         frame = pd.DataFrame({"Cost": range(501), "Revenue": range(501)})
         spec = ChartSpec("scatter", "scatter", "Revenue", "Cost", "none")
