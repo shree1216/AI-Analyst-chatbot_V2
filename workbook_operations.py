@@ -25,7 +25,10 @@ class JoinDiagnostic:
     matched_rows: int
 
 
-AGGREGATES = {"sum", "average", "min", "max", "count", "counta", "count_rows", "count_distinct", "median"}
+AGGREGATES = {"sum", "average", "min", "max", "count", "counta", "count_rows", "count_distinct", "median",
+              "stdev", "stdev_p", "var", "var_p"}
+# Excel STDEV.S/STDEV.P/VAR.S/VAR.P: sample statistics use ddof=1, population statistics ddof=0.
+_SPREAD = {"stdev": ("std", 1), "stdev_p": ("std", 0), "var": ("var", 1), "var_p": ("var", 0)}
 FUNCTION_ARITY = {
     **{name: (2, 2) for name in (
         "add", "subtract", "multiply", "divide", "power", "eq", "ne", "gt", "gte", "lt", "lte",
@@ -181,6 +184,10 @@ def _aggregate(function: str, value: Any, frame: pd.DataFrame, mask: pd.Series) 
         return None
     if function == "sum":
         return values.sum(min_count=1)
+    if function in _SPREAD:
+        method, ddof = _SPREAD[function]
+        result = getattr(values.astype(float), method)(ddof=ddof)
+        return None if pd.isna(result) else result
     return getattr(values, "mean" if function == "average" else function)()
 
 
@@ -336,9 +343,15 @@ def _aggregate_frame(frame: pd.DataFrame, groups: list[str], metrics: Any) -> pd
         _require(name not in result and name not in groups, "Summary output names must be unique.")
         _require(isinstance(function, str) and function in AGGREGATES, "That summary function is not supported.")
         column = metric.get("column", "*")
+        # count_rows counts matching rows regardless of the column named; count/counta of '*' mean the same.
+        if function in {"count", "counta"} and column == "*":
+            function = "count_rows"
+        if function == "count_rows" and isinstance(column, str) and column in frame:
+            column = "*"
         _require((function == "count_rows" and column == "*")
                  or (function != "count_rows" and isinstance(column, str) and column in frame),
-                 "The summary needs an available value column.")
+                 f"Summary metric '{name}' needs an available value column for {function}"
+                 f"{' (use column * for count_rows)' if function == 'count_rows' else ''}; got {column!r}.")
         mask = _truth(evaluate_expression(metric["where"], frame), frame) if "where" in metric else pd.Series(True, index=frame.index)
         values = frame[column] if function != "count_rows" else pd.Series(1, index=frame.index)
         if not groups:
@@ -365,6 +378,10 @@ def _aggregate_frame(frame: pd.DataFrame, groups: list[str], metrics: Any) -> pd
                 aggregated = aggregated.where(matches.ne(0), 0)
         elif function in {"count", "counta", "count_rows"}:
             aggregated = grouped.sum()
+        elif function in _SPREAD:
+            method, ddof = _SPREAD[function]
+            work[temporary] = pd.to_numeric(work[temporary], errors="coerce")
+            aggregated = getattr(work.groupby(groups, dropna=False, sort=False, observed=True)[temporary], method)(ddof=ddof)
         else:
             aggregated = getattr(grouped, {"average": "mean", "count_distinct": "nunique"}.get(function, function))()
         result[name] = aggregated.reindex(group_index).to_numpy()

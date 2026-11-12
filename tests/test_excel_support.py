@@ -519,6 +519,33 @@ class ExcelChatTests(unittest.TestCase):
         self.assertNotIn("West", prompt)
         self.assertNotIn("2025-01-01", prompt)
 
+    def test_workbook_plan_rejected_by_validator_is_repaired_once(self):
+        def reply(query):
+            return SimpleNamespace(choices=[
+                SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=json.dumps(query)))
+            ])
+        count = {"function": "count_rows", "args": []}
+        invalid = {"understood": True, "unhandled_conditions": [], "sheet": "Sales", "steps": [
+            {"op": "calculate", "columns": [{"name": "Rate", "expression": {
+                "function": "divide", "args": [count, count],
+                "where": {"function": "eq", "args": [{"column": "Region"}, {"literal": "West"}]},
+            }}]},
+        ]}
+        valid = {"understood": True, "unhandled_conditions": [], "sheet": "Sales", "steps": [
+            {"op": "aggregate", "group_by": ["Region"], "metrics": [{"name": "Rows", "function": "count_rows", "column": "*"}]},
+            {"op": "sort", "by": [{"column": "Region", "direction": "asc"}]},
+        ]}
+        self.client.chat.completions.create.side_effect = [reply(invalid), reply(valid)]
+        result = self.chatbot.query_excel_workbook("Which region has the most rows?", self.frame, workbook_bytes(), "Sales")
+        self.assertEqual(result["Region"].tolist(), ["East", "West"])
+        repair = self.client.chat.completions.create.call_args.kwargs["messages"][-1]["content"]
+        self.assertIn("Only aggregate functions accept a conditional filter", repair)
+
+        self.client.chat.completions.create.side_effect = [reply(invalid), reply(invalid)]
+        with self.assertRaisesRegex(ValueError, "Only aggregate functions"):
+            self.chatbot.query_excel_workbook("Which region has the most rows?", self.frame, workbook_bytes(), "Sales")
+        self.client.chat.completions.create.side_effect = None
+
     def test_workbook_display_cap_is_after_calculation_and_unrelated_invalid_sheet_is_reported(self):
         content = workbook_bytes({
             "Sales": [("Region", "Revenue"), *[("North", 1) for _ in range(150)]],

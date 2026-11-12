@@ -294,10 +294,21 @@ _OVERVIEW = re.compile(
     r"duplicates?(?:\s+(?:values?|rows?|records?))?)?(?:\s+(?:please|now))?",
     re.I,
 )
+_OVERVIEW_NOUN = re.compile(
+    r"(?:please\s+)?(?:(?:can|could|would)\s+you\s+(?:please\s+)?)?"
+    r"(?:(?:give|show|provide|get|display|create|generate|make|write)(?:\s+me)?\s+)?"
+    r"(?:(?:a|an|the)\s+)?(?:(?:quick|brief|short|basic|general|overall|high[\s-]?level|full|complete)\s+)*"
+    r"(?:summary|overview|description|profile|snapshot)\s+(?:of|for|on)\s+"
+    r"(?:(?:the|my|this|uploaded|that|all|complete|full|entire|whole|current|selected)\s+)*(?:excel\s+|csv\s+)?"
+    r"(?:file|data|dataset|data\s*set|csv|csv\s+file|uploaded\s+file|spreadsheet|table|workbook|sheet|worksheet)"
+    r"(?:\s+(?:please|now))?",
+    re.I,
+)
 
 
 def is_overview_request(question: str) -> bool:
-    return bool(_OVERVIEW.fullmatch(question.strip().rstrip("?.!").strip()))
+    text = question.strip().rstrip("?.!").strip()
+    return bool(_OVERVIEW.fullmatch(text) or _OVERVIEW_NOUN.fullmatch(text))
 
 
 def _display(value: Any) -> str:

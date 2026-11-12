@@ -53,6 +53,24 @@ class WorkbookOperationTests(unittest.TestCase):
             "count": 3, "counta": 3, "count_distinct": 3, "rows": 4, "dates": 3, "text": 0,
         })
 
+    def test_standard_deviation_and_variance_match_excel_sample_and_population(self):
+        spread = [metric(name, name, "Sales") for name in ("stdev", "stdev_p", "var", "var_p")]
+        result = self.run_plan({"op": "aggregate", "metrics": spread}).iloc[0]
+        self.assertAlmostEqual(result["stdev"], 10.0)
+        self.assertAlmostEqual(result["stdev_p"], (200 / 3) ** 0.5)
+        self.assertAlmostEqual(result["var"], 100.0)
+        self.assertAlmostEqual(result["var_p"], 200 / 3)
+        grouped = self.run_plan({"op": "aggregate", "group_by": ["Region"], "metrics": spread[:1]})
+        self.assertIn("stdev", grouped.columns)
+
+    def test_row_counts_accept_a_named_column_or_star_count(self):
+        result = self.run_plan({"op": "aggregate", "metrics": [
+            metric("named", "count_rows", "Sales"), metric("star", "count", "*"), metric("stara", "counta", "*"),
+        ]}).iloc[0]
+        self.assertEqual(result.to_dict(), {"named": 4, "star": 4, "stara": 4})
+        with self.assertRaisesRegex(ValueError, "'bad' needs an available value column"):
+            self.run_plan({"op": "aggregate", "metrics": [metric("bad", "sum", "Missing")]})
+
     def test_date_derivations_describe_executed_columns_and_survive_grouping(self):
         result = self.run_plan(
             {"op": "calculate", "columns": [{"name": "Year", "expression": fn("year", col("Date"))}]},

@@ -3234,8 +3234,10 @@ def query_excel_workbook(
         "literal values, never column references. For highest/lowest groups first aggregate totals by group, "
         "then use extrema to return only the requested extremes and all ties, not middle rows with empty labels. "
         "Equal totals are both highest and lowest. "
-        "Aggregate functions: sum,average,min,max,median,count,counta,count_rows,count_distinct. "
-        "MIN/MAX also accept text labels and dates; SUM/AVERAGE/MEDIAN require numeric values. "
+        "Aggregate functions: sum,average,min,max,median,count,counta,count_rows,count_distinct,"
+        "stdev,stdev_p,var,var_p. stdev/var are sample (Excel STDEV.S/VAR.S, use for 'standard deviation' "
+        "and 'variance' by default); stdev_p/var_p are population (STDEV.P/VAR.P). "
+        "MIN/MAX also accept text labels and dates; SUM/AVERAGE/MEDIAN/STDEV/VAR require numeric values. "
         "For zero/no-sales questions retain the product catalog with a LEFT join, sum sales per product, "
         "then filter zero totals or absent transactions. Do not remove nonzero sales before summing. "
         "Use coalesce(total,0) for missing joined totals, not to invent amounts in existing transactions. "
@@ -3244,6 +3246,10 @@ def query_excel_workbook(
         "filter before coalescing missing totals to zero. Never classify unknown amounts as zero sales. "
         "Filters after aggregate implement HAVING; filters before aggregate implement WHERE. "
         "Aggregate EXPR takes one argument except count_rows takes zero; optional where applies before aggregation. "
+        "where is ONLY valid on an aggregate function or aggregate metric, never on divide/multiply/if/eq or other functions. "
+        "Rates per group (e.g. churn rate by plan): aggregate group_by the group with metrics "
+        "count_rows where condition AND count_rows total, then calculate multiply(divide(matching,total),100), "
+        "then extrema or sort. "
         "Metric column is '*' only for count_rows. COUNT counts numeric/date cells, COUNTA counts non-null, "
         "count_rows counts all matching rows. SUMIF(S)/COUNTIF(S)/AVERAGEIF(S) use metric where; "
         "combine multiple conditions with and/or/not. For counts of matching rows use count_rows, not count. "
@@ -3266,53 +3272,73 @@ def query_excel_workbook(
         "No-match sums/counts are zero; all-missing sums and empty averages/min/max/medians are unknown/null. "
         "Group labels retain their original text. Numeric calculations use floating-point Excel-style precision."
     )
-    try:
-        if trace:
-            trace.record("planner_requested", route="azure", source_sheets=list(schemas), unavailable_sheets=list(unavailable))
-        completion = request_json_plan(
-            client, deployment, trace=trace, route="azure_workbook",
-            messages=[{"role": "system", "content": prompt}, {"role": "user", "content": question}],
-        )
-    except (APIConnectionError, APIStatusError) as error:
-        logger.warning("Workbook planner unavailable: %s", type(error).__name__)
-        if trace:
-            trace.record("planner_failed", error_type=type(error).__name__, status="failed")
-        raise ValueError(ai_service_error_message(error)) from error
-    if not completion.choices or completion.choices[0].finish_reason != "stop":
-        if trace:
-            trace.record("planner_incomplete", status="failed")
-        raise ValueError("The AI service could not finish a complete workbook plan within its response budget. "
-                         "No calculation was run. Please retry.")
-    try:
-        plan = json.loads(completion.choices[0].message.content or "")
-    except (ValueError, TypeError) as error:
-        logger.warning("Invalid workbook JSON: %s", type(error).__name__)
-        if trace:
-            trace.record("planner_invalid_json", error_type=type(error).__name__, status="failed")
-        raise ValueError("I couldn't interpret this workbook question. Please specify the sheets, columns, and calculation.") from error
-    if isinstance(plan, dict) and (plan.get("understood") is not True or plan.get("unhandled_conditions") != []):
-        reasons = plan.get("unhandled_conditions")
-        detail = "; ".join(item[:500] for item in reasons[:5] if isinstance(item, str)) if isinstance(reasons, list) else ""
-        if trace:
-            trace.record("planner_rejected", reason_count=len(reasons) if isinstance(reasons, list) else 0)
-        raise ValueError(
-            (detail or "I couldn't match every requested field or condition.") +
-            workbook_columns_message(schemas, unavailable) + " Use the available column names or clarify the worksheet."
-        )
+    messages: list[ChatCompletionMessageParam] = [
+        {"role": "system", "content": prompt}, {"role": "user", "content": question},
+    ]
     if trace:
-        trace.record("planner_received", status="validating", plan=plan)
-    if isinstance(plan, dict):
-        sources = [plan]
-        if isinstance(plan.get("steps"), list):
-            sources.extend(step for step in plan["steps"] if isinstance(step, dict) and step.get("op") in {"join", "lookup"})
-        for source in sources:
-            if isinstance(source.get("sheet"), str):
-                resolved = resolve_workbook_sheet(source["sheet"], sheet_names)
-                if resolved in unavailable:
-                    raise ValueError(unavailable[resolved])
-                if resolved is not None:
-                    source["sheet"] = resolved
-    result = execute_workbook_plan(plan, sheets, trace=trace)
+        trace.record("planner_requested", route="azure", source_sheets=list(schemas), unavailable_sheets=list(unavailable))
+    repaired = False
+    while True:
+        try:
+            completion = request_json_plan(client, deployment, trace=trace, route="azure_workbook", messages=messages)
+        except (APIConnectionError, APIStatusError) as error:
+            logger.warning("Workbook planner unavailable: %s", type(error).__name__)
+            if trace:
+                trace.record("planner_failed", error_type=type(error).__name__, status="failed")
+            raise ValueError(ai_service_error_message(error)) from error
+        if not completion.choices or completion.choices[0].finish_reason != "stop":
+            if trace:
+                trace.record("planner_incomplete", status="failed")
+            raise ValueError("The AI service could not finish a complete workbook plan within its response budget. "
+                             "No calculation was run. Please retry.")
+        reply = completion.choices[0].message.content or ""
+        try:
+            plan = json.loads(reply)
+        except (ValueError, TypeError) as error:
+            logger.warning("Invalid workbook JSON: %s", type(error).__name__)
+            if trace:
+                trace.record("planner_invalid_json", error_type=type(error).__name__, status="failed")
+            raise ValueError("I couldn't interpret this workbook question. Please specify the sheets, columns, and calculation.") from error
+        if isinstance(plan, dict) and (plan.get("understood") is not True or plan.get("unhandled_conditions") != []):
+            reasons = plan.get("unhandled_conditions")
+            detail = "; ".join(item[:500] for item in reasons[:5] if isinstance(item, str)) if isinstance(reasons, list) else ""
+            if trace:
+                trace.record("planner_rejected", reason_count=len(reasons) if isinstance(reasons, list) else 0)
+            raise ValueError(
+                (detail or "I couldn't match every requested field or condition.") +
+                workbook_columns_message(schemas, unavailable) + " Use the available column names or clarify the worksheet."
+            )
+        if trace:
+            trace.record("planner_received", status="validating", plan=plan)
+        if isinstance(plan, dict):
+            sources = [plan]
+            if isinstance(plan.get("steps"), list):
+                sources.extend(step for step in plan["steps"] if isinstance(step, dict) and step.get("op") in {"join", "lookup"})
+            for source in sources:
+                if isinstance(source.get("sheet"), str):
+                    resolved = resolve_workbook_sheet(source["sheet"], sheet_names)
+                    if resolved in unavailable:
+                        raise ValueError(unavailable[resolved])
+                    if resolved is not None:
+                        source["sheet"] = resolved
+        try:
+            result = execute_workbook_plan(plan, sheets, trace=trace)
+            break
+        except ValueError as error:
+            # One validator-guided repair, sharing request_json_plan's two-call budget.
+            if repaired or (trace is not None and planner_attempt_count(trace) >= 2):
+                raise
+            repaired = True
+            if trace:
+                trace.record("planner_repair_requested", route="azure_workbook", status="retrying",
+                             error_type=type(error).__name__)
+            messages.extend([
+                {"role": "assistant", "content": reply},
+                {"role": "user", "content": (
+                    f"The validator rejected the workbook plan: {error} Correct the complete plan using exact headers "
+                    "and only supported step formats. Preserve every requested condition."
+                )},
+            ])
     result.attrs["source_sheets"] = list(dict.fromkeys([
         plan["sheet"], *[step["sheet"] for step in plan["steps"] if step["op"] in {"join", "lookup", "append"}],
     ]))

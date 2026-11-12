@@ -261,9 +261,12 @@ class DataExplorerTests(unittest.TestCase):
             "Name": "text", "Salary": "whole number", "Joining Date": "date", "Enabled": "true/false",
         })
         pd.testing.assert_frame_equal(frame, original)
-        for question in ("open the file", "show me the data", "Show my CSV file please!"):
+        for question in ("open the file", "show me the data", "Show my CSV file please!",
+                         "Give me a summary of this dataset", "summary of the data?",
+                         "Can you provide a quick overview of the uploaded file"):
             self.assertTrue(is_overview_request(question), question)
         self.assertFalse(is_overview_request("show me the data for active employees"))
+        self.assertFalse(is_overview_request("give me a summary of salary by department"))
 
     def test_metadata_questions_are_recognized_without_capturing_calculations(self):
         for question in (
