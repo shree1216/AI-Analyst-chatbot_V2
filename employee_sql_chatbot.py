@@ -3901,6 +3901,10 @@ def uploaded_metadata_message(question: str, metadata: tuple[str, str | None]) -
         if kind == "columns":
             message.update(answer=column_names_answer(frame), tables=[])
             trace.record_code("result_ready", column_names_answer, rows=len(frame), columns=len(frame.columns))
+        elif kind == "column_count":
+            count = len(frame.columns)
+            message.update(answer=f"{count:,} column{'s' if count != 1 else ''}.", tables=[])
+            trace.record("result_ready", rows=len(frame), columns=count)
         else:
             column = None
             if phrase is not None:
@@ -3937,7 +3941,7 @@ def display_uploaded_metadata(message: dict[str, Any], render_key: str) -> str |
     if message.get("error"):
         st.warning(message["error"])
         return None
-    if message.get("metadata_kind") == "columns":
+    if message.get("metadata_kind") in {"columns", "column_count"}:
         st.write(message["answer"])
         return message["answer"]
     st.caption("Sources used: " + message["source"] + ".")

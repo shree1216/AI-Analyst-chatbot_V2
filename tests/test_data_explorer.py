@@ -284,6 +284,20 @@ class DataExplorerTests(unittest.TestCase):
         ):
             self.assertIsNone(metadata_request(question), question)
 
+    def test_column_count_questions_do_not_capture_filtered_or_multi_source_requests(self):
+        for question in (
+            "give how many columns are there", "How many columns are in this dataset?",
+            "please tell me the number of columns in the selected worksheet",
+            "what is the column count", "count all columns", "show the total number of fields",
+            "how many columns in this data set are there?",
+        ):
+            self.assertEqual(metadata_request(question), ("column_count", None), question)
+        for question in (
+            "how many columns and rows are there", "count columns with missing values",
+            "how many columns are there in SQL and Excel", "how many columns are there by department",
+        ):
+            self.assertIsNone(metadata_request(question), question)
+
     def test_requested_charts_compute_exact_averages_and_yearly_counts(self):
         frame = staff_frame()
         for question, expected in (
@@ -499,6 +513,32 @@ class UploadedDataUITests(unittest.TestCase):
                 self.assertEqual(int(table.value["Rows"].sum()), len(frame))
                 exported = read_excel_sheet(message["excel_download"], f"{column} values")
                 pd.testing.assert_frame_equal(exported, table.value, check_dtype=False)
+
+    def test_column_count_uses_selected_worksheet_without_source_clarification(self):
+        frame = pd.DataFrame([range(10)], columns=[
+            "emp_id", "name", "department", "salary", "join_date", "city", "email", "phone", "rating", "status",
+        ])
+        content = generate_excel_download([("Other", pd.DataFrame({"Value": [1]})), ("employees_messy", frame)])
+        for mode in ("Excel workbook", "Automatic (SQL + Excel)"):
+            with self.subTest(mode=mode):
+                app = self.start_app(content, "employees_messy.xlsx", mode)
+                for sheet, question, expected in (
+                    ("employees_messy", "give how many columns are there", "10 columns."),
+                    ("Other", "how many columns are there?", "1 column."),
+                ):
+                    app.selectbox[0].set_value(sheet).run(timeout=30)
+                    app.chat_input[0].set_value(question).run(timeout=30)
+                    self.assertEqual(len(app.exception), 0)
+                    message = app.session_state["chat_history"][-1]
+                    self.assertEqual(message["kind"], "uploaded_metadata")
+                    self.assertEqual(message["answer"], expected)
+                    self.assertTrue(message["source"].endswith(f" / {sheet}"))
+                    response = app.chat_message[-1]
+                    self.assertEqual([text.value for text in response.markdown], [expected])
+                    self.assertEqual(len(response.warning), 0)
+                    self.assertEqual(len(response.dataframe), 0)
+                    self.assertEqual(len(response.caption), 0)
+                    self.assertEqual(len(response.get("download_button")), 0)
 
     def test_complete_data_keeps_all_unique_and_duplicate_rows_in_order(self):
         frame = pd.DataFrame({

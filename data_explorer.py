@@ -340,6 +340,17 @@ _COLUMN_NAMES = re.compile(
     rf"(?:\s+only)?(?:\s+please)?",
     re.I,
 )
+_COLUMN_COUNT = re.compile(
+    rf"{_POLITE}(?:(?:show|give|get|tell|display)(?:\s+me)?\s+)?(?:"
+    r"how\s+many\s+(?:columns?|fields?)"
+    r"|(?:what\s+is\s+)?(?:the\s+)?(?:total\s+)?(?:number|count)\s+of\s+(?:columns?|fields?)"
+    r"|count\s+(?:all\s+)?(?:the\s+)?(?:columns?|fields?)"
+    r"|(?:what\s+is\s+)?(?:the\s+)?(?:total\s+)?(?:column|field)\s+count"
+    r")(?:\s+(?:are(?:\s+(?:there|available|present))?|do\s+we\s+have|exist))?"
+    rf"(?:\s+(?:in|of|from|for|on)\s+{_DATA_NOUN})?"
+    r"(?:\s+(?:are\s+)?(?:there|available|present))?(?:\s+please)?",
+    re.I,
+)
 _UNIQUE = re.compile(
     rf"{_POLITE}(?:(?P<verb>show|give|list|get|tell|find|display|calculate|count)(?:\s+me)?\s+)?"
     r"(?:(?P<count>how\s+many|(?:the\s+)?(?:total\s+)?number\s+of|(?:the\s+)?counts?\s+of|total)\s+)?"
@@ -353,8 +364,10 @@ _ALL_COLUMNS = re.compile(
 
 
 def metadata_request(question: str) -> tuple[str, str | None] | None:
-    """Classify column-name, unique-value and unique-count requests with an optional column phrase."""
+    """Classify column metadata, unique-value and unique-count requests with an optional column phrase."""
     text = re.sub(r"\s+", " ", question.strip().rstrip("?.!").strip())
+    if _COLUMN_COUNT.fullmatch(text):
+        return "column_count", None
     if _COLUMN_NAMES.fullmatch(text):
         return "columns", None
     match = _UNIQUE.fullmatch(text)
