@@ -78,7 +78,7 @@ jobs:
         run: |
           set -euo pipefail
           az containerapp update --name workforce-compass --resource-group workforce_rg1 \
-            --container-name simple-hello-world-container --image "$CONTAINER_IMAGE" --output none
+            --container-name simple-hello-world-container --image "$CONTAINER_IMAGE" --max-replicas 1 --output none
 
       - name: Verify public app and publish its URL
         run: |
@@ -97,6 +97,11 @@ jobs:
           done
           if [ "$verified" != true ]; then
             echo "::error::The image built from this commit did not become the ready revision."
+            exit 1
+          fi
+          max_replicas=$(az containerapp show --name workforce-compass --resource-group workforce_rg1 --query 'properties.template.scale.maxReplicas' --output tsv)
+          if [ "$max_replicas" != 1 ]; then
+            echo "::error::Expected one Streamlit replica (max replicas: ${max_replicas}); uploads fail across replicas."
             exit 1
           fi
           fqdn=$(az containerapp show --name workforce-compass --resource-group workforce_rg1 --query 'properties.configuration.ingress.fqdn' --output tsv)

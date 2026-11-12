@@ -1351,10 +1351,11 @@ treating a successful image build or an older healthy revision as deployment
 success. A preflight check requires a single application container: adding another
 Streamlit container would make both processes compete for port 8501. Both the
 public health endpoint and application page must respond successfully.
-Streamlit keeps each browser session in replica memory, so the workflow enables
-ingress **session affinity** (sticky sessions, which requires single revision
-mode). Without it, multi-replica traffic can send a file upload to a replica that
-does not own the session, and the upload fails with `Invalid session_id` (HTTP 400).
+Streamlit keeps each browser session in replica memory, so the workflow limits
+the app to **one replica** and also enables ingress **session affinity** (sticky
+sessions, which requires single revision mode). With several replicas, a file
+upload can reach a replica that does not own the session and fails with
+`Invalid session_id` (HTTP 400).
 Wait for the workflow to
 succeed, then open or reload the Azure URL above. The workflow summary also
 publishes the live URL and deployed commit after checking the public health endpoint.
