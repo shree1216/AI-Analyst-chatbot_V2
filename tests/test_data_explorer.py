@@ -279,6 +279,13 @@ class DataExplorerTests(unittest.TestCase):
         self.assertEqual(metadata_request("unique values in department"), ("unique", "department"))
         self.assertEqual(metadata_request("number of distinct cities in the dataset"), ("unique_counts", "cities"))
         for question in (
+            "How many unique values are in Plan_Type?", "how many unique values are there in column plan_Type",
+            "how many unique values are in the Plan_Type column", "count unique values in column named Plan_Type",
+        ):
+            kind, phrase = metadata_request(question)
+            self.assertEqual(kind, "unique_counts", question)
+            self.assertEqual(phrase.casefold(), "plan_type", question)
+        for question in (
             "how many rows and columns are in this file", "show the data", "average salary by department",
             "unique salary by department",
         ):
@@ -491,6 +498,20 @@ class UploadedDataUITests(unittest.TestCase):
         self.assertTrue(message["answer"].startswith("department has 3 unique values."), message["answer"])
         values = app.chat_message[-1].dataframe[1].value
         self.assertEqual(dict(zip(values["Value"], values["Rows"])), {"Finance": 2, "Operations": 1, "Mktg": 1})
+
+    def test_unique_count_for_underscored_column_named_in_question(self):
+        frame = pd.DataFrame({
+            "Customer_ID": ["C1", "C2", "C3", "C4", "C5"],
+            "Plan_Type": ["Prepaid", "Postpaid", "prepaid", "Family", None],
+            "Network_Type": ["4G", "5G", "4G", "5G", "4G"],
+        })
+        app = self.start_app(frame.to_csv(index=False).encode(), "telecom_dataset.csv", "Excel workbook")
+        for question in ("How many unique values are in Plan_Type?", "how many unique values are there in column plan_Type"):
+            app.chat_input[0].set_value(question).run(timeout=30)
+            self.assertEqual(len(app.exception), 0)
+            message = app.session_state["chat_history"][-1]
+            self.assertNotIn("error", message, question)
+            self.assertTrue(message["answer"].startswith("Plan_Type has 3 unique values."), message["answer"])
 
     def test_unique_value_requests_list_values_instead_of_only_counts(self):
         frame = pd.DataFrame({

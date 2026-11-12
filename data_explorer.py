@@ -380,15 +380,18 @@ def metadata_request(question: str) -> tuple[str, str | None] | None:
         or re.search(r"\bcounts?\s*$", subject, re.I)
     ) else "unique"
     values = re.fullmatch(
-        r"(?:values?|entries|items|records)(?:\s+counts?)?(?:\s+(?:are\s+)?there)?"
-        r"(?:\s+(?:in|of|for|per|by|from|on)\s+(?P<rest>.+?))?(?:\s+(?:are\s+)?there)?",
+        r"(?:values?|entries|items|records)(?:\s+counts?)?(?:\s+(?:are|is|exist|exists))?(?:\s+there)?"
+        r"(?:\s+(?:in|of|for|per|by|from|on|within|under)\s+(?P<rest>.+?))?(?:\s+(?:are\s+)?there)?",
         subject, re.I,
     )
     phrase = values["rest"] if values else subject
     if phrase:
         phrase = re.sub(rf"\s+(?:in|of|from|for|on)\s+{_DATA_NOUN}$", "", phrase, flags=re.I)
         phrase = re.sub(r"\s+(?:counts?|values?)$", "", phrase, flags=re.I)
-        phrase = re.sub(r"^(?:the|each|every)\s+|\s+(?:column|field)$", "", phrase, flags=re.I).strip("\"'` ")
+        phrase = re.sub(
+            r"^(?:the\s+|each\s+|every\s+)?(?:(?:column|field)\s+(?:named\s+|called\s+)?)?|\s+(?:column|field)$",
+            "", phrase, flags=re.I,
+        ).strip("\"'` ")
     if not phrase or _ALL_COLUMNS.fullmatch(phrase):
         return kind, None
     if _CHART_WORDS.search(phrase) or re.search(r"\b(?:by|per|where|with|and|vs|versus)\b", phrase, re.I):
