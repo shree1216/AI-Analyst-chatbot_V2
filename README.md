@@ -147,11 +147,11 @@ in a scrollable table; click a column header to sort. The summary includes row a
 column counts, column names, inferred data types, and missing-value counts.
 Blank cells and common placeholders such as `N/A` count as missing.
 
-Ask **give column names** for only the column names, without data rows or type
-details. Ask **how many columns are there** (or **give how many columns are there**)
-for just the column count of the currently selected worksheet, without having
-to choose the source again. These column questions use your selected worksheet
-in both **Excel workbook** and **Automatic (SQL + Excel)** mode.
+Ask **give column names** or **how many columns are there** (also **how many
+column names are there**) to get the column count followed by the column names,
+for example `9 columns: a, b, ...`, without data rows or type details. These
+column questions use the currently selected worksheet in both **Excel workbook**
+and **Automatic (SQL + Excel)** mode, without asking you to choose the source again.
 Ask **give unique values** to list distinct values for each column, or
 **show unique values in Department** for one column. **How many unique values**
 returns counts instead. Unique-value analysis excludes blanks and placeholders

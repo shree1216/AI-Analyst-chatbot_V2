@@ -342,9 +342,9 @@ _COLUMN_NAMES = re.compile(
 )
 _COLUMN_COUNT = re.compile(
     rf"{_POLITE}(?:(?:show|give|get|tell|display)(?:\s+me)?\s+)?(?:"
-    r"how\s+many\s+(?:columns?|fields?)"
-    r"|(?:what\s+is\s+)?(?:the\s+)?(?:total\s+)?(?:number|count)\s+of\s+(?:columns?|fields?)"
-    r"|count\s+(?:all\s+)?(?:the\s+)?(?:columns?|fields?)"
+    rf"how\s+many\s+{_COLUMN_WORD}"
+    rf"|(?:what\s+is\s+)?(?:the\s+)?(?:total\s+)?(?:number|count)\s+of\s+{_COLUMN_WORD}"
+    rf"|count\s+(?:all\s+)?(?:the\s+)?{_COLUMN_WORD}"
     r"|(?:what\s+is\s+)?(?:the\s+)?(?:total\s+)?(?:column|field)\s+count"
     r")(?:\s+(?:are(?:\s+(?:there|available|present))?|do\s+we\s+have|exist))?"
     rf"(?:\s+(?:in|of|from|for|on)\s+{_DATA_NOUN})?"
@@ -397,7 +397,8 @@ def metadata_request(question: str) -> tuple[str, str | None] | None:
 
 
 def column_names_answer(frame: pd.DataFrame) -> str:
-    return ", ".join(str(column) for column in frame.columns)
+    names = [str(column) for column in frame.columns]
+    return f"{len(names):,} column{'s' if len(names) != 1 else ''}: {', '.join(names)}"
 
 
 def unique_count(series: pd.Series) -> int:

@@ -3898,13 +3898,9 @@ def uploaded_metadata_message(question: str, metadata: tuple[str, str | None]) -
         source = f"{workbook['file_name']} / {sheet}"
         kind, phrase = metadata
         message["metadata_kind"] = kind
-        if kind == "columns":
+        if kind in {"columns", "column_count"}:
             message.update(answer=column_names_answer(frame), tables=[])
             trace.record_code("result_ready", column_names_answer, rows=len(frame), columns=len(frame.columns))
-        elif kind == "column_count":
-            count = len(frame.columns)
-            message.update(answer=f"{count:,} column{'s' if count != 1 else ''}.", tables=[])
-            trace.record("result_ready", rows=len(frame), columns=count)
         else:
             column = None
             if phrase is not None:

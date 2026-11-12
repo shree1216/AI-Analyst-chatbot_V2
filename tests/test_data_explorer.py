@@ -289,7 +289,8 @@ class DataExplorerTests(unittest.TestCase):
             "give how many columns are there", "How many columns are in this dataset?",
             "please tell me the number of columns in the selected worksheet",
             "what is the column count", "count all columns", "show the total number of fields",
-            "how many columns in this data set are there?",
+            "how many columns in this data set are there?", "give how many column names are there",
+            "what is the number of column headers in the file",
         ):
             self.assertEqual(metadata_request(question), ("column_count", None), question)
         for question in (
@@ -469,9 +470,9 @@ class UploadedDataUITests(unittest.TestCase):
             self.assertEqual(len(app.exception), 0)
             message = app.session_state["chat_history"][-1]
             self.assertEqual(message["kind"], "uploaded_metadata", question)
-            self.assertEqual(message["answer"], "emp_id, department, city")
+            self.assertEqual(message["answer"], "3 columns: emp_id, department, city")
             response = app.chat_message[-1]
-            self.assertEqual([text.value for text in response.markdown], ["emp_id, department, city"])
+            self.assertEqual([text.value for text in response.markdown], ["3 columns: emp_id, department, city"])
             self.assertEqual(len(response.dataframe), 0)
             self.assertEqual(len(response.caption), 0)
             self.assertEqual(len(response.get("download_button")), 0)
@@ -515,16 +516,16 @@ class UploadedDataUITests(unittest.TestCase):
                 pd.testing.assert_frame_equal(exported, table.value, check_dtype=False)
 
     def test_column_count_uses_selected_worksheet_without_source_clarification(self):
-        frame = pd.DataFrame([range(10)], columns=[
-            "emp_id", "name", "department", "salary", "join_date", "city", "email", "phone", "rating", "status",
-        ])
+        names = ["emp_id", "name", "department", "salary", "join_date", "city", "email", "phone", "rating", "status"]
+        frame = pd.DataFrame([range(10)], columns=names)
         content = generate_excel_download([("Other", pd.DataFrame({"Value": [1]})), ("employees_messy", frame)])
         for mode in ("Excel workbook", "Automatic (SQL + Excel)"):
             with self.subTest(mode=mode):
                 app = self.start_app(content, "employees_messy.xlsx", mode)
                 for sheet, question, expected in (
-                    ("employees_messy", "give how many columns are there", "10 columns."),
-                    ("Other", "how many columns are there?", "1 column."),
+                    ("employees_messy", "give how many columns are there", "10 columns: " + ", ".join(names)),
+                    ("employees_messy", "give how many column names are there", "10 columns: " + ", ".join(names)),
+                    ("Other", "how many columns are there?", "1 column: Value"),
                 ):
                     app.selectbox[0].set_value(sheet).run(timeout=30)
                     app.chat_input[0].set_value(question).run(timeout=30)
