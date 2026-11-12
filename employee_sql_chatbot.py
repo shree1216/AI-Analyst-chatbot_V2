@@ -3043,6 +3043,24 @@ def workbook_columns_message(schemas: dict[str, dict[str, str]], unavailable: di
     )
 
 
+def missing_column_message(names: Any, schemas: dict[str, dict[str, str]]) -> str | None:
+    """Short answer for fields the planner reported missing, verified against the real headers."""
+    if not isinstance(names, list):
+        return None
+    key = lambda value: re.sub(r"[^a-z0-9]", "", value.casefold())
+    headers = {key(column) for columns in schemas.values() for column in columns}
+    missing = list(dict.fromkeys(
+        name.strip().strip("'\"`")[:60] for name in names[:5]
+        if isinstance(name, str) and name.strip().strip("'\"`") and key(name) not in headers
+    ))
+    if not missing:
+        return None
+    quoted = [f"'{name}'" for name in missing]
+    if len(quoted) == 1:
+        return f"No column named {quoted[0]}."
+    return f"No columns named {', '.join(quoted[:-1])} or {quoted[-1]}."
+
+
 def monthly_workbook_plan(question: str, schemas: dict[str, dict[str, str]]) -> tuple[dict[str, Any], str] | None:
     match = re.fullmatch(
         r"(?:(?:what (?:is|are)|show(?: me)?|give(?: me)?)\s+)?(?:the\s+)?"
@@ -3205,6 +3223,8 @@ def query_excel_workbook(
         "do not ask for routine sheet/key/case/blank confirmations. "
         f"{SALES_PLANNING_RULES}"
         "Top-level fields EXACTLY: understood:boolean, unhandled_conditions:array, sheet:string, steps:array. "
+        "When rejecting because a requested field has no matching column, also return "
+        "missing_columns: the requested field names as the user wrote them, e.g. ['Age']. "
         "Include EVERY requested condition. Reject ambiguity, unavailable columns, edits, unsupported operations, "
         "external workbooks, typed Excel formulas, and narrative/report/chart requests with understood:false and reasons. "
         "At most 20 steps. Step formats (op required): "
@@ -3304,6 +3324,9 @@ def query_excel_workbook(
             detail = "; ".join(item[:500] for item in reasons[:5] if isinstance(item, str)) if isinstance(reasons, list) else ""
             if trace:
                 trace.record("planner_rejected", reason_count=len(reasons) if isinstance(reasons, list) else 0)
+            missing = missing_column_message(plan.get("missing_columns"), schemas)
+            if missing:
+                raise ValueError(missing)
             raise ValueError(
                 (detail or "I couldn't match every requested field or condition.") +
                 workbook_columns_message(schemas, unavailable) + " Use the available column names or clarify the worksheet."

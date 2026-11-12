@@ -546,6 +546,16 @@ class ExcelChatTests(unittest.TestCase):
             self.chatbot.query_excel_workbook("Which region has the most rows?", self.frame, workbook_bytes(), "Sales")
         self.client.chat.completions.create.side_effect = None
 
+    def test_missing_requested_column_gets_a_short_answer(self):
+        rejected = {"understood": False, "unhandled_conditions": ["No Age column; long explanation..."],
+                    "missing_columns": ["Age"], "sheet": "Sales", "steps": []}
+        with self.assertRaises(ValueError) as caught:
+            self.workbook_ask("What is the average age of customers?", rejected)
+        self.assertEqual(str(caught.exception), "No column named 'Age'.")
+        rejected["missing_columns"] = ["revenue"]
+        with self.assertRaisesRegex(ValueError, "long explanation.*Available columns"):
+            self.workbook_ask("What is the average revenue?", rejected)
+
     def test_workbook_display_cap_is_after_calculation_and_unrelated_invalid_sheet_is_reported(self):
         content = workbook_bytes({
             "Sales": [("Region", "Revenue"), *[("North", 1) for _ in range(150)]],
