@@ -17,7 +17,7 @@ from streamlit.testing.v1 import AppTest
 
 from data_explorer import (
     ChartSpec, auto_charts, build_chart, build_charts, csv_to_workbook, data_overview, is_overview_request,
-    parquet_to_workbook, plan_charts,
+    metadata_request, parquet_to_workbook, plan_charts,
 )
 from excel_support import excel_sheet_names, generate_excel_download, read_excel_sheet
 
@@ -265,6 +265,25 @@ class DataExplorerTests(unittest.TestCase):
             self.assertTrue(is_overview_request(question), question)
         self.assertFalse(is_overview_request("show me the data for active employees"))
 
+    def test_metadata_questions_are_recognized_without_capturing_calculations(self):
+        for question in (
+            "What columns are in this dataset?", "Give column names from excel workbook", "column names",
+            "list all columns", "show me the headers of this file", "give the column names of this data set",
+            "give only column names", "show column names only",
+        ):
+            self.assertEqual(metadata_request(question), ("columns", None), question)
+        for question in ("unique values", "give unique values in each column"):
+            self.assertEqual(metadata_request(question), ("unique", None), question)
+        for question in ("how many unique values are there?", "count of unique values in each column"):
+            self.assertEqual(metadata_request(question), ("unique_counts", None), question)
+        self.assertEqual(metadata_request("unique values in department"), ("unique", "department"))
+        self.assertEqual(metadata_request("number of distinct cities in the dataset"), ("unique_counts", "cities"))
+        for question in (
+            "how many rows and columns are in this file", "show the data", "average salary by department",
+            "unique salary by department",
+        ):
+            self.assertIsNone(metadata_request(question), question)
+
     def test_requested_charts_compute_exact_averages_and_yearly_counts(self):
         frame = staff_frame()
         for question, expected in (
@@ -420,6 +439,84 @@ class UploadedDataUITests(unittest.TestCase):
         self.assertEqual(len(app.exception), 0)
         self.assertNotIn("error", app.session_state["chat_history"][-1])
         self.assertEqual(len(app.session_state["chat_history"][-1]["result"]), 16)
+
+    def test_column_name_and_unique_value_questions_answer_directly(self):
+        frame = pd.DataFrame({
+            "emp_id": [1000, 1001, 1002, 1003, 1004],
+            "department": ["finance", "Finance", "operations", None, "Mktg"],
+            "city": ["Delhi", "delhi", "New Delhi", "Lucknow", "N/A"],
+        })
+        app = self.start_app(frame.to_csv(index=False).encode(), "employees_messy.csv")
+        for question in (
+            "What columns are in this dataset?", "Give column names from excel workbook",
+            "give the column names of this data set", "give only column names",
+        ):
+            app.chat_input[0].set_value(question).run(timeout=30)
+            self.assertEqual(len(app.exception), 0)
+            message = app.session_state["chat_history"][-1]
+            self.assertEqual(message["kind"], "uploaded_metadata", question)
+            self.assertEqual(message["answer"], "emp_id, department, city")
+            response = app.chat_message[-1]
+            self.assertEqual([text.value for text in response.markdown], ["emp_id, department, city"])
+            self.assertEqual(len(response.dataframe), 0)
+            self.assertEqual(len(response.caption), 0)
+            self.assertEqual(len(response.get("download_button")), 0)
+        app.chat_input[0].set_value("how many unique values are there?").run(timeout=30)
+        self.assertEqual(len(app.exception), 0)
+        message = app.session_state["chat_history"][-1]
+        self.assertEqual(message["kind"], "uploaded_metadata")
+        self.assertEqual(
+            app.chat_message[-1].dataframe[0].value.set_index("Column")["Unique values"].to_dict(),
+            {"emp_id": 5, "department": 3, "city": 3},
+        )
+        self.assertIn("emp_id: 5, department: 3, city: 3", message["answer"])
+        app.chat_input[0].set_value("How many unique departments are there?").run(timeout=30)
+        self.assertEqual(len(app.exception), 0)
+        message = app.session_state["chat_history"][-1]
+        self.assertTrue(message["answer"].startswith("department has 3 unique values."), message["answer"])
+        values = app.chat_message[-1].dataframe[1].value
+        self.assertEqual(dict(zip(values["Value"], values["Rows"])), {"Finance": 2, "Operations": 1, "Mktg": 1})
+
+    def test_unique_value_requests_list_values_instead_of_only_counts(self):
+        frame = pd.DataFrame({
+            "Code": [f"{index:04}" for index in range(120)] + ["0000"],
+            "Department": ["IT", "Sales"] * 60 + ["IT"],
+        })
+        app = self.start_app(frame.to_csv(index=False).encode(), "staff.csv", "Excel workbook")
+        for question, expected_columns in (
+            ("give unique values", ["Code", "Department"]),
+            ("show distinct values in department", ["Department"]),
+        ):
+            app.chat_input[0].set_value(question).run(timeout=30)
+            self.assertEqual(len(app.exception), 0)
+            message = app.session_state["chat_history"][-1]
+            self.assertEqual(message["kind"], "uploaded_metadata")
+            self.assertNotIn("error", message)
+            tables = app.chat_message[-1].dataframe
+            self.assertEqual(len(tables), len(expected_columns))
+            for table, column in zip(tables, expected_columns):
+                self.assertEqual(set(table.value["Value"]), set(frame[column]))
+                self.assertEqual(int(table.value["Rows"].sum()), len(frame))
+                exported = read_excel_sheet(message["excel_download"], f"{column} values")
+                pd.testing.assert_frame_equal(exported, table.value, check_dtype=False)
+
+    def test_complete_data_keeps_all_unique_and_duplicate_rows_in_order(self):
+        frame = pd.DataFrame({
+            "Department": ["IT", "IT", "Sales"] * 101,
+            "Salary": [100, 100, 200] * 101,
+        })
+        for mode in ("Automatic (SQL + Excel)", "Excel workbook"):
+            with self.subTest(mode=mode):
+                app = self.start_app(frame.to_csv(index=False).encode(), "staff.csv", mode)
+                for question in ("give complete data", "show all rows including duplicates"):
+                    app.chat_input[0].set_value(question).run(timeout=30)
+                    self.assertEqual(len(app.exception), 0)
+                    message = app.session_state["chat_history"][-1]
+                    self.assertEqual(message["kind"], "uploaded_data")
+                    pd.testing.assert_frame_equal(message["result"], frame, check_dtype=False)
+                    pd.testing.assert_frame_equal(app.chat_message[-1].dataframe[0].value, frame, check_dtype=False)
+                    exported = read_excel_sheet(message["excel_download"], "Data")
+                    pd.testing.assert_frame_equal(exported, frame, check_dtype=False)
 
     def test_csv_upload_overview_and_four_charts_use_all_rows_and_survive_reruns(self):
         frame = staff_frame()

@@ -147,6 +147,16 @@ in a scrollable table; click a column header to sort. The summary includes row a
 column counts, column names, inferred data types, and missing-value counts.
 Blank cells and common placeholders such as `N/A` count as missing.
 
+Ask **give column names** for only the column names, without data rows or type
+details. Ask **give unique values** to list distinct values for each column, or
+**show unique values in Department** for one column. **How many unique values**
+returns counts instead. Unique-value analysis excludes blanks and placeholders
+and groups values differing only in capitalization, spacing or punctuation;
+the accompanying row counts show how often each value occurs.
+Ask **give complete data** or **show all rows including duplicates** for every
+row in its original order, including both unique and repeated rows. These requests
+use the full selected worksheet and do not require Azure or SQL.
+
 Ask **make charts** for up to four useful charts selected from the actual columns,
 or **show average salary by department** or **how many people joined each year**
 for a specific chart. Every chart includes its supporting numbers immediately

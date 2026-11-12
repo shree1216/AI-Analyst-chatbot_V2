@@ -287,9 +287,11 @@ def column_kind(series: pd.Series) -> str:
 # --------------------------------------------------------------------------- overview
 
 _OVERVIEW = re.compile(
-    r"(?:please\s+)?(?:(?:can|could)\s+you\s+)?(?:open|show|display|view|load|preview|explore|describe|summari[sz]e)"
-    r"(?:\s+me)?\s+(?:the\s+|my\s+|this\s+|uploaded\s+|that\s+)*"
-    r"(?:file|data|dataset|data\s*set|csv|csv\s+file|uploaded\s+file|spreadsheet|table)(?:\s+(?:please|now))?",
+    r"(?:please\s+)?(?:(?:can|could)\s+you\s+)?(?:open|show|give|display|view|load|preview|explore|describe|summari[sz]e)"
+    r"(?:\s+me)?\s+(?:(?:the|my|this|uploaded|that|all|complete|full|entire|whole)\s+)*"
+    r"(?:file|data|dataset|data\s*set|csv|csv\s+file|uploaded\s+file|spreadsheet|table|rows|records)"
+    r"(?:\s+(?:including|with)\s+(?:all\s+)?(?:(?:unique|distinct)\s+(?:values?\s+|rows?\s+)?and\s+)?"
+    r"duplicates?(?:\s+(?:values?|rows?|records?))?)?(?:\s+(?:please|now))?",
     re.I,
 )
 
@@ -320,6 +322,100 @@ def data_overview(frame: pd.DataFrame) -> pd.DataFrame:
             "Unique values": int(present.map(_category_key).nunique()), "Example": example[:40],
         })
     return pd.DataFrame(rows)
+
+
+_POLITE = r"(?:please\s+)?(?:(?:can|could|would)\s+you\s+(?:please\s+)?)?"
+_DATA_NOUN = (
+    r"(?:the\s+|this\s+|my\s+|that\s+|uploaded\s+|current\s+|selected\s+)*(?:excel\s+|csv\s+)?"
+    r"(?:file|data|dataset|data\s*set|csv|workbook|spreadsheet|table|sheet|worksheet)"
+)
+_COLUMN_WORD = r"(?:columns?|column\s+names?|column\s+headers?|fields?|field\s+names?|headers?)"
+_COLUMN_NAMES = re.compile(
+    rf"{_POLITE}(?:"
+    rf"(?:what|which)\s+(?:are\s+)?(?:all\s+)?(?:the\s+)?{_COLUMN_WORD}"
+    rf"|(?:list|show|give|get|display|tell|print)(?:\s+me)?\s+(?:only\s+)?(?:all\s+)?(?:the\s+)?{_COLUMN_WORD}"
+    rf"|(?:all\s+)?(?:the\s+)?column\s+names?"
+    rf")(?:\s+(?:are|do\s+we\s+have|exist))?(?:\s+(?:there|available|present))?"
+    rf"(?:\s+(?:in|of|from|for|on)\s+{_DATA_NOUN})?(?:\s+(?:are\s+)?(?:there|available|present))?"
+    rf"(?:\s+only)?(?:\s+please)?",
+    re.I,
+)
+_UNIQUE = re.compile(
+    rf"{_POLITE}(?:(?P<verb>show|give|list|get|tell|find|display|calculate|count)(?:\s+me)?\s+)?"
+    r"(?:(?P<count>how\s+many|(?:the\s+)?(?:total\s+)?number\s+of|(?:the\s+)?counts?\s+of|total)\s+)?"
+    r"(?:all\s+)?(?:the\s+)?(?:unique|distinct)\s+(?P<subject>.+)",
+    re.I,
+)
+_ALL_COLUMNS = re.compile(
+    rf"(?:(?:each|every|all|the)\s+)?(?:columns?|fields?)|{_DATA_NOUN}|(?:the\s+)?(?:whole|entire)\s+{_DATA_NOUN}",
+    re.I,
+)
+
+
+def metadata_request(question: str) -> tuple[str, str | None] | None:
+    """Classify column-name, unique-value and unique-count requests with an optional column phrase."""
+    text = re.sub(r"\s+", " ", question.strip().rstrip("?.!").strip())
+    if _COLUMN_NAMES.fullmatch(text):
+        return "columns", None
+    match = _UNIQUE.fullmatch(text)
+    if not match:
+        return None
+    subject = re.sub(r"\s+please$", "", match["subject"], flags=re.I)
+    subject = re.sub(r"\s+(?:are\s+)?(?:there|present|available)$", "", subject, flags=re.I)
+    kind = "unique_counts" if (
+        (match["verb"] or "").casefold() == "count" or match["count"]
+        or re.search(r"\bcounts?\s*$", subject, re.I)
+    ) else "unique"
+    values = re.fullmatch(
+        r"(?:values?|entries|items|records)(?:\s+counts?)?(?:\s+(?:are\s+)?there)?"
+        r"(?:\s+(?:in|of|for|per|by|from|on)\s+(?P<rest>.+?))?(?:\s+(?:are\s+)?there)?",
+        subject, re.I,
+    )
+    phrase = values["rest"] if values else subject
+    if phrase:
+        phrase = re.sub(rf"\s+(?:in|of|from|for|on)\s+{_DATA_NOUN}$", "", phrase, flags=re.I)
+        phrase = re.sub(r"\s+(?:counts?|values?)$", "", phrase, flags=re.I)
+        phrase = re.sub(r"^(?:the|each|every)\s+|\s+(?:column|field)$", "", phrase, flags=re.I).strip("\"'` ")
+    if not phrase or _ALL_COLUMNS.fullmatch(phrase):
+        return kind, None
+    if _CHART_WORDS.search(phrase) or re.search(r"\b(?:by|per|where|with|and|vs|versus)\b", phrase, re.I):
+        return None
+    return kind, phrase
+
+
+def column_names_answer(frame: pd.DataFrame) -> str:
+    return ", ".join(str(column) for column in frame.columns)
+
+
+def unique_count(series: pd.Series) -> int:
+    present = series[~missing_mask(series)]
+    return int(present.map(_category_key).loc[lambda keys: keys != ""].nunique())
+
+
+def unique_counts_table(frame: pd.DataFrame) -> pd.DataFrame:
+    return pd.DataFrame({
+        "Column": [str(column) for column in frame.columns],
+        "Unique values": [unique_count(frame[column]) for column in frame.columns],
+    })
+
+
+def unique_values_table(series: pd.Series) -> pd.DataFrame:
+    labels = categories(series).dropna()
+    counts = labels.value_counts()
+    return pd.DataFrame({"Value": counts.index.astype(str), "Rows": counts.to_numpy()})
+
+
+_UNIQUE_NOTE = (
+    "Blank cells are excluded, and values that differ only by capital letters, spaces or punctuation count once."
+)
+
+
+def unique_counts_answer(frame: pd.DataFrame, table: pd.DataFrame, column: str | None) -> str:
+    if column is not None:
+        count = unique_count(frame[column])
+        return f"{column} has {count:,} unique value{'s' if count != 1 else ''}. {_UNIQUE_NOTE}"
+    parts = ", ".join(f"{name}: {count:,}" for name, count in zip(table["Column"], table["Unique values"]))
+    return f"Unique value counts for {len(table):,} columns ({len(frame):,} rows): {parts}. {_UNIQUE_NOTE}"
 
 
 def overview_answer(frame: pd.DataFrame, summary: pd.DataFrame, source: str) -> str:

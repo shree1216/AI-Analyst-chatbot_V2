@@ -65,8 +65,9 @@ from workbook_charts import (
     is_excel_chart_request, local_excel_chart_plan,
 )
 from data_explorer import (
-    _find_column, build_charts, chart_presentation_question, charts_answer, csv_to_workbook, data_overview, is_chart_question,
-    is_generic_chart_request, is_overview_request, overview_answer, parquet_to_workbook, plan_charts,
+    _find_column, build_charts, chart_presentation_question, charts_answer, column_names_answer,
+    csv_to_workbook, data_overview, is_chart_question, is_generic_chart_request, is_overview_request, metadata_request,
+    overview_answer, parquet_to_workbook, plan_charts, unique_counts_answer, unique_counts_table, unique_values_table,
 )
 from backend_diagnostics import BackendTrace, diagnostic_log, execution_code_log
 from spreadsheet_analytics import filter_rows, render_spreadsheet_analysis
@@ -3791,6 +3792,11 @@ def uploaded_data_message(question: str, enabled: bool) -> dict[str, Any] | None
         target, analysis_question = named["target"], named["task"]
         generic = True
         dashboard = dashboard or native or bool(re.search(r"\bdashboard\b", task, re.I))
+    metadata = None if compound or native else metadata_request(question)
+    if metadata is not None:
+        if not enabled or "sql" in requested_source_kinds(question):
+            return None
+        return uploaded_metadata_message(question, metadata)
     if (
         not enabled or "sql" in requested_source_kinds(question)
         or (native and not (generic or compound))
@@ -3870,6 +3876,78 @@ def uploaded_data_message(question: str, enabled: bool) -> dict[str, Any] | None
         logger.warning("Uploaded data exploration failed: %s", type(error).__name__)
         message["error"] = str(error)
     return message
+
+
+def uploaded_metadata_message(question: str, metadata: tuple[str, str | None]) -> dict[str, Any] | None:
+    workbook = active_excel_workbook()
+    if workbook is None:
+        return None
+    message: dict[str, Any] = {"kind": "uploaded_metadata", "question": question}
+    trace = BackendTrace(message.setdefault("backend_log", []))
+    message["request_id"] = trace.request_id
+    trace.record("request_started", route="uploaded_metadata")
+    try:
+        if workbook.get("content") is None:
+            raise ValueError(workbook.get("load_error") or "Upload a valid Excel, CSV or Parquet file first.")
+        sheets = workbook.get("sheets") or excel_sheet_names(workbook["content"])
+        sheet = workbook.get("preview_sheet", workbook.get("sheet", sheets[0]))
+        if workbook.get("sheet") == sheet and not workbook.get("frame_preview_only", True):
+            frame = workbook["frame"]
+        else:
+            frame = read_excel_sheet(workbook["content"], sheet)
+        source = f"{workbook['file_name']} / {sheet}"
+        kind, phrase = metadata
+        message["metadata_kind"] = kind
+        if kind == "columns":
+            message.update(answer=column_names_answer(frame), tables=[])
+            trace.record_code("result_ready", column_names_answer, rows=len(frame), columns=len(frame.columns))
+        else:
+            column = None
+            if phrase is not None:
+                column = _find_column(phrase, [str(name) for name in frame.columns])
+                if column is None:
+                    raise ValueError(f"I couldn't find column {phrase}. Available columns: {', '.join(map(str, frame.columns))}.")
+                column = next(name for name in frame.columns if str(name) == column)
+            selected = frame if column is None else frame[[column]]
+            counts = unique_counts_table(selected)
+            answer = unique_counts_answer(frame, counts, None if column is None else str(column))
+            if kind == "unique_counts":
+                tables = [("Unique value counts", counts)]
+                if column is not None:
+                    tables.append((f"{column} values", unique_values_table(frame[column])))
+                trace.record_code("result_ready", unique_counts_table, rows=len(frame), columns=len(frame.columns))
+            else:
+                tables = [(f"{name} values", unique_values_table(selected[name])) for name in selected.columns]
+                trace.record_code("result_ready", unique_values_table, rows=len(frame), columns=len(frame.columns))
+            message.update(answer=answer, tables=tables)
+        message["source"] = source
+        trace.record("request_completed", route="uploaded_metadata", status="success")
+    except ValueError as error:
+        logger.warning("Uploaded data metadata failed: %s", type(error).__name__)
+        message["error"] = str(error)
+        trace.record("request_failed", route="uploaded_metadata", status="failed", error_type=type(error).__name__)
+    if trace.file_error:
+        message["backend_log_error"] = trace.file_error
+    return message
+
+
+def display_uploaded_metadata(message: dict[str, Any], render_key: str) -> str | None:
+    if message.get("backend_log_error"):
+        st.warning(message["backend_log_error"])
+    if message.get("error"):
+        st.warning(message["error"])
+        return None
+    if message.get("metadata_kind") == "columns":
+        st.write(message["answer"])
+        return message["answer"]
+    st.caption("Sources used: " + message["source"] + ".")
+    st.write(message["answer"])
+    for title, table in message["tables"]:
+        if len(message["tables"]) > 1:
+            st.subheader(title)
+        st.dataframe(table, hide_index=True, width="stretch")
+    display_excel_download(message["tables"], render_key, message)
+    return message["answer"]
 
 
 def display_uploaded_data(message: dict[str, Any], render_key: str) -> str | None:
@@ -5801,6 +5879,8 @@ for index, message in enumerate(history):
         elif message.get("kind") == "uploaded_data":
             with st.spinner("Exploring your uploaded data...") if pending else nullcontext():
                 answer = display_uploaded_data(message, str(index))
+        elif message.get("kind") == "uploaded_metadata":
+            answer = display_uploaded_metadata(message, str(index))
         elif message.get("kind") == "excel":
             with st.spinner("Querying your worksheet...") if pending else nullcontext():
                 answer = display_excel_response(message, str(index))
