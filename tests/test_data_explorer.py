@@ -741,6 +741,15 @@ class UploadedDataUITests(unittest.TestCase):
         self.assertNotIn("error", app.session_state["chat_history"][-1])
         self.assertEqual(app.session_state["chat_history"][-1]["source_sheet"], "employees_messy")
 
+    def test_charts_for_a_grouped_measure_is_not_treated_as_a_worksheet_name(self):
+        app = self.start_app(staff_frame().to_csv(index=False).encode(), "employees_messy.csv")
+        app.chat_input[0].set_value("give charts for average salary by department").run(timeout=30)
+        self.assertEqual(len(app.exception), 0)
+        message = app.session_state["chat_history"][-1]
+        self.assertNotIn("error", message)
+        self.assertEqual(len(message["charts"]), 1)
+        self.assertEqual(list(message["charts"][0].table.columns)[0], "Department")
+
     def test_employee_salary_chart_respects_an_explicit_source_and_unknown_sheet(self):
         content = generate_excel_download([
             ("First", pd.DataFrame({"Salary": [1, 2]})), ("employees_messy", staff_frame()),

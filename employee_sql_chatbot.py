@@ -3886,7 +3886,11 @@ def uploaded_data_message(question: str, enabled: bool) -> dict[str, Any] | None
                 and named["preposition"].casefold() not in {"from", "using"}
             ):
                 frame = read_excel_sheet(workbook["content"], sheet)
-                if _find_column(target, list(frame.columns)) is not None:
+                # "charts for average monthly charge by plan" names data, not a worksheet.
+                if _find_column(target, list(frame.columns)) is not None or (
+                    not is_generic_chart_request(full_analysis_question)
+                    and plan_charts(full_analysis_question, frame) is not None
+                ):
                     target, selected, analysis_question, generic = None, sheet, full_analysis_question, False
                     message.update(analysis_question=analysis_question, generic_charts=False)
             if selected is None:
