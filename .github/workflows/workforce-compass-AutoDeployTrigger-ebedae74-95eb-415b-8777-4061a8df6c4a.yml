@@ -44,6 +44,23 @@ jobs:
             exit 1
           fi
 
+      # Streamlit keeps sessions in replica memory; uploads fail with "Invalid session_id" without affinity.
+      - name: Enable sticky sessions for Streamlit
+        run: |
+          set -euo pipefail
+          mode=$(az containerapp show --name workforce-compass --resource-group workforce_rg1 --query 'properties.configuration.activeRevisionsMode' --output tsv)
+          if [ "${mode,,}" != single ]; then
+            echo "::error::Sticky sessions require single revision mode (current: ${mode})."
+            exit 1
+          fi
+          az containerapp ingress sticky-sessions set --name workforce-compass --resource-group workforce_rg1 \
+            --affinity sticky --output none
+          affinity=$(az containerapp show --name workforce-compass --resource-group workforce_rg1 --query 'properties.configuration.ingress.stickySessions.affinity' --output tsv)
+          if [ "$affinity" != sticky ]; then
+            echo "::error::Sticky sessions could not be enabled; Streamlit uploads would fail across replicas."
+            exit 1
+          fi
+
       - name: Log in to the container registry
         uses: docker/login-action@v3
         with:
