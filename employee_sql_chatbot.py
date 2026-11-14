@@ -1,4 +1,4 @@
-import base64
+﻿import base64
 from contextlib import nullcontext
 from contextvars import ContextVar
 from datetime import datetime
@@ -3079,8 +3079,8 @@ def query_excel_sheet(question: str, frame: pd.DataFrame) -> pd.DataFrame:
 def workbook_columns_message(schemas: dict[str, dict[str, str]], unavailable: dict[str, str]) -> str:
     available = "; ".join(f"{sheet}: {', '.join(list(columns)[:20])}" for sheet, columns in list(schemas.items())[:5])
     failed = "; ".join(f"{sheet}: {reason}" for sheet, reason in list(unavailable.items())[:3])
-    return (f" Available columns — {available}." if available else "") + (
-        f" Unavailable worksheets — {failed}" if failed else ""
+    return (f" Available columns â€” {available}." if available else "") + (
+        f" Unavailable worksheets â€” {failed}" if failed else ""
     )
 
 
@@ -3534,7 +3534,7 @@ def business_report_deck(report: BusinessReport) -> Deck:
         ))
     return Deck(
         title=report.title,
-        subtitle=f"{report.scope} · Generated {report.generated_at:%d %B %Y}",
+        subtitle=f"{report.scope} Â· Generated {report.generated_at:%d %B %Y}",
         kpis=[(label, value, "") for label, value in report.metrics[:4]],
         charts=charts,
         sections=[
@@ -4000,7 +4000,7 @@ def uploaded_data_message(question: str, enabled: bool) -> dict[str, Any] | None
             chart_upload_digest=workbook.get("upload_digest", workbook["digest"]),
             workbook_content=workbook["content"],
             chart_placement=chart_placement_for_question(
-                question, st.session_state.get("excel_chart_placement", "same_sheet"),
+                question, st.session_state.get("excel_chart_placement", "new_sheet"),
             ),
         )
     except ValueError as error:
@@ -4129,7 +4129,7 @@ def display_uploaded_data(message: dict[str, Any], render_key: str) -> str | Non
                 signature = (tuple(filter_state["filters"]), filter_state["error"])
             if signature != message.get("chart_filter_signature"):
                 for key in ("answer", "error", "charts", "chart_problems", "dashboard_workbook",
-                            "excel_download", "dashboard_sheet", "dashboard_summary", "supporting_table_export",
+                            "excel_download", "dashboard_sheet", "dashboard_tables_sheet", "dashboard_summary", "supporting_table_export",
                             "deck_export", "dashboard_kpis"):
                     message.pop(key, None)
                 message["chart_filter_signature"] = signature
@@ -4179,10 +4179,11 @@ def display_uploaded_data(message: dict[str, Any], render_key: str) -> str | Non
                     source_rows=len(frame), source_columns=len(frame.columns),
                     missing_values=int(summary["Missing values"].sum()), placement=message["chart_placement"],
                     trace=trace,
+                    kpis=[(kpi.label, kpi.value) for kpi in dashboard_kpis(frame)] if message.get("dashboard") else None,
                 )
                 message.update(
                     dashboard_workbook=exported.content, dashboard_sheet=exported.sheet,
-                    excel_download=exported.content,
+                    dashboard_tables_sheet=exported.tables_sheet, excel_download=exported.content,
                 )
                 if message.get("native_dashboard") and not message.get("native_dashboard_applied"):
                     workbook = active_excel_workbook()
@@ -4215,7 +4216,7 @@ def display_uploaded_data(message: dict[str, Any], render_key: str) -> str | Non
         except ValueError as error:
             logger.warning("Uploaded data chart failed: %s", type(error).__name__)
             message.pop("answer", None)
-            for key in ("dashboard_workbook", "excel_download", "dashboard_sheet"):
+            for key in ("dashboard_workbook", "excel_download", "dashboard_sheet", "dashboard_tables_sheet"):
                 message.pop(key, None)
             message["error"] = str(error)
             trace.record("request_failed", route="uploaded_data", status="failed", error_type=type(error).__name__)
@@ -4303,10 +4304,16 @@ def display_uploaded_data(message: dict[str, Any], render_key: str) -> str | Non
         for problem in message.get("chart_problems", []):
             st.warning(problem)
         if message.get("dashboard_workbook"):
+            if message.get("chart_placement") == "same_sheet":
+                where = f"beside the original data in '{message['dashboard_sheet']}'"
+            elif message.get("dashboard_tables_sheet"):
+                where = (f"on a '{message['dashboard_sheet']}' tab, with their data on a "
+                         f"'{message['dashboard_tables_sheet']}' tab")
+            else:
+                where = f"on tab '{message['dashboard_sheet']}'"
             st.caption(
-                f"Excel export: {len(charts)} native charts and supporting tables "
-                + ("beside the original data in " if message.get("chart_placement") == "same_sheet" else "on tab ")
-                + f"'{message['dashboard_sheet']}'. Existing data cells are unchanged."
+                f"Excel export: {len(charts)} native charts and supporting tables {where}. "
+                "Existing data cells are unchanged."
             )
             st.download_button(
                 "Download Excel with charts", data=message["dashboard_workbook"], mime=EXCEL_MIME,
@@ -4381,7 +4388,7 @@ def build_excel_chart(
     question: str, content: bytes, sources: dict[str, Any], schemas: dict[str, dict[str, str]],
     selected_sheet: str, trace: BackendTrace,
 ):
-    placement = chart_placement_for_question(question, st.session_state.get("excel_chart_placement", "same_sheet"))
+    placement = chart_placement_for_question(question, st.session_state.get("excel_chart_placement", "new_sheet"))
     proposed = local_excel_chart_plan(question, schemas, selected_sheet)
     if proposed is not None:
         try:
@@ -6257,10 +6264,13 @@ with st.sidebar:
             st.session_state.pop("excel_workbook", None)
 
         st.selectbox(
-            "Excel chart placement", ["same_sheet", "new_sheet"],
-            format_func=lambda value: {"same_sheet": "Same worksheet", "new_sheet": "New dashboard tab"}[value],
+            "Excel chart placement", ["new_sheet", "same_sheet"],
+            format_func=lambda value: {
+                "new_sheet": "Separate Dashboard + Tables tabs", "same_sheet": "Same worksheet (beside the data)",
+            }[value],
             key="excel_chart_placement",
-            help="Charts and supporting tables are added in unused space. Existing data cells are not overwritten.",
+            help="Separate tabs keep your data sheet clean and give a presentation-ready Dashboard tab. "
+                 "Existing data cells are never overwritten.",
         )
 
     st.markdown('<div class="recent-label">Recent chats</div>', unsafe_allow_html=True)

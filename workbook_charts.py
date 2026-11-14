@@ -20,6 +20,7 @@ import pandas as pd
 from openpyxl import Workbook
 from openpyxl.chart import AreaChart, BarChart, DoughnutChart, LineChart, PieChart, Reference, ScatterChart, Series
 from openpyxl.chart.label import DataLabelList
+from openpyxl.chart.marker import DataPoint
 from openpyxl.chart.shapes import GraphicalProperties
 from openpyxl.drawing.line import LineProperties
 from openpyxl.utils import coordinate_to_tuple, get_column_letter, range_boundaries
@@ -31,6 +32,8 @@ from workbook_operations import MAX_SHEETS
 
 
 CHART_TYPES = ("column", "bar", "line", "pie", "doughnut", "area", "scatter")
+# Corporate palette (no blue or green), matching report_themes.CORPORATE.
+EXCEL_PALETTE = ("7B2D43", "C08A3E", "4A4542", "B5838D", "8C6D4F", "D4A373", "5E3A48", "A39C95")
 AGGREGATES = ("auto", "sum", "average", "count", "min", "max", "none")
 PLAN_KEYS = {"understood", "unhandled_conditions", "sheet", "chart_type", "category", "values", "aggregate",
              "title", "sort", "limit"}
@@ -87,6 +90,7 @@ class WorkbookDashboard:
     content: bytes
     sheet: str
     source_sheet: str
+    tables_sheet: str | None = None
 
 
 def _normalize(text: str) -> str:
@@ -402,20 +406,23 @@ def _sheet_xml(table: pd.DataFrame, drawing_id: str) -> bytes:
 
 def _native_chart(
     worksheet: Worksheet, table: pd.DataFrame, chart_type: str, title: str, start_row: int = 1,
-    start_column: int = 1,
+    start_column: int = 1, *, data_worksheet: Worksheet | None = None, anchor: str | None = None,
+    size: tuple[float, float] = (18, 9.5), colors: tuple[str, ...] | None = None,
 ) -> None:
+    """Write the chart's table to ``data_worksheet`` (default: the chart's sheet) and draw the chart."""
+    data_sheet = data_worksheet or worksheet
     for row_number, row in enumerate([list(table.columns), *table.itertuples(index=False, name=None)], start_row):
         for column, value in enumerate(row, start_column):
-            cell = worksheet.cell(row_number, column, None if pd.isna(value) else value)
+            cell = data_sheet.cell(row_number, column, None if pd.isna(value) else value)
             if isinstance(value, str):
                 cell.data_type = "s"
     rows, series = len(table), len(table.columns) - 1
-    categories = Reference(worksheet, min_col=start_column, min_row=start_row + 1, max_row=start_row + rows)
+    categories = Reference(data_sheet, min_col=start_column, min_row=start_row + 1, max_row=start_row + rows)
     if chart_type == "scatter":
         chart = ScatterChart()
         chart.style = 13
         for column in range(start_column + 1, start_column + series + 1):
-            item = Series(Reference(worksheet, min_col=column, min_row=start_row, max_row=start_row + rows),
+            item = Series(Reference(data_sheet, min_col=column, min_row=start_row, max_row=start_row + rows),
                           categories, title_from_data=True)
             item.marker.symbol = "circle"
             item.graphicalProperties.line.noFill = True
@@ -426,7 +433,7 @@ def _native_chart(
         if chart_type in {"column", "bar"}:
             chart.type = "col" if chart_type == "column" else "bar"
             chart.grouping = "clustered"
-        chart.add_data(Reference(worksheet, min_col=start_column + 1, max_col=start_column + series,
+        chart.add_data(Reference(data_sheet, min_col=start_column + 1, max_col=start_column + series,
                                  min_row=start_row, max_row=start_row + rows),
                        titles_from_data=True)
         chart.set_categories(categories)
@@ -437,7 +444,7 @@ def _native_chart(
             chart.x_axis.scaling.orientation = "maxMin"
     chart.title = title
     chart.title.overlay = False
-    chart.width, chart.height = 18, 9.5
+    chart.width, chart.height = size
     if chart_type in {"pie", "doughnut"}:
         chart.dataLabels = DataLabelList()
         chart.dataLabels.showPercent = True
@@ -455,7 +462,34 @@ def _native_chart(
         # openpyxl 3.1 hides axes unless they are explicitly kept.
         chart.x_axis.delete = False
         chart.y_axis.delete = False
-    worksheet.add_chart(chart, f"{get_column_letter(start_column + series + 2)}{start_row + 1}")
+    if colors:
+        # Presentation polish for dashboard tabs: neutral axis numbers and light gridlines only.
+        if chart_type not in {"pie", "doughnut"}:
+            chart.y_axis.number_format = "General"
+            chart.y_axis.numFmt.sourceLinked = False
+            if chart_type == "bar":
+                chart.y_axis.crosses = "max"
+            if chart_type == "scatter":
+                chart.x_axis.majorGridlines = None
+                chart.x_axis.number_format = "General"
+                chart.x_axis.numFmt.sourceLinked = False
+        if chart_type in {"pie", "doughnut"}:
+            for index in range(rows):
+                point = DataPoint(idx=index)
+                point.graphicalProperties.solidFill = colors[index % len(colors)]
+                chart.series[0].dPt.append(point)
+        else:
+            for index, item in enumerate(chart.series):
+                color = colors[index % len(colors)]
+                if chart_type == "scatter":
+                    item.marker.graphicalProperties = GraphicalProperties(solidFill=color, ln=LineProperties(solidFill=color))
+                elif chart_type == "line":
+                    item.graphicalProperties.line.solidFill = color
+                    item.graphicalProperties.line.width = 28575
+                else:
+                    item.graphicalProperties.solidFill = color
+                    item.graphicalProperties.line.solidFill = color
+    worksheet.add_chart(chart, anchor or f"{get_column_letter(start_column + series + 2)}{start_row + 1}")
 
 
 def _scratch_chart_parts(scratch: Workbook, expected: int) -> tuple[bytes, list[tuple[str, bytes]]]:
@@ -651,6 +685,114 @@ def _write_package(source: ZipFile, replacements: dict[str, bytes], additions: d
     return output.getvalue()
 
 
+_STYLE_FONTS = {
+    "title": '<font><b/><sz val="18"/><color rgb="FF7B2D43"/><name val="Calibri"/><family val="2"/></font>',
+    "header": '<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/><family val="2"/></font>',
+    "muted": '<font><sz val="10"/><color rgb="FF6B6560"/><name val="Calibri"/><family val="2"/></font>',
+    "value": '<font><b/><sz val="16"/><color rgb="FF1F1D1B"/><name val="Calibri"/><family val="2"/></font>',
+    "section": '<font><b/><sz val="12"/><color rgb="FF7B2D43"/><name val="Calibri"/><family val="2"/></font>',
+    "body": '<font><sz val="11"/><color rgb="FF1F1D1B"/><name val="Calibri"/><family val="2"/></font>',
+}
+_STYLE_FILLS = {
+    "wine": '<fill><patternFill patternType="solid"><fgColor rgb="FF7B2D43"/><bgColor indexed="64"/></patternFill></fill>',
+    "band": '<fill><patternFill patternType="solid"><fgColor rgb="FFF7F3EF"/><bgColor indexed="64"/></patternFill></fill>',
+}
+# style name -> (font, fill or None, number format id)
+_CELL_STYLES = {
+    "title": ("title", None, 0), "muted": ("muted", None, 0), "section": ("section", None, 0),
+    "header": ("header", "wine", 0), "kpi_label": ("muted", "band", 0), "kpi_value": ("value", "band", 0),
+    "text": ("body", None, 0), "integer": ("body", None, 3), "decimal": ("body", None, 4),
+}
+
+
+def _append_style_entries(document: str, tag: str, child: str, entries: list[str]) -> tuple[str, int] | None:
+    block = re.search(rf"<{tag}\b[^>]*?(?:/>|>(?P<body>.*?)</{tag}>)", document, re.S)
+    if block is None:
+        return None
+    existing = len(re.findall(rf"<{child}\b", block["body"] or ""))
+    body = (block["body"] or "") + "".join(entries)
+    opening = re.sub(r'\s+count="\d+"', "", re.match(rf"<{tag}\b[^>]*?(?=/?>)", block[0])[0])
+    replacement = f'{opening} count="{existing + len(entries)}">{body}</{tag}>'
+    return document[:block.start()] + replacement + document[block.end():], existing
+
+
+def _dashboard_styles(content: bytes) -> tuple[bytes | None, dict[str, int]]:
+    """Add the dashboard's fonts/fills/cell formats to styles.xml; existing styles are untouched."""
+    with ZipFile(BytesIO(content)) as archive:
+        if "xl/styles.xml" not in archive.namelist():
+            return None, {}
+        document = archive.read("xl/styles.xml").decode("utf-8")
+    fonts = _append_style_entries(document, "fonts", "font", list(_STYLE_FONTS.values()))
+    if fonts is None:
+        return None, {}
+    document, font_start = fonts
+    fills = _append_style_entries(document, "fills", "fill", list(_STYLE_FILLS.values()))
+    if fills is None:
+        return None, {}
+    document, fill_start = fills
+    font_ids = {name: font_start + index for index, name in enumerate(_STYLE_FONTS)}
+    fill_ids = {name: fill_start + index for index, name in enumerate(_STYLE_FILLS)}
+    xfs = []
+    for font, fill, number_format in _CELL_STYLES.values():
+        fill_id = fill_ids[fill] if fill else 0
+        flags = ' applyFont="1"' + (' applyFill="1"' if fill else "") + (' applyNumberFormat="1"' if number_format else "")
+        xfs.append(
+            f'<xf numFmtId="{number_format}" fontId="{font_ids[font]}" fillId="{fill_id}" borderId="0" xfId="0"'
+            f'{flags} applyAlignment="1"><alignment vertical="center"/></xf>'
+        )
+    cell_xfs = _append_style_entries(document, "cellXfs", "xf", xfs)
+    if cell_xfs is None:
+        return None, {}
+    document, xf_start = cell_xfs
+    return document.encode("utf-8"), {name: xf_start + index for index, name in enumerate(_CELL_STYLES)}
+
+
+def _styled_cell(reference: str, value: Any, styles: dict[str, int], style: str | None = None) -> str:
+    if style is None:
+        style = "text" if isinstance(value, str) or not isinstance(value, Real) else (
+            "integer" if float(value).is_integer() else "decimal"
+        )
+    xml = _cell_xml(reference, value)
+    if not xml or style not in styles:
+        return xml
+    return xml.replace(f'<c r="{reference}"', f'<c r="{reference}" s="{styles[style]}"', 1)
+
+
+def _sheet_document(
+    rows: dict[int, list[tuple[int, Any, str | None]]], styles: dict[str, int], widths: dict[int, float], *,
+    drawing: bool, gridlines: bool, heights: dict[int, float] | None = None, merges: list[str] | None = None,
+) -> bytes:
+    last_row = max(rows, default=1)
+    last_column = max((column for cells in rows.values() for column, _, _ in cells), default=1)
+    row_xml = []
+    for number in sorted(rows):
+        height = (heights or {}).get(number)
+        height_attr = f' ht="{height}" customHeight="1"' if height else ""
+        cells = "".join(
+            _styled_cell(f"{get_column_letter(column)}{number}", value, styles, style)
+            for column, value, style in sorted(rows[number], key=lambda item: item[0])
+        )
+        row_xml.append(f'<row r="{number}"{height_attr}>{cells}</row>')
+    columns = "".join(
+        f'<col min="{index}" max="{index}" width="{width}" customWidth="1"/>' for index, width in sorted(widths.items())
+    )
+    view = '<sheetView workbookViewId="0"/>' if gridlines else '<sheetView showGridLines="0" workbookViewId="0"/>'
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        f'<worksheet xmlns="{_MAIN}" xmlns:r="{_REL}">'
+        f'<dimension ref="A1:{get_column_letter(max(last_column, 1))}{last_row}"/>'
+        f'<sheetViews>{view}</sheetViews><sheetFormatPr defaultRowHeight="15"/>'
+        + (f"<cols>{columns}</cols>" if columns else "")
+        + f'<sheetData>{"".join(row_xml)}</sheetData>'
+        + (f'<mergeCells count="{len(merges)}">' + "".join(f'<mergeCell ref="{ref}"/>' for ref in merges)
+           + "</mergeCells>" if merges else "")
+        + '<pageMargins left="0.5" right="0.5" top="0.6" bottom="0.6" header="0.3" footer="0.3"/>'
+        '<pageSetup orientation="landscape"/>'
+        + ('<drawing r:id="rId1"/>' if drawing else "")
+        + "</worksheet>"
+    ).encode("utf-8")
+
+
 def _add_same_sheet_package(
     content: bytes, sheet: str, cells: dict[int, list[Any]], start_column: int,
     drawing_xml: bytes, chart_parts: list[tuple[str, bytes]], source_columns: int,
@@ -758,8 +900,10 @@ def _add_chart_sheet(content: bytes, sheet: str, table: pd.DataFrame, chart_type
 
 
 def _add_chart_package(
-    content: bytes, sheet: str, sheet_xml: bytes, drawing_xml: bytes, chart_parts: list[tuple[str, bytes]],
+    content: bytes, sheet: str, sheet_xml: bytes, drawing_xml: bytes | None, chart_parts: list[tuple[str, bytes]],
+    *, styles_xml: bytes | None = None,
 ) -> bytes:
+    """Append one worksheet (optionally with a drawing of charts) without re-saving existing parts."""
     try:
         source = ZipFile(BytesIO(content))
     except BadZipFile as error:
@@ -815,23 +959,24 @@ def _add_chart_package(
         content_types = _insert_before(
             content_types, "</Types>",
             f'<Override PartName="/{sheet_part}" ContentType="{_WORKSHEET_TYPE}"/>'
-            f'<Override PartName="/{drawing_part}" ContentType="{_DRAWING_TYPE}"/>'
+            + (f'<Override PartName="/{drawing_part}" ContentType="{_DRAWING_TYPE}"/>' if drawing_xml else "")
             + "".join(f'<Override PartName="/{part}" ContentType="{_CHART_TYPE}"/>' for part in chart_additions),
             "content types",
         )
-        additions = {
-            sheet_part: sheet_xml,
-            f"xl/worksheets/_rels/sheet{sheet_number}.xml.rels": (
-                '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-                f'<Relationships xmlns="{_PKG_REL}"><Relationship Id="rId1" Type="{_REL}/drawing" '
-                f'Target="../drawings/drawing{drawing_number}.xml"/></Relationships>'
-            ).encode(),
-            drawing_part: drawing_xml,
-            f"xl/drawings/_rels/drawing{drawing_number}.xml.rels": (
-                '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-                f'<Relationships xmlns="{_PKG_REL}">{"".join(chart_relationships)}</Relationships>'
-            ).encode(),
-        }
+        additions = {sheet_part: sheet_xml}
+        if drawing_xml is not None:
+            additions.update({
+                f"xl/worksheets/_rels/sheet{sheet_number}.xml.rels": (
+                    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+                    f'<Relationships xmlns="{_PKG_REL}"><Relationship Id="rId1" Type="{_REL}/drawing" '
+                    f'Target="../drawings/drawing{drawing_number}.xml"/></Relationships>'
+                ).encode(),
+                drawing_part: drawing_xml,
+                f"xl/drawings/_rels/drawing{drawing_number}.xml.rels": (
+                    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+                    f'<Relationships xmlns="{_PKG_REL}">{"".join(chart_relationships)}</Relationships>'
+                ).encode(),
+            })
         if any(name.casefold() in lowered for name in additions):
             raise ValueError("The workbook already contains parts with the new chart's names. No chart was added.")
         additions.update(chart_additions)
@@ -840,21 +985,102 @@ def _add_chart_package(
             "xl/_rels/workbook.xml.rels": relationships.encode("utf-8"),
             "[Content_Types].xml": content_types.encode("utf-8"),
         }
+        if styles_xml is not None:
+            replacements["xl/styles.xml"] = styles_xml
         return _write_package(source, replacements, additions)
+
+
+def _add_dashboard_tabs(
+    content: bytes, names: list[str], source_sheet: str, charts: list[tuple[str, pd.DataFrame, str]],
+    kpis: list[tuple[str, str]], subtitle: str,
+) -> tuple[bytes, str, str]:
+    """Add a presentation-style Dashboard tab (title, KPI cards, chart grid) and a Supporting tables tab."""
+    dashboard = _sheet_name(f"{source_sheet} Dashboard", names)
+    tables = _sheet_name(f"{source_sheet} Tables", [*names, dashboard])
+    scratch = Workbook()
+    dashboard_sheet = scratch.active
+    dashboard_sheet.title = dashboard
+    tables_sheet = scratch.create_sheet(tables)
+    table_rows: dict[int, list[tuple[int, Any, str | None]]] = {
+        1: [(1, "Supporting tables", "title")],
+        2: [(1, f"The data behind each chart on the '{dashboard}' tab.", "muted")],
+    }
+    row = 4
+    widths = {1: 34.0, 2: 22.0, 3: 22.0}
+    for index, (title, table, chart_type) in enumerate(charts):
+        table_rows[row] = [(1, title, "section")]
+        header = row + 1
+        table_rows[header] = [(column, name, "header") for column, name in enumerate(table.columns, 1)]
+        for offset, values in enumerate(table.itertuples(index=False, name=None), 1):
+            table_rows[header + offset] = [(column, value, None) for column, value in enumerate(values, 1)]
+        for column, name in enumerate(table.columns, 1):
+            longest = max([len(str(name)), *(len(str(value)) for value in table.iloc[:, column - 1])])
+            widths[column] = max(widths.get(column, 12.0), min(48.0, longest + 4))
+        anchor = f"{'B' if index % 2 == 0 else 'L'}{8 + (index // 2) * 20}"
+        _native_chart(
+            dashboard_sheet, table, "column" if chart_type == "histogram" else chart_type, title, header, 1,
+            data_worksheet=tables_sheet, anchor=anchor, size=(17.5, 9.5), colors=EXCEL_PALETTE,
+        )
+        row = header + len(table) + 3
+    drawing, parts = _scratch_chart_parts(scratch, len(charts))
+    styles_xml, styles = _dashboard_styles(content)
+    dashboard_rows: dict[int, list[tuple[int, Any, str | None]]] = {
+        2: [(2, f"{source_sheet} Dashboard", "title")],
+        3: [(2, subtitle, "muted")],
+        5: [(2 + position * 5, label, "kpi_label") for position, (label, _) in enumerate(kpis[:4])],
+        6: [(2 + position * 5, value, "kpi_value") for position, (_, value) in enumerate(kpis[:4])],
+    }
+    # Each KPI tile is a merged 4-column block so long labels and values are not cut off.
+    merges = []
+    for position in range(len(kpis[:4])):
+        first, last = get_column_letter(2 + position * 5), get_column_letter(5 + position * 5)
+        merges.extend([f"{first}5:{last}5", f"{first}6:{last}6"])
+        for column in range(3 + position * 5, 6 + position * 5):
+            dashboard_rows[5].append((column, "", "kpi_label"))
+            dashboard_rows[6].append((column, "", "kpi_value"))
+    dashboard_xml = _sheet_document(
+        dashboard_rows, styles, {1: 2.5, **{column: 10.5 for column in range(2, 22)}},
+        drawing=True, gridlines=False, heights={2: 30, 5: 20, 6: 30}, merges=merges,
+    )
+    tables_xml = _sheet_document(table_rows, styles, widths, drawing=False, gridlines=True, heights={1: 28})
+    updated = _add_chart_package(content, dashboard, dashboard_xml, drawing, parts, styles_xml=styles_xml)
+    updated = _add_chart_package(updated, tables, tables_xml, None, [])
+    return updated, dashboard, tables
 
 
 def apply_excel_dashboard(
     content: bytes, source_sheet: str, charts: list[tuple[str, pd.DataFrame, str]], *,
     source_rows: int, source_columns: int, missing_values: int, trace: BackendTrace | None = None,
-    placement: str = "new_sheet",
+    placement: str = "new_sheet", kpis: list[tuple[str, str]] | None = None,
 ) -> WorkbookDashboard:
     names = excel_sheet_names(content)
     _require(source_sheet in names, "The dashboard source worksheet is unavailable.")
     _require(placement in {"same_sheet", "new_sheet"}, "Choose the same worksheet or a new dashboard tab.")
-    _require(placement == "same_sheet" or len(names) < MAX_SHEETS, f"The workbook supports at most {MAX_SHEETS} worksheets.")
+    _require(placement == "same_sheet" or len(names) + 1 < MAX_SHEETS, f"The workbook supports at most {MAX_SHEETS} worksheets.")
     _require(1 <= len(charts) <= 4, "A dashboard needs between one and four charts.")
-    sheet = source_sheet if placement == "same_sheet" else _sheet_name(f"{source_sheet} Dashboard", names)
-    start_column = _same_sheet_start_column(content, sheet) if placement == "same_sheet" else 1
+    for _, table, chart_type in charts:
+        _require(chart_type in {*CHART_TYPES, "histogram"}, "Unsupported dashboard chart type.")
+        _require(0 < len(table) <= MAX_CHART_POINTS and len(table.columns) == 2,
+                 f"Each dashboard chart needs two columns and at most {MAX_CHART_POINTS} points.")
+    if placement == "new_sheet":
+        if trace:
+            trace.record_code("chart_started", apply_excel_dashboard, _add_dashboard_tabs, _add_chart_package,
+                              sheet=source_sheet, rows=source_rows, operation="dashboard")
+        headline = kpis or [
+            ("Rows", f"{source_rows:,}"), ("Columns", f"{source_columns:,}"),
+            ("Missing values", f"{missing_values:,}"), ("Charts", f"{len(charts)}"),
+        ]
+        subtitle = (
+            f"Source: worksheet '{source_sheet}'  |  {source_rows:,} rows, {source_columns:,} columns, "
+            f"{missing_values:,} missing values  |  Generated by Workforce Compass"
+        )
+        updated, sheet, tables = _add_dashboard_tabs(content, names, source_sheet, charts, headline, subtitle)
+        _require(excel_sheet_names(updated) == [*names, sheet, tables], "The dashboard workbook could not be verified.")
+        if trace:
+            trace.record("chart_saved", sheet=sheet, operation="dashboard", status="validated")
+        return WorkbookDashboard(updated, sheet, source_sheet, tables)
+    sheet = source_sheet
+    start_column = _same_sheet_start_column(content, sheet)
     scratch = Workbook()
     worksheet = scratch.active
     worksheet.title = sheet
@@ -865,46 +1091,19 @@ def apply_excel_dashboard(
     }
     start = 7
     for title, table, chart_type in charts:
-        _require(chart_type in {*CHART_TYPES, "histogram"}, "Unsupported dashboard chart type.")
-        _require(0 < len(table) <= MAX_CHART_POINTS and len(table.columns) == 2,
-                 f"Each dashboard chart needs two columns and at most {MAX_CHART_POINTS} points.")
         cells[start - 1] = [title]
         for row_number, row in enumerate([list(table.columns), *table.itertuples(index=False, name=None)], start):
             cells[row_number] = list(row)
         _native_chart(worksheet, table, "column" if chart_type == "histogram" else chart_type, title, start, start_column)
         start += max(len(table) + 5, 24)
     drawing, parts = _scratch_chart_parts(scratch, len(charts))
-    if placement == "same_sheet":
-        if trace:
-            trace.record_code("chart_started", apply_excel_dashboard, _add_same_sheet_package,
-                              sheet=source_sheet, rows=source_rows, operation="same_sheet_dashboard")
-        updated = _add_same_sheet_package(content, sheet, cells, start_column, drawing, parts, source_columns)
-        _require(excel_sheet_names(updated) == names, "The same-sheet dashboard workbook could not be verified.")
-        if trace:
-            trace.record("chart_saved", sheet=sheet, operation="same_sheet_dashboard", status="validated")
-        return WorkbookDashboard(updated, sheet, source_sheet)
-    rows = "".join(
-        f'<row r="{number}">'
-        + "".join(_cell_xml(f"{get_column_letter(column)}{number}", value) for column, value in enumerate(values, 1))
-        + "</row>" for number, values in sorted(cells.items())
-    )
-    sheet_xml = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-        f'<worksheet xmlns="{_MAIN}" xmlns:r="{_REL}"><dimension ref="A1:P{start}"/>'
-        '<sheetViews><sheetView workbookViewId="0"/></sheetViews><sheetFormatPr defaultRowHeight="15"/>'
-        '<cols><col min="1" max="1" width="40" customWidth="1"/>'
-        '<col min="2" max="2" width="24" customWidth="1"/></cols>'
-        f'<sheetData>{rows}</sheetData>'
-        '<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>'
-        '<drawing r:id="rId1"/></worksheet>'
-    ).encode("utf-8")
     if trace:
-        trace.record_code("chart_started", apply_excel_dashboard, _add_chart_package,
-                          sheet=source_sheet, rows=source_rows, operation="dashboard")
-    updated = _add_chart_package(content, sheet, sheet_xml, drawing, parts)
-    _require(excel_sheet_names(updated) == [*names, sheet], "The dashboard workbook could not be verified.")
+        trace.record_code("chart_started", apply_excel_dashboard, _add_same_sheet_package,
+                          sheet=source_sheet, rows=source_rows, operation="same_sheet_dashboard")
+    updated = _add_same_sheet_package(content, sheet, cells, start_column, drawing, parts, source_columns)
+    _require(excel_sheet_names(updated) == names, "The same-sheet dashboard workbook could not be verified.")
     if trace:
-        trace.record("chart_saved", sheet=sheet, operation="dashboard", status="validated")
+        trace.record("chart_saved", sheet=sheet, operation="same_sheet_dashboard", status="validated")
     return WorkbookDashboard(updated, sheet, source_sheet)
 
 

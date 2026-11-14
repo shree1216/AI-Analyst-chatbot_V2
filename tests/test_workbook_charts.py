@@ -232,37 +232,53 @@ class ApplyChartTests(unittest.TestCase):
         result = apply_excel_dashboard(
             original, "Sales", tables, source_rows=len(frame), source_columns=len(frame.columns), missing_values=0,
         )
-        self.assertEqual(result.sheet, "Sales Dashboard")
+        self.assertEqual((result.sheet, result.tables_sheet), ("Sales Dashboard", "Sales Tables"))
+        self.assertEqual(excel_sheet_names(result.content), [*excel_sheet_names(original), "Sales Dashboard", "Sales Tables"])
+        main = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
         with ZipFile(BytesIO(original)) as before, ZipFile(BytesIO(result.content)) as after:
             for name in before.namelist():
-                if name not in {"xl/workbook.xml", "xl/_rels/workbook.xml.rels", "[Content_Types].xml"}:
+                if name == "xl/styles.xml":
+                    # Dashboard styles are appended; every existing font, fill and cell format keeps its index.
+                    old, new = ET.fromstring(before.read(name)), ET.fromstring(after.read(name))
+                    for tag in ("fonts", "fills", "cellXfs"):
+                        old_items = [ET.tostring(item) for item in old.find(main + tag)]
+                        self.assertEqual([ET.tostring(item) for item in new.find(main + tag)][:len(old_items)], old_items)
+                elif name not in {"xl/workbook.xml", "xl/_rels/workbook.xml.rels", "[Content_Types].xml"}:
                     self.assertEqual(before.read(name), after.read(name), name)
         workbook = load_workbook(BytesIO(result.content))
         self.addCleanup(workbook.close)
-        dashboard = workbook[result.sheet]
+        dashboard, supporting = workbook[result.sheet], workbook[result.tables_sheet]
         self.assertEqual(len(dashboard._charts), 4)
-        self.assertEqual(dashboard["B3"].value, len(frame))
-        self.assertEqual(dashboard["D3"].value, len(frame.columns))
-        self.assertEqual(dashboard["D4"].value, 4)
-        start = 7
+        self.assertEqual(len(supporting._charts), 0)
+        self.assertEqual(dashboard["B2"].value, "Sales Dashboard")
+        self.assertEqual((dashboard["B5"].value, dashboard["B6"].value), ("Rows", f"{len(frame):,}"))
+        self.assertEqual((dashboard["G5"].value, dashboard["G6"].value), ("Columns", f"{len(frame.columns):,}"))
+        self.assertEqual((dashboard["Q5"].value, dashboard["Q6"].value), ("Charts", "4"))
+        self.assertIn("B5:E5", {str(merged) for merged in dashboard.merged_cells.ranges})
+        self.assertFalse(dashboard.sheet_view.showGridLines)
+        self.assertEqual(supporting["A1"].value, "Supporting tables")
+        self.assertEqual(supporting["A5"].fill.fgColor.rgb, "FF7B2D43")
+        start = 4
         for chart, table in zip(dashboard._charts, charts):
-            self.assertEqual(dashboard.cell(start - 1, 1).value, table.title)
+            self.assertEqual(supporting.cell(start, 1).value, table.title)
+            header = start + 1
+            self.assertEqual([supporting.cell(header, column).value for column in (1, 2)], list(table.table.columns))
             saved = pd.DataFrame(
                 [
-                    [dashboard.cell(row, column).value for column in (1, 2)]
-                    for row in range(start + 1, start + 1 + len(table.table))
+                    [supporting.cell(row, column).value for column in (1, 2)]
+                    for row in range(header + 1, header + 1 + len(table.table))
                 ],
                 columns=table.table.columns,
             )
             pd.testing.assert_frame_equal(saved, table.table, check_dtype=False)
             series = chart.series[0]
             values = series.val.numRef.f
-            self.assertEqual(values, f"'{result.sheet}'!$B${start + 1}:$B${start + len(table.table)}")
-            start += max(len(table.table) + 5, 24)
+            self.assertEqual(values, f"'{result.tables_sheet}'!$B${header + 1}:$B${header + len(table.table)}")
+            start = header + len(table.table) + 3
         repeated = apply_excel_dashboard(
             result.content, "Sales", tables, source_rows=len(frame), source_columns=len(frame.columns), missing_values=0,
         )
-        self.assertEqual(repeated.sheet, "Sales Dashboard (2)")
+        self.assertEqual((repeated.sheet, repeated.tables_sheet), ("Sales Dashboard (2)", "Sales Tables (2)"))
 
     def test_dashboard_limits_and_unknown_sources_fail_explicitly(self):
         table = pd.DataFrame({"Group": ["One"], "Value": [1]})
@@ -397,19 +413,21 @@ class ChartChatTests(unittest.TestCase):
         message = self.app.session_state["chat_history"][-1]
         self.assertNotIn("error", message)
         self.assertEqual(message["kind"], "excel_chart")
-        self.assertEqual(message["edited_sheet"], "Sales")
+        self.assertEqual(message["edited_sheet"], "Total Amount by Region")
         self.assertIn("native Excel column chart", message["answer"])
         cache = self.app.session_state["excel_workbook"]
         self.assertEqual(cache["original_content"], self.upload.getvalue())
         book = load_workbook(BytesIO(cache["content"]))
         try:
-            self.assertEqual(len(book["Sales"]._charts), 1)
+            self.assertEqual(len(book["Total Amount by Region"]._charts), 1)
+            self.assertEqual(len(book["Sales"]._charts), 0)
         finally:
             book.close()
         self.app.chat_input[0].set_value("Add a pie chart of Amount by Salesperson to my Excel file").run(timeout=30)
         self.assertNotIn("error", self.app.session_state["chat_history"][-1])
-        self.assertEqual(excel_sheet_names(self.app.session_state["excel_workbook"]["content"]),
-                         ["Sales", "staff"])
+        names = excel_sheet_names(self.app.session_state["excel_workbook"]["content"])
+        self.assertEqual(names[:3], ["Sales", "staff", "Total Amount by Region"])
+        self.assertEqual(len(names), 4)
         self.client.chat.completions.create.assert_not_called()
         labels = [button.label for button in self.app.get("download_button")]
         self.assertIn("Download updated workbook", labels)
@@ -431,7 +449,7 @@ class ChartChatTests(unittest.TestCase):
         self.assertEqual(self.client.chat.completions.create.call_count, 2)
         message = self.app.session_state["chat_history"][-1]
         self.assertNotIn("error", message)
-        self.assertEqual((message["edited_sheet"], message["chart_type"]), ("Sales", "line"))
+        self.assertEqual((message["edited_sheet"], message["chart_type"]), ("Daily sales", "line"))
 
     def test_failed_chart_keeps_workbook_and_without_ai_explains_format(self):
         self.app.run(timeout=30)

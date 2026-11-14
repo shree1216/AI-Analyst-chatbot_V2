@@ -660,10 +660,11 @@ class UploadedDataUITests(unittest.TestCase):
         for table, chart in zip(app.chat_message[-1].dataframe, message["charts"]):
             pd.testing.assert_frame_equal(table.value, chart.table)
         download = message["excel_download"]
-        self.assertEqual(excel_sheet_names(download), ["staff"])
+        self.assertEqual(excel_sheet_names(download), ["staff", "staff Dashboard", "staff Tables"])
         workbook = load_workbook(BytesIO(download))
         self.addCleanup(workbook.close)
-        self.assertEqual(len(workbook["staff"]._charts), 4)
+        self.assertEqual(len(workbook["staff Dashboard"]._charts), 4)
+        self.assertEqual(len(workbook["staff"]._charts), 0)
         events = list(message["backend_log"])
         app.run(timeout=30)
         self.assertEqual(len(app.exception), 0)
@@ -803,7 +804,7 @@ class UploadedDataUITests(unittest.TestCase):
                 self.assertEqual(message["charts"][0].table.iloc[:, 1].sum(), 16)
                 exported = load_workbook(BytesIO(message["excel_download"]))
                 self.addCleanup(exported.close)
-                self.assertEqual(len(exported["employees_messy"]._charts), 1)
+                self.assertEqual(len(exported["employees_messy Dashboard"]._charts), 1)
                 self.assertEqual(read_excel_sheet(message["excel_download"], "employees_messy").shape, (16, 4))
         app.session_state["chat_history"] = [{
             "kind": "uploaded_data", "question": "open employees_messy and create a chart for employee salary",
@@ -867,7 +868,15 @@ class UploadedDataUITests(unittest.TestCase):
             pd.testing.assert_frame_equal(chart.table, table.value)
         self.assertEqual(len(response.tabs[1].dataframe), 4)
         self.assertIn("dashboard_workbook", message)
-        self.assertEqual(excel_sheet_names(message["dashboard_workbook"]), ["employees_messy"])
+        self.assertEqual(
+            excel_sheet_names(message["dashboard_workbook"]),
+            ["employees_messy", "employees_messy Dashboard", "employees_messy Tables"],
+        )
+        self.assertEqual(message["dashboard_tables_sheet"], "employees_messy Tables")
+        dashboard = load_workbook(BytesIO(message["dashboard_workbook"]))["employees_messy Dashboard"]
+        # The Excel KPI tiles reuse the in-app dashboard's headline numbers.
+        self.assertEqual(dashboard["B5"].value, message["dashboard_kpis"][0][0])
+        self.assertEqual(dashboard["B6"].value, message["dashboard_kpis"][0][1])
         self.assertFalse(app.session_state["excel_workbook"].get("edited", False))
 
     def test_compound_request_selects_named_sheet_not_current_preview(self):
@@ -955,24 +964,29 @@ class UploadedDataUITests(unittest.TestCase):
         self.assertEqual(app.session_state["excel_workbook"]["content"], original)
         self.assertEqual(len(app.chat_message[-1].success), 0)
 
-    def test_same_sheet_is_default_and_explicit_new_tab_is_respected(self):
+    def test_separate_tabs_are_default_and_explicit_same_sheet_is_respected(self):
         app = self.start_app(staff_frame().to_csv(index=False).encode(), "employees_messy.csv")
-        self.assertEqual(app.selectbox(key="excel_chart_placement").value, "same_sheet")
+        self.assertEqual(app.selectbox(key="excel_chart_placement").value, "new_sheet")
+        app.chat_input[0].set_value("draw charts").run(timeout=30)
+        self.assertEqual(len(app.exception), 0)
+        new_tab = app.session_state["chat_history"][-1]
+        self.assertEqual(new_tab["chart_placement"], "new_sheet")
+        self.assertEqual(
+            excel_sheet_names(new_tab["excel_download"]),
+            ["employees_messy", "employees_messy Dashboard", "employees_messy Tables"],
+        )
+        caption = " ".join(item.value for item in app.chat_message[-1].caption)
+        self.assertIn("'employees_messy Tables' tab", caption)
+        labels = [button.label for button in app.chat_message[-1].get("download_button")]
+        self.assertIn("Download Excel with charts", labels)
+        self.assertIn("Download supporting tables only", labels)
+        self.assertNotIn("Download Excel", labels)
         app.chat_input[0].set_value("draw charts in the same worksheet").run(timeout=30)
         self.assertEqual(len(app.exception), 0)
         message = app.session_state["chat_history"][-1]
         self.assertEqual(message["chart_placement"], "same_sheet")
         self.assertEqual(message["dashboard_sheet"], "employees_messy")
         self.assertEqual(excel_sheet_names(message["excel_download"]), ["employees_messy"])
-        app.chat_input[0].set_value("draw charts on a new worksheet").run(timeout=30)
-        self.assertEqual(len(app.exception), 0)
-        new_tab = app.session_state["chat_history"][-1]
-        self.assertEqual(new_tab["chart_placement"], "new_sheet")
-        self.assertEqual(excel_sheet_names(new_tab["excel_download"]), ["employees_messy", "employees_messy Dashboard"])
-        labels = [button.label for button in app.chat_message[-1].get("download_button")]
-        self.assertIn("Download Excel with charts", labels)
-        self.assertIn("Download supporting tables only", labels)
-        self.assertNotIn("Download Excel", labels)
 
     def test_source_questions_still_work_after_native_same_sheet_dashboard_and_reupload(self):
         app = self.start_app(staff_frame().to_csv(index=False).encode(), "employees_messy.csv", "Excel workbook")

@@ -234,9 +234,14 @@ More complex filtered or multi-measure chat requests continue to use the
 existing validated planner instead of ignoring conditions.
 
 Charts appear in the chat and **Download Excel with charts** includes native,
-editable Excel charts, original data and supporting numbers. **Same worksheet**
-is the default **Excel chart placement**: charts and their supporting tables are
-placed in unused columns beside the data, without overwriting existing cells.
+editable Excel charts, original data and supporting numbers. **Separate Dashboard +
+Tables tabs** is the default **Excel chart placement**: your data tab is left untouched,
+a **`<sheet> Dashboard`** tab holds a presentation-style page (title, source line,
+KPI tiles and a two-column grid of charts in the corporate palette, without gridlines),
+and a **`<sheet> Tables`** tab holds the styled supporting tables that the charts read
+from. Single chart requests get their own tab named after the chart. Choose **Same
+worksheet (beside the data)** to place charts and tables in unused columns beside the
+data instead, without overwriting existing cells.
 **Download supporting tables only** is explicitly a numbers-only export.
 To update the active working copy, ask **Add a column chart of total Amount by
 Region in the workbook**. Explicit SQL/both-source requests and more
@@ -264,11 +269,12 @@ name a source; these never fall back to a similarly named column. For a grouped
 comparison, ask **show average salary by department** instead.
 
 When the prompt says **in Excel**, **in the workbook** or **in the excel sheet**,
-**Download Excel with charts** contains charts on the same worksheet by default.
-Select **New dashboard tab**, or ask **draw charts on a new worksheet**, to put
-them together on a separate tab instead. An explicit **same worksheet** prompt
-overrides that selection. Existing data cells, formulas, PivotTables, slicers,
-charts and images are preserved. The source sheet stays selected for follow-up
+**Download Excel with charts** puts the charts on separate Dashboard and Tables tabs
+by default. Ask **draw charts in the same worksheet** (or choose that placement) to put
+them beside the data instead; an explicit **new worksheet** prompt also overrides the
+selection. Existing data cells, formulas, PivotTables, slicers,
+charts and images are preserved; the dashboard's cell styles are appended to the
+workbook without changing existing ones. For same-worksheet charts, the source sheet stays selected for follow-up
 questions, and a hidden source-range name separates the original data from added
 supporting cells when querying or reuploading the export. Reopening a cached
 answer does not insert duplicate charts. CSV and Parquet uploads export as `.xlsx` because

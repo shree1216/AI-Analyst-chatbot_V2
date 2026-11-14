@@ -144,10 +144,11 @@ class SpreadsheetAnalyticsTests(unittest.TestCase):
                 workbook = load_workbook(BytesIO(content))
                 self.addCleanup(workbook.close)
                 dashboard = workbook["Filtered data Dashboard"]
+                supporting = workbook["Filtered data Tables"]
                 self.assertEqual(type(dashboard._charts[0]).__name__, expected_type)
                 self.assertEqual(workbook["Analysis notes"]["B3"].value, "Region = North")
-                for index, row in enumerate(chart.table.itertuples(index=False, name=None), 8):
-                    self.assertEqual(tuple(dashboard.cell(index, column).value for column in (1, 2)), row)
+                for index, row in enumerate(chart.table.itertuples(index=False, name=None), 6):
+                    self.assertEqual(tuple(supporting.cell(index, column).value for column in (1, 2)), row)
 
 
 class SpreadsheetAnalyticsUITests(unittest.TestCase):
@@ -198,7 +199,7 @@ class SpreadsheetAnalyticsUITests(unittest.TestCase):
                          {"Region": ["North"], "Total Revenue": [900]})
         workbook = load_workbook(BytesIO(message["excel_download"]))
         self.addCleanup(workbook.close)
-        chart = workbook["sales"]._charts[0]
+        chart = workbook["sales Dashboard"]._charts[0]
         reference = chart.series[0].val.numRef.f
         sheet, cells = reference.split("!")
         column, row, _, _ = range_boundaries(cells)
@@ -277,7 +278,8 @@ class SpreadsheetAnalyticsUITests(unittest.TestCase):
         self.assertEqual(message["charts"][0].table.iloc[:, 1].sum(), 3)
         exported = load_workbook(BytesIO(message["excel_download"]))
         self.addCleanup(exported.close)
-        self.assertEqual(len(exported["sales"]._charts), len(message["charts"]))
+        self.assertEqual(len(exported["sales Dashboard"]._charts), len(message["charts"]))
+        self.assertEqual(len(exported["sales"]._charts), 0)
 
     def test_non_chart_questions_keep_the_unfiltered_source(self):
         app = self.start_app()
@@ -368,7 +370,7 @@ class SpreadsheetAnalyticsUITests(unittest.TestCase):
                 self.assertEqual(message["kind"], "uploaded_data")
                 workbook = load_workbook(BytesIO(message["excel_download"]))
                 self.addCleanup(workbook.close)
-                self.assertEqual(type(workbook["sales"]._charts[0]).__name__, expected_type)
+                self.assertEqual(type(workbook["sales Dashboard"]._charts[0]).__name__, expected_type)
 
     def test_native_scatter_and_area_previews_do_not_turn_into_line_charts(self):
         import json
