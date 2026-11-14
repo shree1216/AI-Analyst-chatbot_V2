@@ -803,7 +803,8 @@ def _add_chart_package(
         if main_prefix is None:
             raise ValueError("The workbook's sheet list could not be updated. No chart was added.")
         relation_prefix = prefix[1] if prefix else "r"
-        namespace = "" if prefix else f' xmlns:r="{_REL}"'
+        # Writers may declare the prefix only on sibling elements, so always declare it locally.
+        namespace = f' xmlns:{relation_prefix}="{_REL}"'
         element = f"{main_prefix[1]}:sheet" if main_prefix[1] else "sheet"
         sheet_id = max((int(value) for value in re.findall(r'\bsheetId="(\d+)"', workbook)), default=0) + 1
         workbook = _insert_before(

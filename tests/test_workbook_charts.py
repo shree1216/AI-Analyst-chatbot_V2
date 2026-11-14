@@ -7,6 +7,8 @@ from pathlib import Path
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
+
+from chat_upload import patch_chat_upload
 from zipfile import ZipFile
 from xml.etree import ElementTree as ET
 
@@ -385,7 +387,7 @@ class ChartChatTests(unittest.TestCase):
         self.addCleanup(self.chatbot.st.cache_resource.clear)
         self.upload = BytesIO(sales_content())
         self.upload.name = "sales.xlsx"
-        self.enterContext(patch("streamlit.file_uploader", return_value=self.upload))
+        self.enterContext(patch_chat_upload(return_value=self.upload))
         self.app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "employee_sql_chatbot.py"))
 
     def test_chart_prompt_adds_native_chart_to_working_copy_without_ai(self):

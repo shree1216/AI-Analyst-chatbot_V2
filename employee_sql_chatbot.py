@@ -65,12 +65,18 @@ from workbook_charts import (
     is_excel_chart_request, local_excel_chart_plan,
 )
 from data_explorer import (
-    _find_column, build_charts, chart_presentation_question, charts_answer, column_names_answer,
+    _find_column, auto_charts, build_charts, chart_presentation_question, charts_answer, column_names_answer,
     csv_to_workbook, data_overview, is_chart_question, is_generic_chart_request, is_overview_request, metadata_request,
     overview_answer, parquet_to_workbook, plan_charts, unique_counts_answer, unique_counts_table, unique_values_table,
 )
 from backend_diagnostics import BackendTrace, diagnostic_log, execution_code_log
 from spreadsheet_analytics import filter_rows, render_spreadsheet_analysis
+from report_themes import THEMES, ReportTheme, get_theme, style_figure
+from dashboard_builder import dashboard_kpis
+from slides_export import PPTX_MIME, Deck, SlideChart, build_pptx
+from deck_pdf import build_deck_pdf
+from pdf_tables import pdf_to_workbook
+from data_grid import MAX_GRID_ROWS, apply_grid_changes, grid_change_count
 from demo_tables import demo_data_version, load_demo_tables
 from source_queries import (
     SALES_PLANNING_RULES, SourceMatchError, allows_unmatched_sources, discover_excel_sources, discover_sql_sources, execute_source_plan,
@@ -80,6 +86,12 @@ from source_queries import (
 
 
 logger = logging.getLogger(__name__)
+
+
+def selected_theme() -> ReportTheme:
+    return get_theme(st.session_state.get("report_theme"))
+
+
 SQL_TRACE: ContextVar[BackendTrace | None] = ContextVar("employee_backend_trace", default=None)
 load_dotenv(Path(__file__).with_name(".env"), override=False)
 
@@ -117,6 +129,8 @@ EMPLOYEE_COLUMN_ALIASES = {
 }
 MAX_IMAGE_BYTES = 4_000_000
 MAX_IMAGE_DIMENSION = 2048
+DATA_FILE_TYPES = ("xlsx", "csv", "parquet", "pdf")
+IMAGE_FILE_TYPES = ("jpg", "jpeg", "png", "webp")
 EMAIL_PATTERN = r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}"
 PHONE_PATTERN = r"(?<!\w)(?:\+?\(?\d[\d\s().-]{6,}\d)(?!\w)"
 DEFAULT_SPEECH_VOICE = "en-IN-NeerjaNeural"
@@ -246,8 +260,8 @@ copy_response_component = st.components.v2.component(
             border-radius: 4px; color: #6B6558; cursor: pointer;
             font: inherit; font-size: 13px;
         }
-        button:hover { background: #EFEDE4; color: #147D73; }
-        button:focus-visible { outline: 2px solid #147D73; outline-offset: 2px; }
+        button:hover { background: #EEF2FF; color: #1E3A8A; }
+        button:focus-visible { outline: 2px solid #1E3A8A; outline-offset: 2px; }
         .copy-icon { font-family: "Material Symbols Rounded"; font-size: 16px; }
         .copy-status { font: inherit; font-size: 12px; }
         textarea { width: 100%; height: 100px; box-sizing: border-box; }
@@ -2250,16 +2264,16 @@ def create_query_chart(result: pd.DataFrame, title: str, value_label: str, chart
         figure = px.pie(
             result, names=category_column, values=value_column,
             hole=0.45 if chart_type in {"donut", "doughnut"} else 0,
-            color_discrete_sequence=["#0F766E", "#2563EB", "#D97706", "#DB2777", "#64748B", "#65A30D"],
+            color_discrete_sequence=list(selected_theme().palette),
         )
         figure.update_traces(textinfo="label+percent", sort=False)
     elif chart_type == "line":
-        figure = px.line(result, x=category_column, y=value_column, markers=True, color_discrete_sequence=["#0F766E"])
+        figure = px.line(result, x=category_column, y=value_column, markers=True, color_discrete_sequence=[selected_theme().primary])
     elif chart_type == "area":
-        figure = px.area(result, x=category_column, y=value_column, markers=True, color_discrete_sequence=["#0F766E"])
+        figure = px.area(result, x=category_column, y=value_column, markers=True, color_discrete_sequence=[selected_theme().primary])
         figure.update_traces(fill="tozeroy")
     elif chart_type == "scatter":
-        figure = px.scatter(result, x=category_column, y=value_column, color_discrete_sequence=["#0F766E"])
+        figure = px.scatter(result, x=category_column, y=value_column, color_discrete_sequence=[selected_theme().primary])
     else:
         figure = px.bar(
             result,
@@ -2267,7 +2281,7 @@ def create_query_chart(result: pd.DataFrame, title: str, value_label: str, chart
             y=category_column if horizontal else value_column,
             orientation="h" if horizontal else "v",
             text=value_column,
-            color_discrete_sequence=["#0F766E"],
+            color_discrete_sequence=[selected_theme().primary],
         )
         axis = "x" if horizontal else "y"
         figure.update_traces(
@@ -2306,7 +2320,10 @@ def create_query_chart(result: pd.DataFrame, title: str, value_label: str, chart
     return figure
 
 
-def report_pdf_table(table: pd.DataFrame, width: float = letter[0] - 1.3 * inch) -> Table:
+def report_pdf_table(
+    table: pd.DataFrame, width: float = letter[0] - 1.3 * inch, theme: ReportTheme | None = None,
+) -> Table:
+    theme = theme or get_theme(None)
     display_table = table.copy()
     header_style = ParagraphStyle("ReportTableHeader", fontName="Helvetica-Bold", fontSize=8, leading=11, textColor=colors.white)
     number_header_style = ParagraphStyle("ReportTableNumberHeader", parent=header_style, alignment=2)
@@ -2334,7 +2351,7 @@ def report_pdf_table(table: pd.DataFrame, width: float = letter[0] - 1.3 * inch)
     table_element.setStyle(
         TableStyle(
             [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0F766E")),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(theme.primary)),
                 ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
                 ("LINEBELOW", (0, 1), (-1, -1), 0.25, colors.HexColor("#E0E6E3")),
                 ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F2F6F5")]),
@@ -2348,7 +2365,8 @@ def report_pdf_table(table: pd.DataFrame, width: float = letter[0] - 1.3 * inch)
     return table_element
 
 
-def report_pdf_chart(report: BusinessReport) -> Drawing | None:
+def report_pdf_chart(report: BusinessReport, theme: ReportTheme | None = None) -> Drawing | None:
+    theme = theme or get_theme(None)
     source = report_chart_source(report)
     if source is None:
         return None
@@ -2401,7 +2419,7 @@ def report_pdf_chart(report: BusinessReport) -> Drawing | None:
         chart.sideLabels = True
         if report.chart_type == "donut":
             chart.innerRadiusFraction = 0.45
-        palette = ["#0F766E", "#2563EB", "#D97706", "#DB2777", "#64748B", "#65A30D"]
+        palette = list(theme.palette)
         for index in range(len(values)):
             chart.slices[index].fillColor = colors.HexColor(palette[index % len(palette)])
         drawing.add(chart)
@@ -2409,12 +2427,12 @@ def report_pdf_chart(report: BusinessReport) -> Drawing | None:
     horizontal = report.chart_type == "bar"
     if report.chart_type == "line":
         chart = HorizontalLineChart()
-        chart.lines[0].strokeColor = colors.HexColor("#0F766E")
+        chart.lines[0].strokeColor = colors.HexColor(theme.primary)
         chart.lines[0].strokeWidth = 2
     else:
         chart = HorizontalBarChart() if horizontal else VerticalBarChart()
-        chart.bars[0].fillColor = colors.HexColor("#0F766E")
-        chart.bars[0].strokeColor = colors.HexColor("#0F766E")
+        chart.bars[0].fillColor = colors.HexColor(theme.primary)
+        chart.bars[0].strokeColor = colors.HexColor(theme.primary)
         if report.chart_type == "histogram":
             chart.groupSpacing = 0
             chart.barSpacing = 0
@@ -2449,7 +2467,10 @@ def report_pdf_chart(report: BusinessReport) -> Drawing | None:
     return drawing
 
 
-def generate_business_report_pdf(question: str, report: BusinessReport, chart) -> bytes:
+def generate_business_report_pdf(
+    question: str, report: BusinessReport, chart, theme: ReportTheme | None = None,
+) -> bytes:
+    theme = theme or get_theme(None)
     output = BytesIO()
     document = SimpleDocTemplate(
         output,
@@ -2471,12 +2492,12 @@ def generate_business_report_pdf(question: str, report: BusinessReport, chart) -
     styles["Heading2"].fontSize = 12
     styles["Heading2"].leading = 16
     styles["Heading2"].spaceBefore = 12
-    styles["Heading2"].textColor = colors.HexColor("#0F766E")
+    styles["Heading2"].textColor = colors.HexColor(theme.primary)
     styles["BodyText"].fontSize = 10
     styles["BodyText"].leading = 15
     styles["BodyText"].textColor = colors.HexColor("#35433D")
     note_style = ParagraphStyle("ReportNote", parent=styles["BodyText"], fontSize=8, leading=11, textColor=colors.HexColor("#647269"))
-    brand_style = ParagraphStyle("ReportBrand", parent=note_style, fontName="Helvetica-Bold", textColor=colors.HexColor("#0F766E"), spaceAfter=10)
+    brand_style = ParagraphStyle("ReportBrand", parent=note_style, fontName="Helvetica-Bold", textColor=colors.HexColor(theme.primary), spaceAfter=10)
     metric_style = ParagraphStyle("ReportMetric", fontName="Helvetica-Bold", fontSize=15, leading=20, textColor=colors.HexColor("#25332E"))
     story = [Paragraph("WORKFORCE COMPASS / ANALYTICS REPORT", brand_style), Paragraph(escape(report.title), styles["Title"])]
     story.append(Paragraph(f"Generated {report.generated_at:%d %B %Y, %H:%M} | Source: {SOURCE_LABEL}", note_style))
@@ -2492,7 +2513,7 @@ def generate_business_report_pdf(question: str, report: BusinessReport, chart) -
         ]))
         story.extend([Spacer(1, 14), metric_table])
     story.extend([Paragraph("Executive Summary", styles["Heading2"]), Paragraph(escape(report.executive_summary), styles["BodyText"])])
-    pdf_chart = report_pdf_chart(report)
+    pdf_chart = report_pdf_chart(report, theme)
     if pdf_chart is not None:
         story.extend([Spacer(1, 14), pdf_chart])
     if report.findings:
@@ -2506,7 +2527,7 @@ def generate_business_report_pdf(question: str, report: BusinessReport, chart) -
         story.extend([PageBreak(), Paragraph("Detailed Breakdown", styles["Title"])])
         for heading, table, interpretation in report.tables:
             story.extend([
-                Paragraph(escape(heading), styles["Heading2"]), report_pdf_table(table, document.width),
+                Paragraph(escape(heading), styles["Heading2"]), report_pdf_table(table, document.width, theme),
                 Spacer(1, 6), Paragraph(escape(interpretation), note_style),
             ])
             if "Headcount" in table:
@@ -3481,15 +3502,41 @@ def natural_language_response(
     return summarize_with_azure_openai(question, request.explanation, result_csv) or fallback
 
 
+def business_report_deck(report: BusinessReport) -> Deck:
+    charts = []
+    source = report_chart_source(report)
+    if source is not None:
+        heading, table, metric = source
+        label = table.columns[0]
+        charts.append(SlideChart(
+            f"{heading}: {metric}", report.chart_type, table[[label, metric]],
+            next((text for name, _, text in report.tables if name == heading), ""),
+        ))
+    return Deck(
+        title=report.title,
+        subtitle=f"{report.scope} · Generated {report.generated_at:%d %B %Y}",
+        kpis=[(label, value, "") for label, value in report.metrics[:4]],
+        charts=charts,
+        sections=[
+            ("Executive summary", [report.executive_summary]), ("Key findings", report.findings),
+            ("Analyst notes", report.recommendations), ("Data notes", report.limitations),
+        ],
+        tables=[(heading, table) for heading, table, _ in report.tables],
+    )
+
+
 def display_business_report(
     question: str, result: pd.DataFrame, render_key: str,
     response_cache: dict[str, Any] | None = None,
 ) -> str:
     cache = response_cache if response_cache is not None else {}
-    if cache.get("report_layout_version") != 4:
+    theme = selected_theme()
+    if cache.get("report_layout_version") != 4 or cache.get("report_theme") != theme.key:
         cache.pop("business_report", None)
         cache.pop("pdf_report", None)
+        cache.pop("pptx_report", None)
         cache["report_layout_version"] = 4
+        cache["report_theme"] = theme.key
     if "business_report" not in cache:
         trace = SQL_TRACE.get()
         if trace:
@@ -3558,11 +3605,14 @@ def display_business_report(
         trace = SQL_TRACE.get()
         if trace:
             trace.record_code("export_started", generate_business_report_pdf, operation="pdf")
-        cache["pdf_report"] = generate_business_report_pdf(question, report, chart)
+        cache["pdf_report"] = generate_business_report_pdf(question, report, chart, theme)
         if trace:
             trace.record("export_completed", operation="pdf")
     pdf_report = cache["pdf_report"]
-    st.download_button(
+    if "pptx_report" not in cache:
+        cache["pptx_report"] = build_pptx(business_report_deck(report), theme.key)
+    download_columns = st.columns([1, 1, 2])
+    download_columns[0].download_button(
         "Download PDF report",
         data=pdf_report,
         file_name=f"workforce_report_{datetime.now():%Y%m%d}_{report_digest}.pdf",
@@ -3570,6 +3620,14 @@ def display_business_report(
         key=f"download_report_{report_digest}_{render_key}",
         use_container_width=False,
         icon=":material/download:",
+    )
+    download_columns[1].download_button(
+        "Download slides (PPTX)",
+        data=cache["pptx_report"],
+        file_name=f"workforce_report_{datetime.now():%Y%m%d}_{report_digest}.pptx",
+        mime=PPTX_MIME,
+        key=f"download_report_pptx_{report_digest}_{render_key}",
+        icon=":material/slideshow:",
     )
     report_summary = pd.DataFrame(
         [("Title", report.title), ("Question", question), ("Source", SOURCE_LABEL),
@@ -3774,7 +3832,7 @@ def remember_excel_upload(content: bytes, file_name: str) -> dict[str, Any]:
     if workbook is None or workbook.get("upload_digest", workbook.get("digest")) != digest:
         workbook = {"content": content, "file_name": file_name, "digest": digest, "upload_digest": digest}
         extension = Path(file_name).suffix.casefold()
-        converter = {".csv": csv_to_workbook, ".parquet": parquet_to_workbook}.get(extension)
+        converter = {".csv": csv_to_workbook, ".parquet": parquet_to_workbook, ".pdf": pdf_to_workbook}.get(extension)
         if converter is not None:
             try:
                 workbook["content"] = converter(content, file_name)
@@ -3798,10 +3856,6 @@ def remember_excel_upload(content: bytes, file_name: str) -> dict[str, Any]:
 
 
 def active_excel_workbook() -> dict[str, Any] | None:
-    upload_key = f"excel_upload_{st.session_state.get('excel_uploader_version', 0)}"
-    upload = st.session_state.get(upload_key)
-    if upload is not None:
-        return remember_excel_upload(upload.getvalue(), upload.name)
     workbook = st.session_state.get("excel_workbook")
     if workbook is not None and workbook.get("edited") and workbook.get("formula_cache_version") != FORMULA_CACHE_VERSION:
         return remember_excel_upload(workbook["original_content"], workbook["file_name"])
@@ -4003,6 +4057,37 @@ def display_uploaded_metadata(message: dict[str, Any], render_key: str) -> str |
     return message["answer"]
 
 
+def render_kpi_cards(kpis: list[tuple[str, str, str]]) -> None:
+    if not kpis:
+        return
+    cards = "".join(
+        f'<div class="kpi-card"><span>{escape(label)}</span><strong>{escape(value)}</strong>'
+        + (f"<small>{escape(caption)}</small>" if caption else "") + "</div>"
+        for label, value, caption in kpis
+    )
+    st.markdown(
+        f'<div class="kpi-row" style="--kpi-accent: {selected_theme().primary}">{cards}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_deck_downloads(deck: Deck, cache: dict[str, Any], render_key: str, file_stem: str) -> None:
+    theme = selected_theme()
+    if cache.get("deck_theme") != theme.key:
+        cache["deck_pptx"] = build_pptx(deck, theme.key)
+        cache["deck_pdf"] = build_deck_pdf(deck, theme.key)
+        cache["deck_theme"] = theme.key
+    left, right, _ = st.columns([1, 1, 1.4])
+    left.download_button(
+        "Download slides (PPTX)", data=cache["deck_pptx"], file_name=f"{file_stem}.pptx", mime=PPTX_MIME,
+        key=f"deck_pptx_{render_key}", icon=":material/slideshow:",
+    )
+    right.download_button(
+        "Download PDF", data=cache["deck_pdf"], file_name=f"{file_stem}.pdf", mime="application/pdf",
+        key=f"deck_pdf_{render_key}", icon=":material/picture_as_pdf:",
+    )
+
+
 def display_uploaded_data(message: dict[str, Any], render_key: str) -> str | None:
     if message.get("chart_specs") is not None:
         workbook = active_excel_workbook()
@@ -4020,7 +4105,8 @@ def display_uploaded_data(message: dict[str, Any], render_key: str) -> str | Non
                 signature = (tuple(filter_state["filters"]), filter_state["error"])
             if signature != message.get("chart_filter_signature"):
                 for key in ("answer", "error", "charts", "chart_problems", "dashboard_workbook",
-                            "excel_download", "dashboard_sheet", "dashboard_summary", "supporting_table_export"):
+                            "excel_download", "dashboard_sheet", "dashboard_summary", "supporting_table_export",
+                            "deck_export", "dashboard_kpis"):
                     message.pop(key, None)
                 message["chart_filter_signature"] = signature
     if "answer" not in message and "error" not in message:
@@ -4059,6 +4145,7 @@ def display_uploaded_data(message: dict[str, Any], render_key: str) -> str | Non
                     message.update(
                         dashboard_summary=summary, dashboard_rows=len(frame), dashboard_columns=len(frame.columns),
                         dashboard_missing=int(summary["Missing values"].sum()),
+                        dashboard_kpis=[(kpi.label, kpi.value, kpi.caption) for kpi in dashboard_kpis(frame)],
                     )
                 exported = apply_excel_dashboard(
                     message["workbook_content"], message["source_sheet"],
@@ -4144,14 +4231,16 @@ def display_uploaded_data(message: dict[str, Any], render_key: str) -> str | Non
         tables = [("Data", result), ("Column summary", message["summary"])]
     else:
         charts = message["charts"]
+        theme = selected_theme()
+        for chart in charts:
+            style_figure(chart.figure, theme)
+        dashboard_metrics = (
+            ("Rows", message.get("dashboard_rows", 0)), ("Columns", message.get("dashboard_columns", 0)),
+            ("Missing values", message.get("dashboard_missing", 0)), ("Charts", len(charts)),
+        )
         if message.get("dashboard"):
             st.subheader(f"{message['source_sheet']} dashboard")
-            metrics = st.columns(4)
-            for column, (label, value) in zip(metrics, (
-                ("Rows", message["dashboard_rows"]), ("Columns", message["dashboard_columns"]),
-                ("Missing values", message["dashboard_missing"]), ("Charts", len(charts)),
-            )):
-                column.metric(label, f"{value:,}")
+            render_kpi_cards(message.get("dashboard_kpis") or [])
         if message.get("generic_charts"):
             st.write(f"I looked at the columns and made {len(charts)} useful chart(s).")
         tables = [(chart.title, chart.table) for chart in charts]
@@ -4170,13 +4259,16 @@ def display_uploaded_data(message: dict[str, Any], render_key: str) -> str | Non
                 for start in range(0, len(charts), 2):
                     columns = st.columns(2)
                     for index in range(start, min(start + 2, len(charts))):
-                        with columns[index - start]:
+                        with columns[index - start].container(border=True):
                             render_chart(index)
             with tables_tab:
                 for chart in charts:
                     st.subheader(chart.title)
                     st.dataframe(chart.table, hide_index=True, width="stretch")
             with summary_tab:
+                metrics = st.columns(4)
+                for column, (label, value) in zip(metrics, dashboard_metrics):
+                    column.metric(label, f"{value:,}")
                 st.dataframe(message["dashboard_summary"], hide_index=True, width="stretch")
             tables.append(("Column summary", message["dashboard_summary"]))
         else:
@@ -4199,6 +4291,17 @@ def display_uploaded_data(message: dict[str, Any], render_key: str) -> str | Non
             tables, f"chart_tables_{render_key}", message.setdefault("supporting_table_export", {}),
             label="Download supporting tables only",
         )
+        if message.get("dashboard"):
+            render_deck_downloads(
+                Deck(
+                    title=f"{message['source_sheet']} dashboard", subtitle=f"Source: {message['source']}",
+                    kpis=message.get("dashboard_kpis") or [(label, f"{value:,}", "") for label, value in dashboard_metrics],
+                    charts=[SlideChart(chart.title, chart.chart_type, chart.table, chart.explanation) for chart in charts],
+                    tables=[("Column summary", message["dashboard_summary"])],
+                ),
+                message.setdefault("deck_export", {}), render_key,
+                f"{Path(message.get('file_name') or message['source_sheet']).stem}_dashboard",
+            )
     if "summary" in message:
         display_excel_download(tables, render_key, message)
     return message["answer"]
@@ -4776,16 +4879,16 @@ def apply_theme() -> None:
         @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Newsreader:opsz,wght@6..72,500;6..72,600;6..72,700&display=swap');
 
         :root {
-            --ink: #292622;
-            --muted: #716c65;
-            --line: #dedbd6;
-            --canvas: #f7f8fa;
+            --ink: #0F172A;
+            --muted: #64748B;
+            --line: #E2E8F0;
+            --canvas: #F8FAFC;
             --surface: #ffffff;
-            --evergreen: #0f766e;
-            --evergreen-soft: #e3f3f0;
-            --coral: #1a73e8;
-            --coral-dark: #1558b0;
-            --coral-soft: #e7f0ff;
+            --evergreen: #1E3A8A;
+            --evergreen-soft: #E0E7FF;
+            --coral: #1E3A8A;
+            --coral-dark: #1E40AF;
+            --coral-soft: #E0E7FF;
         }
 
         .stApp {
@@ -5076,24 +5179,27 @@ def apply_theme() -> None:
     st.markdown(
         """
         <style>
-            @import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,500;8..60,600;8..60,700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
             :root {
-                --wc-bg: #FAF9F5;
-                --wc-sidebar: #F0EEE6;
-                --wc-ink: #29261B;
-                --wc-muted: #6B6558;
-                --wc-accent: #147D73;
-                --wc-line: #E5E1D8;
-                --wc-user: #EFEDE4;
-                --wc-code: #F3F1EC;
+                --wc-bg: #F8FAFC;
+                --wc-sidebar: #FFFFFF;
+                --wc-ink: #0F172A;
+                --wc-muted: #64748B;
+                --wc-accent: #1E3A8A;
+                --wc-accent-hover: #1E40AF;
+                --wc-accent-soft: #E0E7FF;
+                --wc-line: #E2E8F0;
+                --wc-user: #EEF2FF;
+                --wc-code: #F1F5F9;
+                --wc-font: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
             }
 
             /* Application shell */
             .stApp {
                 background: var(--wc-bg) !important;
                 color: var(--wc-ink) !important;
-                font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+                font-family: var(--wc-font) !important;
             }
 
             .block-container {
@@ -5106,7 +5212,7 @@ def apply_theme() -> None:
             }
 
             ::selection {
-                background: #CBE7E1;
+                background: #C7D2FE;
                 color: var(--wc-ink);
             }
 
@@ -5134,13 +5240,55 @@ def apply_theme() -> None:
             }
 
             .sidebar-brand {
+                align-items: center;
                 color: var(--wc-ink);
-                font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-                font-size: 1.35rem;
-                font-weight: 600;
+                display: flex;
+                font-family: var(--wc-font);
+                font-size: 1.15rem;
+                font-weight: 700;
+                gap: 0.6rem;
                 line-height: 1.1;
-                margin: 0.25rem 0 1.5rem;
+                margin: 0.25rem 0 1.4rem;
             }
+
+            .sidebar-brand .brand-logo {
+                background: linear-gradient(135deg, #1E3A8A 0%, #3B82F6 100%);
+                border-radius: 9px;
+                color: #FFFFFF;
+                display: grid;
+                font-size: 0.78rem;
+                font-weight: 700;
+                height: 32px;
+                place-items: center;
+                width: 32px;
+            }
+
+            .active-file {
+                align-items: center;
+                background: var(--wc-accent-soft);
+                border: 1px solid #C7D2FE;
+                border-radius: 10px;
+                color: var(--wc-accent);
+                display: flex;
+                font-size: 0.82rem;
+                font-weight: 600;
+                gap: 0.5rem;
+                margin: 0.4rem 0 0.5rem;
+                overflow-wrap: anywhere;
+                padding: 0.55rem 0.7rem;
+            }
+
+            .attach-hint {
+                border: 1px dashed #CBD5E1;
+                border-radius: 10px;
+                color: var(--wc-muted);
+                font-size: 0.8rem;
+                line-height: 1.45;
+                margin: 0.4rem 0 0.6rem;
+                padding: 0.6rem 0.7rem;
+            }
+
+            .attach-hint strong { color: var(--wc-accent); }
 
             .sidebar-caption, .recent-chat {
                 color: var(--wc-muted);
@@ -5242,10 +5390,10 @@ def apply_theme() -> None:
                 white-space: nowrap;
             }
 
-            /* Empty conversation */
+            /* Home screen */
             .empty-state {
-                margin: 12vh auto 1.8rem;
-                max-width: 560px;
+                margin: 9vh auto 1.6rem;
+                max-width: 640px;
                 text-align: center;
             }
 
@@ -5258,7 +5406,7 @@ def apply_theme() -> None:
             }
 
             .empty-mark span {
-                background: var(--wc-accent);
+                background: linear-gradient(180deg, #3B82F6 0%, #1E3A8A 100%);
                 border-radius: 2px 2px 0 0;
                 display: block;
                 width: 6px;
@@ -5268,16 +5416,112 @@ def apply_theme() -> None:
             .empty-mark span:nth-child(2) { height: 20px; }
             .empty-mark span:nth-child(3) { height: 15px; }
             .empty-mark span:nth-child(4) { height: 27px; }
-            }
 
             .empty-state h2 {
                 color: var(--wc-ink);
-                font-family: "Source Serif 4", Georgia, serif;
-                font-size: 2.2rem;
-                font-weight: 600;
-                letter-spacing: 0;
+                font-family: var(--wc-font);
+                font-size: 2.1rem;
+                font-weight: 700;
+                letter-spacing: -0.02em;
                 line-height: 1.15;
                 margin: 0;
+            }
+
+            .empty-state p {
+                color: var(--wc-muted);
+                font-size: 1rem;
+                margin: 0.7rem 0 0;
+            }
+
+            .st-key-home_actions .stButton > button {
+                align-items: flex-start !important;
+                background: #FFFFFF !important;
+                border: 1px solid var(--wc-line) !important;
+                border-radius: 14px !important;
+                box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04) !important;
+                color: var(--wc-ink) !important;
+                flex-direction: column !important;
+                font-weight: 600 !important;
+                justify-content: flex-start !important;
+                min-height: 92px !important;
+                padding: 0.9rem 1rem !important;
+                text-align: left !important;
+                white-space: pre-line !important;
+            }
+
+            .st-key-home_actions .stButton > button:hover {
+                border-color: var(--wc-accent) !important;
+                box-shadow: 0 6px 18px rgba(30, 58, 138, 0.12) !important;
+                color: var(--wc-accent) !important;
+            }
+
+            .st-key-home_actions .stButton > button * {
+                overflow: visible !important;
+                text-align: left !important;
+                text-overflow: clip !important;
+                white-space: pre-line !important;
+            }
+
+            .st-key-home_actions .stButton > button p::first-line {
+                font-weight: 700;
+            }
+
+            .home-hint {
+                color: var(--wc-muted);
+                font-size: 0.82rem;
+                margin: 1rem 0 0;
+                text-align: center;
+            }
+
+            /* Dashboard board */
+            .kpi-row {
+                display: grid;
+                gap: 0.8rem;
+                grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+                margin: 0.6rem 0 1rem;
+            }
+
+            .kpi-card {
+                background: #FFFFFF;
+                border: 1px solid var(--wc-line);
+                border-radius: 14px;
+                box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+                min-width: 0;
+                padding: 0.85rem 1rem;
+            }
+
+            .kpi-card span {
+                color: var(--wc-muted);
+                display: block;
+                font-size: 0.72rem;
+                font-weight: 600;
+                letter-spacing: 0.04em;
+                overflow-wrap: anywhere;
+                text-transform: uppercase;
+            }
+
+            .kpi-card strong {
+                color: var(--kpi-accent, var(--wc-accent));
+                display: block;
+                font-size: 1.45rem;
+                font-weight: 700;
+                line-height: 1.3;
+                margin-top: 0.25rem;
+                overflow-wrap: anywhere;
+            }
+
+            .kpi-card small {
+                color: var(--wc-muted);
+                display: block;
+                font-size: 0.76rem;
+                margin-top: 0.15rem;
+            }
+
+            .board-title {
+                color: var(--wc-ink);
+                font-size: 1.25rem;
+                font-weight: 700;
+                margin: 0.2rem 0 0;
             }
 
             /* Suggestions and controls */
@@ -5293,7 +5537,7 @@ def apply_theme() -> None:
             }
 
             [data-testid="stMain"] .stButton > button[kind="secondary"]:hover {
-                background: #FFFDFC !important;
+                background: var(--wc-accent-soft) !important;
                 border-color: var(--wc-accent) !important;
                 color: var(--wc-accent) !important;
             }
@@ -5301,10 +5545,22 @@ def apply_theme() -> None:
             [data-testid="stSidebar"] .stButton > button {
                 background: var(--wc-accent) !important;
                 border: 1px solid var(--wc-accent) !important;
-                border-radius: 8px !important;
+                border-radius: 10px !important;
                 color: #FFFFFF !important;
                 font-weight: 600;
                 min-height: 40px;
+            }
+
+            [data-testid="stSidebar"] .stButton > button:hover {
+                background: var(--wc-accent-hover) !important;
+                border-color: var(--wc-accent-hover) !important;
+            }
+
+            [data-testid="stSidebar"] .stButton > button[kind="tertiary"] {
+                background: transparent !important;
+                border: 1px solid var(--wc-line) !important;
+                color: var(--wc-muted) !important;
+                min-height: 32px;
             }
 
             /* Messages */
@@ -5397,9 +5653,9 @@ def apply_theme() -> None:
             [data-testid="stChatInput"] {
                 background: #FFFFFF !important;
                 border: 1px solid var(--wc-line) !important;
-                border-radius: 24px !important;
+                border-radius: 18px !important;
                 bottom: 28px !important;
-                box-shadow: 0 6px 18px rgba(41, 38, 27, 0.05) !important;
+                box-shadow: 0 8px 28px rgba(15, 23, 42, 0.08) !important;
                 left: 50% !important;
                 max-width: 760px;
                 position: fixed !important;
@@ -5411,12 +5667,12 @@ def apply_theme() -> None:
 
             [data-testid="stChatInput"]:focus-within {
                 border-color: var(--wc-accent) !important;
-                box-shadow: 0 0 0 3px rgba(201, 100, 66, 0.14), 0 8px 22px rgba(41, 38, 27, 0.08) !important;
+                box-shadow: 0 0 0 3px rgba(30, 58, 138, 0.14), 0 8px 22px rgba(15, 23, 42, 0.08) !important;
             }
 
             [data-testid="stChatInput"] textarea {
                 color: var(--wc-ink) !important;
-                font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+                font-family: var(--wc-font) !important;
                 font-size: 1rem !important;
             }
 
@@ -5427,9 +5683,15 @@ def apply_theme() -> None:
                 width: 36px !important;
             }
 
+            [data-testid="stChatInputFileUploadButton"],
+            [data-testid="stChatInput"] button[aria-label*="ecord"],
+            [data-testid="stChatInput"] button[aria-label*="udio"] {
+                color: var(--wc-accent) !important;
+            }
+
             /* Feedback and scrollbar */
-            .report-heading { border-top: 3px solid #0f766e; padding: 16px 0 12px; }
-            .report-brand { color: #0f766e; font: 600 12px 'DM Sans', sans-serif; }
+            .report-heading { border-top: 3px solid var(--wc-accent); padding: 16px 0 12px; }
+            .report-brand { color: var(--wc-accent); font: 600 12px var(--wc-font); }
             .report-heading h2 { font-size: 26px; line-height: 1.25; margin: 8px 0; overflow-wrap: anywhere; }
             .report-meta { color: var(--wc-muted); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
             .report-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--wc-line); border-bottom: 1px solid var(--wc-line); padding: 16px 0; gap: 12px; }
@@ -5458,28 +5720,30 @@ def apply_theme() -> None:
             }
 
             * {
-                scrollbar-color: #C9C3B8 transparent;
+                scrollbar-color: #CBD5E1 transparent;
                 scrollbar-width: thin;
             }
 
             *::-webkit-scrollbar { width: 8px; }
-            *::-webkit-scrollbar-thumb { background: #C9C3B8; border-radius: 8px; }
+            *::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 8px; }
             *::-webkit-scrollbar-track { background: transparent; }
 
             /* Dark mode */
             @media (prefers-color-scheme: dark) {
                 :root {
-                    --wc-bg: #262624;
-                    --wc-sidebar: #2E2E2B;
-                    --wc-ink: #ECEAE3;
-                    --wc-muted: #B8B3AA;
-                    --wc-line: #494741;
-                    --wc-user: #3A3935;
-                    --wc-code: #33332F;
+                    --wc-bg: #0F172A;
+                    --wc-sidebar: #111C33;
+                    --wc-ink: #E2E8F0;
+                    --wc-muted: #94A3B8;
+                    --wc-line: #1E293B;
+                    --wc-user: #1E293B;
+                    --wc-code: #1E293B;
+                    --wc-accent-soft: #1E293B;
                 }
 
-                .workspace-header { background: #262624 !important; }
-                [data-testid="stChatInput"] { background: #30302D !important; }
+                .workspace-header { background: #0F172A !important; }
+                [data-testid="stChatInput"] { background: #111C33 !important; }
+                .kpi-card, .st-key-home_actions .stButton > button { background: #111C33 !important; }
                 [data-testid="stMain"] .stButton > button[kind="secondary"] { color: var(--wc-ink) !important; }
             }
 
@@ -5504,16 +5768,13 @@ if workbook_action:
         st.session_state["data_source"] = "Employee database" if workbook_action["action"] == "close" else "Excel workbook"
     if workbook_action["action"] == "close":
         st.session_state.pop("excel_workbook", None)
-        st.session_state["excel_uploader_version"] = st.session_state.get("excel_uploader_version", 0) + 1
     elif workbook_action["action"] == "sheet":
         workbook = st.session_state.get("excel_workbook")
         if workbook is not None:
             workbook["requested_sheet"] = workbook_action["sheet"]
             workbook["sheet_widget_version"] = workbook.get("sheet_widget_version", 0) + 1
-voice_recording = None
 voice_enabled = speech_is_configured()
 read_answers_aloud = False
-voice_recorder_version = st.session_state.setdefault("voice_recorder_version", 0)
 excel_frame = None
 excel_source = None
 excel_selected = False
@@ -5521,13 +5782,65 @@ automatic_selected = False
 excel_load_error = "Upload a valid Excel workbook and choose a worksheet before asking a question."
 
 
-def synchronize_excel_upload() -> None:
-    upload_key = f"excel_upload_{st.session_state.get('excel_uploader_version', 0)}"
-    upload = st.session_state.get(upload_key)
-    if upload is None:
-        st.session_state.pop("excel_workbook", None)
-    else:
-        remember_excel_upload(upload.getvalue(), upload.name)
+def remove_active_file() -> None:
+    st.session_state.pop("excel_workbook", None)
+    st.session_state.pop("show_data_grid", None)
+
+
+def attach_data_file(content: bytes, file_name: str) -> dict[str, Any]:
+    workbook = remember_excel_upload(content, file_name)
+    if st.session_state.get("data_source") == "Employee database":
+        st.session_state["data_source"] = "Automatic (SQL + Excel)"
+    return workbook
+
+
+def attachment_answer(workbook: dict[str, Any], ignored: list[str]) -> str:
+    if workbook.get("content") is None:
+        return workbook.get("load_error") or f"I couldn't read {workbook['file_name']}."
+    try:
+        sheets = workbook.get("sheets") or excel_sheet_names(workbook["content"])
+    except ValueError as error:
+        return str(error)
+    workbook["sheets"] = sheets
+    kind = "PDF table" if workbook["file_name"].casefold().endswith(".pdf") else "worksheet"
+    answer = (
+        f"Loaded **{workbook['file_name']}** ({len(sheets)} {kind}{'s' if len(sheets) != 1 else ''}: "
+        f"{', '.join(sheets[:6])}"
+        + (", ..." if len(sheets) > 6 else "") + "). Ask a question, say **create a dashboard**, "
+        "or open the **Data grid** to edit it."
+    )
+    if ignored:
+        answer += f" Only one data file can be active at a time, so {', '.join(ignored)} was not loaded."
+    return answer
+
+
+# Conversation composer: rendered first so attachments are loaded before the sidebar reads the workbook.
+chat_submission = st.chat_input(
+    "Ask anything, attach data with +, or use the mic",
+    accept_file="multiple",
+    file_type=[*DATA_FILE_TYPES, *IMAGE_FILE_TYPES],
+    max_upload_size=MAX_UPLOAD_MB,
+    accept_audio=voice_enabled,
+    audio_sample_rate=16000,
+)
+question = chat_submission if isinstance(chat_submission, str) else getattr(chat_submission, "text", "") or ""
+attachments = [] if isinstance(chat_submission, str) else list(getattr(chat_submission, "files", None) or [])
+voice_audio = None if isinstance(chat_submission, str) else getattr(chat_submission, "audio", None)
+data_uploads = [upload for upload in attachments if Path(upload.name).suffix.casefold().lstrip(".") in DATA_FILE_TYPES]
+image_uploads = [upload for upload in attachments if upload not in data_uploads]
+if data_uploads:
+    attached_workbook = attach_data_file(data_uploads[0].getvalue(), data_uploads[0].name)
+    st.toast(
+        attachment_answer(attached_workbook, [upload.name for upload in data_uploads[1:]]),
+        icon=":material/attach_file:" if attached_workbook.get("content") is not None else ":material/error:",
+    )
+voice_question: str | None = None
+if voice_audio is not None and voice_enabled:
+    with st.spinner("Transcribing your question..."):
+        voice_question = transcribe_audio(voice_audio.getvalue())
+    if not voice_question:
+        st.warning("I could not transcribe that recording. Please try again or type your question.")
+home_prompt: str | None = st.session_state.pop("pending_home_prompt", None)
 
 
 def render_recent_chats(placeholder: Any) -> None:
@@ -5539,9 +5852,208 @@ def render_recent_chats(placeholder: Any) -> None:
                 st.markdown(f'<div class="recent-chat">{recent_question}</div>', unsafe_allow_html=True)
 
 
+def queue_home_prompt(prompt: str) -> None:
+    st.session_state["pending_home_prompt"] = prompt
+
+
+def open_data_grid() -> None:
+    workbook = st.session_state.get("excel_workbook")
+    if workbook is None or workbook.get("content") is None:
+        st.session_state["home_notice"] = "Attach an Excel, CSV, Parquet or PDF file with the + button to open the data grid."
+        return
+    if st.session_state.get("data_source") == "Employee database":
+        st.session_state["data_source"] = "Automatic (SQL + Excel)"
+    st.session_state["show_data_grid"] = True
+
+
+def render_home_screen(has_data: bool) -> None:
+    st.markdown(
+        """
+        <section class="empty-state">
+            <div class="empty-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+            <h2>What would you like to build today?</h2>
+            <p>Turn your workforce data into dashboards, reports and answers in seconds.</p>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+    cards = (
+        ("dashboard", ":material/dashboard:", "Create dashboard\nKPI cards and charts", "Create a dashboard"),
+        ("analyze", ":material/query_stats:", "Analyze data\nAsk in plain English",
+         "Show me the data" if has_data else "How many employees are in each department?"),
+        ("report", ":material/description:", "Build report\nPDF and slides with insights",
+         "Create a PDF report comparing department pay"),
+        ("grid", ":material/table_view:", "Edit in grid\nSpreadsheet view of your file", None),
+    )
+    with st.container(key="home_actions"):
+        for column, (name, icon, label, prompt) in zip(st.columns(len(cards)), cards):
+            column.button(
+                label, key=f"home_{name}", icon=icon, use_container_width=True,
+                on_click=open_data_grid if prompt is None else queue_home_prompt,
+                args=() if prompt is None else (prompt,),
+            )
+    st.markdown(
+        '<p class="home-hint">Attach Excel, CSV, Parquet, PDF or images with <strong>+</strong>'
+        + (" &middot; tap the mic to ask by voice" if voice_enabled else "") + "</p>",
+        unsafe_allow_html=True,
+    )
+    notice = st.session_state.pop("home_notice", None)
+    if notice:
+        st.info(notice)
+
+
+def render_data_grid(workbook: dict[str, Any]) -> None:
+    sheet = workbook.get("preview_sheet") or (workbook.get("sheets") or [None])[0]
+    if workbook.get("content") is None or sheet is None:
+        return
+    notice = st.session_state.pop("grid_notice", None)
+    if notice:
+        st.success(notice)
+    try:
+        frame = read_excel_sheet(workbook["content"], sheet)
+    except ValueError as error:
+        st.warning(str(error))
+        return
+    row_numbers = frame.attrs.get("excel_row_numbers", list(range(2, len(frame) + 2)))
+    if len(frame) > MAX_GRID_ROWS:
+        st.caption(f"Showing the first {MAX_GRID_ROWS:,} of {len(frame):,} rows. Ask in chat to edit the rest.")
+        frame = frame.head(MAX_GRID_ROWS).copy()
+    frame.attrs["excel_row_numbers"] = row_numbers[:len(frame)]
+    key = f"data_grid_{workbook['digest']}_{sheet}"
+    with st.container(border=True):
+        st.markdown(f"**{escape(workbook['file_name'])} / {escape(sheet)}**")
+        st.data_editor(frame, key=key, num_rows="dynamic", hide_index=True, width="stretch")
+        changes = st.session_state.get(key) or {}
+        count = grid_change_count(changes)
+        apply_column, download_column, _ = st.columns([1, 1, 1.4])
+        if apply_column.button(
+            f"Apply {count} change{'s' if count != 1 else ''}", key=f"{key}_apply", type="primary",
+            disabled=not count, icon=":material/check:",
+        ):
+            try:
+                updated = apply_grid_changes(workbook["content"], sheet, frame, changes)
+                st.session_state["excel_workbook"] = edited_workbook_state(
+                    workbook, updated, sheet, workbook["digest"],
+                )
+            except ValueError as error:
+                st.error(str(error))
+            else:
+                st.session_state["grid_notice"] = (
+                    f"Applied {count} change{'s' if count != 1 else ''} to {sheet}. Your original upload is unchanged."
+                )
+                st.rerun()
+        download_column.download_button(
+            "Download workbook", data=workbook["content"], mime=EXCEL_MIME, icon=":material/download:",
+            file_name=f"{Path(workbook['file_name']).stem}{'_edited' if workbook.get('edited') else ''}.xlsx",
+            key=f"{key}_download",
+        )
+
+
+DASHBOARD_ROW_LIMIT = 50_000
+DASHBOARD_COLUMNS = ("age", "gender", "department", "city", "status", "job_title", "salary", "join_date")
+
+
+def wants_database_dashboard(question: str, workbook: dict[str, Any] | None) -> bool:
+    return (
+        (workbook is None or workbook.get("content") is None)
+        and bool(re.search(r"\bdashboards?\b", question, re.I))
+        and not is_excel_chart_request(question)
+        and "excel" not in requested_source_kinds(question)
+    )
+
+
+def load_dashboard_frame() -> pd.DataFrame:
+    selected = ", ".join(DASHBOARD_COLUMNS)
+    sql = (
+        f"SELECT {selected} FROM {TABLE} LIMIT {DASHBOARD_ROW_LIMIT + 1}" if DATA_MODE == "demo"
+        else f"SELECT TOP {DASHBOARD_ROW_LIMIT + 1} {selected} FROM {TABLE}"
+    )
+    friendly = {column: name for name, column in EMPLOYEE_COLUMN_NAMES.items()}
+    return run_query(sql).rename(columns=friendly)
+
+
+def display_database_dashboard(message: dict[str, Any], render_key: str) -> str | None:
+    if "answer" not in message and "error" not in message:
+        trace = BackendTrace(message.setdefault("backend_log", []))
+        message["request_id"] = trace.request_id
+        trace.record("request_started", route="sql_dashboard")
+        token = SQL_TRACE.set(trace)
+        try:
+            frame = load_dashboard_frame()
+            truncated = len(frame) > DASHBOARD_ROW_LIMIT
+            frame = frame.head(DASHBOARD_ROW_LIMIT)
+            if frame.empty:
+                raise ValueError("The employee table has no rows to chart yet.")
+            charts, problems = build_charts(frame, auto_charts(frame))
+            if not charts:
+                raise ValueError(" ".join(problems) or "No useful charts could be built from the employee table.")
+            message.update(
+                charts=charts, chart_problems=problems, rows=len(frame), truncated=truncated,
+                kpis=[(kpi.label, kpi.value, kpi.caption) for kpi in dashboard_kpis(frame)],
+                summary=data_overview(frame), answer=charts_answer(charts, True),
+            )
+            trace.record("request_completed", route="sql_dashboard", status="success")
+        except SQLAlchemyError as error:
+            logger.warning("Database dashboard failed: %s", type(error).__name__)
+            message["error"] = "I couldn't load the employee data. Check the database connection and try again."
+            trace.record("request_failed", route="sql_dashboard", status="failed", error_type=type(error).__name__)
+        except ValueError as error:
+            message["error"] = str(error)
+            trace.record("request_failed", route="sql_dashboard", status="failed", error_type=type(error).__name__)
+        finally:
+            SQL_TRACE.reset(token)
+            if trace.file_error:
+                message["backend_log_error"] = trace.file_error
+    if message.get("error"):
+        st.warning(message["error"])
+        if st.button("Retry dashboard", key=f"retry_sql_dashboard_{render_key}"):
+            message.pop("error", None)
+            st.rerun()
+        return None
+    charts = message["charts"]
+    theme = selected_theme()
+    for chart in charts:
+        style_figure(chart.figure, theme)
+    st.subheader("Employee dashboard")
+    st.caption(
+        f"Sources used: SQL: {SOURCE_LABEL}."
+        + (f" Based on the first {DASHBOARD_ROW_LIMIT:,} rows." if message.get("truncated") else "")
+    )
+    render_kpi_cards(message["kpis"])
+    dashboard_tab, tables_tab, summary_tab = st.tabs(["Dashboard", "Supporting tables", "Data summary"])
+    with dashboard_tab:
+        for start in range(0, len(charts), 2):
+            for offset, column in enumerate(st.columns(2)):
+                if start + offset < len(charts):
+                    chart = charts[start + offset]
+                    with column.container(border=True):
+                        st.plotly_chart(chart.figure, width="stretch", key=f"sql_dashboard_chart_{render_key}_{start + offset}")
+                        st.write(chart.explanation)
+    with tables_tab:
+        for chart in charts:
+            st.subheader(chart.title)
+            st.dataframe(chart.table, hide_index=True, width="stretch")
+    with summary_tab:
+        st.dataframe(message["summary"], hide_index=True, width="stretch")
+    for problem in message.get("chart_problems", []):
+        st.warning(problem)
+    render_deck_downloads(
+        Deck(
+            title="Employee dashboard", subtitle=f"Source: {SOURCE_LABEL}", kpis=message["kpis"],
+            charts=[SlideChart(chart.title, chart.chart_type, chart.table, chart.explanation) for chart in charts],
+            tables=[("Column summary", message["summary"])],
+        ),
+        message.setdefault("deck_export", {}), render_key, f"employee_dashboard_{datetime.now():%Y%m%d}",
+    )
+    return message["answer"]
+
+
 # Sidebar navigation
 with st.sidebar:
-    st.markdown('<div class="sidebar-brand">Workforce Compass</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="sidebar-brand"><span class="brand-logo">WC</span>Workforce Compass</div>',
+        unsafe_allow_html=True,
+    )
     if st.button("New chat", key="new_chat", use_container_width=True):
         history.clear()
         st.session_state.pop("employee_query_plan_cache", None)
@@ -5605,15 +6117,22 @@ with st.sidebar:
                 )
         render_database_tables()
     if excel_selected or automatic_selected:
-        upload = st.file_uploader(
-            "Upload Excel, CSV or Parquet file", type=["xlsx", "csv", "parquet"], max_upload_size=MAX_UPLOAD_MB,
-            help=f"Up to {MAX_UPLOAD_MB} MB per file; up to 1,000,000 rows, 100 columns and 5,000,000 data cells per sheet.",
-            key=f"excel_upload_{st.session_state.get('excel_uploader_version', 0)}",
-            on_change=synchronize_excel_upload,
-        )
-        remembered_workbook = (
-            remember_excel_upload(upload.getvalue(), upload.name) if upload is not None else active_excel_workbook()
-        )
+        remembered_workbook = active_excel_workbook()
+        if remembered_workbook is not None:
+            st.markdown(
+                f'<div class="active-file">&#128206; {escape(remembered_workbook["file_name"])}</div>',
+                unsafe_allow_html=True,
+            )
+            st.button(
+                "Remove file", key="remove_active_file", type="tertiary", icon=":material/close:",
+                on_click=remove_active_file, use_container_width=True,
+            )
+        else:
+            st.markdown(
+                '<div class="attach-hint">Attach Excel, CSV, Parquet or PDF files with the <strong>+</strong> '
+                f"button in the message bar (up to {MAX_UPLOAD_MB} MB).</div>",
+                unsafe_allow_html=True,
+            )
         if remembered_workbook and remembered_workbook.get("content") is not None:
             content = remembered_workbook["content"]
             file_name = remembered_workbook["file_name"]
@@ -5683,18 +6202,19 @@ with st.sidebar:
     recent_chats_placeholder = st.empty()
     render_recent_chats(recent_chats_placeholder)
 
-    st.markdown('<div class="recent-label">Voice</div>', unsafe_allow_html=True)
-    voice_recording = st.audio_input(
-        "Ask by voice",
-        key=f"voice_question_{voice_recorder_version}",
-        sample_rate=16000,
-        disabled=not voice_enabled,
-        help="Voice is unavailable until Azure Speech is configured." if not voice_enabled else None,
+    st.markdown('<div class="recent-label">Report theme</div>', unsafe_allow_html=True)
+    st.selectbox(
+        "Report theme", list(THEMES), format_func=lambda key: THEMES[key].name, key="report_theme",
+        label_visibility="collapsed",
+        help="Colours used for dashboards, PDF reports and PowerPoint slides.",
     )
+
+    st.markdown('<div class="recent-label">Voice</div>', unsafe_allow_html=True)
     read_answers_aloud = st.toggle(
         "Read responses aloud",
         key="read_answers_aloud",
         disabled=not voice_enabled,
+        help=None if voice_enabled else "Voice input (the mic in the message bar) and read-aloud need Azure Speech.",
     )
     st.markdown(
         '<div class="sidebar-credit"><strong>Created by Vijayashree</strong><br>All rights reserved 2026</div>',
@@ -5702,7 +6222,16 @@ with st.sidebar:
     )
 
 if (excel_selected or automatic_selected) and excel_frame is not None:
-    if st.toggle("Spreadsheet analysis", key="show_spreadsheet_analysis"):
+    analysis_column, grid_column, _ = st.columns([1, 1, 2])
+    with grid_column:
+        show_grid = st.toggle("Data grid", key="show_data_grid", help="View and edit the active worksheet.")
+    with analysis_column:
+        show_analysis = st.toggle("Spreadsheet analysis", key="show_spreadsheet_analysis")
+    if show_grid:
+        grid_workbook = active_excel_workbook()
+        if grid_workbook is not None:
+            render_data_grid(grid_workbook)
+    if show_analysis:
         analysis_workbook = active_excel_workbook()
         if analysis_workbook is not None:
             render_spreadsheet_analysis(
@@ -5715,41 +6244,9 @@ else:
     st.session_state.pop("spreadsheet_analysis_frame", None)
     st.session_state.pop("spreadsheet_chart_filters", None)
 
-# Empty-state greeting
+# Home screen
 if not history:
-    st.markdown(
-        """
-        <section class="empty-state">
-            <div class="empty-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
-            <h2>Explore your workforce data</h2>
-        </section>
-        """,
-        unsafe_allow_html=True,
-    )
-
-# Conversation composer
-chat_submission = st.chat_input(
-    "Message Workforce Compass",
-    accept_file=True,
-    file_type=["jpg", "jpeg", "png", "webp"],
-    max_upload_size=4,
-)
-question = chat_submission if isinstance(chat_submission, str) else getattr(chat_submission, "text", "")
-image_uploads = [] if isinstance(chat_submission, str) else getattr(chat_submission, "files", [])
-voice_question: str | None = st.session_state.pop("pending_voice_question", None)
-if voice_recording is not None and voice_enabled:
-    recording_bytes = voice_recording.getvalue()
-    recording_digest = sha256(recording_bytes).hexdigest()
-    if st.session_state.get("processed_voice_recording") != recording_digest:
-        st.session_state["processed_voice_recording"] = recording_digest
-        with st.spinner("Transcribing your question..."):
-            transcribed_question = transcribe_audio(recording_bytes)
-        st.session_state["voice_recorder_version"] += 1
-        if transcribed_question:
-            st.session_state["pending_voice_question"] = transcribed_question
-        else:
-            st.warning("I could not transcribe that recording. Please try again or type your question.")
-        st.rerun()
+    render_home_screen(active_excel_workbook() is not None and excel_frame is not None)
 
 if image_uploads:
     image_upload = image_uploads[0]
@@ -5757,7 +6254,7 @@ if image_uploads:
     if image_message:
         history.append(image_message)
 
-submitted_question = None if image_uploads else question or voice_question
+submitted_question = None if image_uploads else question or voice_question or home_prompt
 if submitted_question:
     command = parse_workbook_command(submitted_question)
     calculation_explanation = explain_previous_calculation(submitted_question, history)
@@ -5770,6 +6267,8 @@ if submitted_question:
             "kind": "recall", "question": submitted_question,
             "answer": recall_previous_question(history),
         })
+    elif wants_database_dashboard(submitted_question, active_excel_workbook()):
+        history.append({"kind": "sql_dashboard", "question": submitted_question})
     elif calculation_explanation:
         history.append({
             "kind": "calculation_explanation", "question": submitted_question,
@@ -5793,7 +6292,7 @@ if submitted_question:
         elif action == "open":
             command_answer = (
                 "Excel controls are open. Your current workbook is available in the sidebar."
-                if cached_workbook else "Excel controls are open. Upload your workbook in the sidebar to continue."
+                if cached_workbook else "Excel controls are open. Attach your workbook with the + button to continue."
             )
         elif cached_workbook is None:
             pending_action = {"action": "open"}
@@ -5934,6 +6433,9 @@ for index, message in enumerate(history):
                 answer = display_uploaded_data(message, str(index))
         elif message.get("kind") == "uploaded_metadata":
             answer = display_uploaded_metadata(message, str(index))
+        elif message.get("kind") == "sql_dashboard":
+            with st.spinner("Building your dashboard...") if pending else nullcontext():
+                answer = display_database_dashboard(message, str(index))
         elif message.get("kind") == "excel":
             with st.spinner("Querying your worksheet...") if pending else nullcontext():
                 answer = display_excel_response(message, str(index))

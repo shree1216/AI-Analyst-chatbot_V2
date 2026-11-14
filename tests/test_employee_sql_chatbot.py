@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import httpx2
 import pandas as pd
+from pptx import Presentation
 from streamlit.testing.v1 import AppTest
 
 
@@ -1341,9 +1342,13 @@ class WorkforceTests(unittest.TestCase):
                 self.assertEqual(len(app.exception), 0)
             self.assertEqual(len(app.get("plotly_chart")), 2)
             downloads = [button for button in app.get("download_button") if button.label != "Download backend log"]
-            self.assertEqual(len(downloads), 4)
+            self.assertEqual(len(downloads), 6)
             self.assertEqual(sum(button.label == "Download Excel" for button in downloads), 2)
-            self.assertEqual(len({button.key for button in downloads}), 4)
+            self.assertEqual(sum(button.label == "Download slides (PPTX)" for button in downloads), 2)
+            self.assertEqual(len({button.key for button in downloads}), 6)
+            report = app.session_state["chat_history"][0]
+            self.assertEqual(Presentation(BytesIO(report["pptx_report"])).slides[0].shapes[1].text_frame.text,
+                             report["business_report"].title)
             exported = pd.read_excel(
                 BytesIO(app.session_state["chat_history"][0]["excel_download"]), sheet_name=None,
             )

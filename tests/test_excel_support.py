@@ -1,4 +1,4 @@
-import importlib
+﻿import importlib
 from io import BytesIO
 import json
 import os
@@ -7,6 +7,8 @@ from types import SimpleNamespace
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import Mock, patch
+
+from chat_upload import patch_chat_upload
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from openpyxl import Workbook, load_workbook
@@ -589,7 +591,7 @@ class ExcelChatTests(unittest.TestCase):
             ("Product ID", "Product Name"), *[(index, f"Product {index}") for index in range(1, 152)],
         ]}))
         upload.name = "complete.xlsx"
-        with patch("streamlit.file_uploader", return_value=upload):
+        with patch_chat_upload(return_value=upload):
             app = employee_app().run(timeout=30)
             app.radio(key="data_source").set_value("Excel workbook").run(timeout=30)
             app.chat_input[0].set_value("show all data").run(timeout=30)
@@ -611,7 +613,7 @@ class ExcelChatTests(unittest.TestCase):
             "Valid": [("Product ID", "Product Name"), (1, "Widget")],
         }))
         upload.name = "headers.xlsx"
-        with patch("streamlit.file_uploader", return_value=upload):
+        with patch_chat_upload(return_value=upload):
             app = employee_app().run(timeout=30)
             app.radio(key="data_source").set_value("Excel workbook").run(timeout=30)
             app.chat_input[0].set_value("count rows").run(timeout=30)
@@ -731,7 +733,7 @@ class ExcelChatTests(unittest.TestCase):
                       (100, "2025-01-01", "PRIVATE_REGION"), (200, "2025-02-01", "PRIVATE_REGION")],
         }))
         upload.name = "private-workbook.xlsx"
-        with patch("streamlit.file_uploader", return_value=upload):
+        with patch_chat_upload(return_value=upload):
             app = employee_app().run(timeout=30)
             app.radio(key="data_source").set_value("Excel workbook").run(timeout=30)
             app.selectbox[0].select("products").run(timeout=30)
@@ -766,7 +768,7 @@ class ExcelChatTests(unittest.TestCase):
                 ],
             })))
         ])
-        with patch("streamlit.file_uploader", return_value=upload), patch(
+        with patch_chat_upload(return_value=upload), patch(
             "openai.AzureOpenAI", return_value=self.client,
         ), patch.dict(os.environ, {
             "AZURE_OPENAI_ENDPOINT": "https://example.test", "AZURE_OPENAI_API_KEY": "test",
@@ -846,7 +848,7 @@ class ExcelChatTests(unittest.TestCase):
             "Sales": [("Region", "Sales"), ("North", 1250.5), ("South", 9000), ("North", 250.25)],
         }))
         upload.name = "sales.xlsx"
-        with patch("streamlit.file_uploader", return_value=upload), patch(
+        with patch_chat_upload(return_value=upload), patch(
             "socket.create_connection", side_effect=AssertionError("Unexpected network"),
         ):
             app = employee_app().run(timeout=30)
@@ -879,7 +881,7 @@ class ExcelChatTests(unittest.TestCase):
     def test_ui_sheet_selection_snapshots_and_database_switch(self):
         upload = BytesIO(workbook_bytes())
         upload.name = "sample.xlsx"
-        with patch("streamlit.file_uploader", return_value=upload), patch.object(
+        with patch_chat_upload(return_value=upload), patch.object(
             self.chatbot, "get_engine", side_effect=AssertionError("Employee DB accessed"),
         ):
             app = employee_app().run(timeout=30)
@@ -901,7 +903,7 @@ class ExcelChatTests(unittest.TestCase):
             self.assertEqual(len(app.session_state["chat_history"]), 0)
 
     def test_ui_missing_and_invalid_workbooks_never_fall_back_to_employees(self):
-        with patch("streamlit.file_uploader", return_value=None), patch.object(
+        with patch_chat_upload(return_value=None), patch.object(
             self.chatbot, "get_engine", side_effect=AssertionError("Employee DB accessed"),
         ):
             app = employee_app().run(timeout=30)
@@ -913,7 +915,7 @@ class ExcelChatTests(unittest.TestCase):
             self.assertTrue(any("Upload a valid Excel" in warning.value for warning in app.warning))
         invalid = BytesIO(b"invalid")
         invalid.name = "invalid.xlsx"
-        with patch("streamlit.file_uploader", return_value=invalid):
+        with patch_chat_upload(return_value=invalid):
             app.run(timeout=30)
             self.assertEqual(len(app.exception), 0)
             self.assertTrue(any("valid, unencrypted" in warning.value for warning in app.warning))
@@ -928,7 +930,7 @@ class ExcelChatTests(unittest.TestCase):
     def test_sidebar_omits_legacy_region_summary_controls(self):
         upload = BytesIO(workbook_bytes())
         upload.name = "sample.xlsx"
-        with patch("streamlit.file_uploader", return_value=upload):
+        with patch_chat_upload(return_value=upload):
             app = employee_app().run(timeout=30)
             app.radio(key="data_source").set_value("Excel workbook").run(timeout=30)
             cache = app.session_state["excel_workbook"]
@@ -944,7 +946,7 @@ class ExcelChatTests(unittest.TestCase):
             "Region_Summary": [("Original",), (99,)],
         }))
         upload.name = "existing.xlsx"
-        with patch("streamlit.file_uploader", return_value=upload):
+        with patch_chat_upload(return_value=upload):
             app = employee_app().run(timeout=30)
             app.radio(key="data_source").set_value("Excel workbook").run(timeout=30)
             self.assertEqual(len(app.exception), 0)
@@ -956,7 +958,7 @@ class ExcelChatTests(unittest.TestCase):
     def test_missing_sales_and_access_errors_display_friendly_ui_messages(self):
         upload = BytesIO(workbook_bytes({"Inventory": [("Product",), ("Widget",)]}))
         upload.name = "inventory.xlsx"
-        with patch("streamlit.file_uploader", return_value=upload):
+        with patch_chat_upload(return_value=upload):
             app = employee_app().run(timeout=30)
             app.radio(key="data_source").set_value("Excel workbook").run(timeout=30)
             self.assertEqual(len(app.exception), 0)
@@ -964,7 +966,7 @@ class ExcelChatTests(unittest.TestCase):
             self.assertFalse(any("Region_Summary" in info.value for info in app.info))
         locked = BytesIO(workbook_bytes())
         locked.name = "locked.xlsx"
-        with patch("streamlit.file_uploader", return_value=locked), patch(
+        with patch_chat_upload(return_value=locked), patch(
             "excel_support.load_workbook", side_effect=PermissionError("PRIVATE_TECHNICAL_ERROR"),
         ):
             app.run(timeout=30)
@@ -973,12 +975,12 @@ class ExcelChatTests(unittest.TestCase):
             self.assertFalse(any("PRIVATE_TECHNICAL_ERROR" in warning.value for warning in app.warning))
 
     def test_workbook_commands_open_and_close_controls_without_a_file(self):
-        with patch("streamlit.file_uploader", return_value=None):
+        with patch_chat_upload(return_value=None):
             app = employee_app().run(timeout=30)
             app.chat_input[0].set_value("open Excel").run(timeout=30)
             self.assertEqual(len(app.exception), 0)
             self.assertEqual(app.radio(key="data_source").value, "Excel workbook")
-            self.assertIn("Upload your workbook", app.session_state["chat_history"][-1]["answer"])
+            self.assertIn("Attach your workbook", app.session_state["chat_history"][-1]["answer"])
             app.chat_input[0].set_value("open Sales").run(timeout=30)
             self.assertEqual(len(app.exception), 0)
             self.assertIn("Upload an Excel workbook first", app.session_state["chat_history"][-1]["answer"])
@@ -986,13 +988,14 @@ class ExcelChatTests(unittest.TestCase):
             self.assertEqual(len(app.exception), 0)
             self.assertEqual(app.radio(key="data_source").value, "Employee database")
             self.assertNotIn("excel_workbook", app.session_state)
-            self.assertEqual(app.session_state["excel_uploader_version"], 1)
 
     def test_prompt_sheet_selection_and_recall_survive_close_and_rerun(self):
         upload = BytesIO(workbook_bytes())
         upload.name = "sample.xlsx"
-        with patch("streamlit.file_uploader", return_value=upload):
+        with patch_chat_upload(return_value=upload):
             app = employee_app().run(timeout=30)
+            self.assertEqual(app.radio(key="data_source").value, "Automatic (SQL + Excel)")
+            app.radio(key="data_source").set_value("Employee database").run(timeout=30)
             app.chat_input[0].set_value("open Excel").run(timeout=30)
             app.chat_input[0].set_value("open Inventory").run(timeout=30)
             self.assertEqual(len(app.exception), 0)
@@ -1012,19 +1015,19 @@ class ExcelChatTests(unittest.TestCase):
             app.chat_input[0].set_value("what was my last question?").run(timeout=30)
             self.assertIn('"count rows"', app.session_state["chat_history"][-1]["answer"])
             self.assertEqual(len(app.exception), 0)
-        with patch("streamlit.file_uploader", return_value=None):
+        with patch_chat_upload(return_value=None):
             app.chat_input[0].set_value("open Excel").run(timeout=30)
             self.assertNotIn("excel_workbook", app.session_state)
-            self.assertIn("Upload your workbook", app.session_state["chat_history"][-1]["answer"])
+            self.assertIn("Attach your workbook", app.session_state["chat_history"][-1]["answer"])
 
     def test_open_sheet_restores_remembered_workbook_after_switching_sources(self):
         upload = BytesIO(workbook_bytes())
         upload.name = "remembered.xlsx"
-        with patch("streamlit.file_uploader", return_value=upload):
+        with patch_chat_upload(return_value=upload):
             app = employee_app().run(timeout=30)
             app.radio(key="data_source").set_value("Excel workbook").run(timeout=30)
             app.radio(key="data_source").set_value("Employee database").run(timeout=30)
-        with patch("streamlit.file_uploader", return_value=None):
+        with patch_chat_upload(return_value=None):
             app.chat_input[0].set_value("open Inventory").run(timeout=30)
             self.assertEqual(len(app.exception), 0)
             self.assertEqual(app.radio(key="data_source").value, "Excel workbook")
@@ -1035,7 +1038,7 @@ class ExcelChatTests(unittest.TestCase):
             self.assertEqual(app.selectbox[0].value, "Inventory")
 
     def test_last_question_works_with_invalid_headers_and_without_a_workbook(self):
-        with patch("streamlit.file_uploader", return_value=None):
+        with patch_chat_upload(return_value=None):
             app = employee_app().run(timeout=30)
             app.radio(key="data_source").set_value("Excel workbook").run(timeout=30)
             app.chat_input[0].set_value("whats the last question?").run(timeout=30)
@@ -1043,7 +1046,7 @@ class ExcelChatTests(unittest.TestCase):
             self.assertIn("no earlier messages", app.session_state["chat_history"][-1]["answer"])
         upload = BytesIO(workbook_bytes({"Sales": [("Region", "region"), ("North", 100)]}))
         upload.name = "invalid-headers.xlsx"
-        with patch("streamlit.file_uploader", return_value=upload):
+        with patch_chat_upload(return_value=upload):
             app.run(timeout=30)
             self.assertTrue(any("headers must be unique" in warning.value for warning in app.warning))
             question = "What are the total sales by region?"
@@ -1077,7 +1080,7 @@ class ExcelChatTests(unittest.TestCase):
             "staff": [("Name", "Role"), ("Asha", "Analyst")],
         }))
         upload.name = "command-forms.xlsx"
-        with patch("streamlit.file_uploader", return_value=upload):
+        with patch_chat_upload(return_value=upload):
             app = employee_app().run(timeout=30)
             app.chat_input[0].set_value("open Excel").run(timeout=30)
             for question, expected in (

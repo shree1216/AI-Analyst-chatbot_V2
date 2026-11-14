@@ -34,7 +34,7 @@ DATE_FORMATS = (
 ID_NAME = re.compile(r"(?:^|[\s_-])(?:id|ids|no|number|code|phone|mobile|tel|zip|pin|postcode|postal)(?:$|[\s_-])|^(?:id|phone|email|e-mail)", re.I)
 TEXT_ONLY_NAME = re.compile(r"\b(?:name|email|e-mail|address|description|comment|notes?|url|link)\b", re.I)
 AVERAGE_FIRST = re.compile(r"salary|salaries|pay|wage|rating|score|price|rate|age|percent|grade|tenure|experience", re.I)
-COLORS = ["#0F766E", "#2563EB", "#D97706", "#DB2777", "#64748B", "#65A30D", "#7C3AED", "#DC2626"]
+COLORS = ["#1E3A8A", "#3B82F6", "#0EA5E9", "#F59E0B", "#64748B", "#10B981", "#8B5CF6", "#EF4444"]
 MAX_CATEGORIES = 25
 MAX_AUTO_CHARTS = 4
 MAX_SCATTER_POINTS = 500
@@ -1009,7 +1009,7 @@ def _finish(result: ChartResult) -> ChartResult:
                              cliponaxis=False, selector={"type": "bar"})
     figure.update_layout(
         title=result.title, height=max(380, len(result.table) * 26 + 120) if horizontal else 400,
-        margin={"l": 24, "r": 48, "t": 64, "b": 40}, paper_bgcolor="#F7F8FA", plot_bgcolor="#FFFFFF", showlegend=False,
+        margin={"l": 24, "r": 48, "t": 64, "b": 40}, paper_bgcolor="#FFFFFF", plot_bgcolor="#FFFFFF", showlegend=False,
     )
     if result.chart_type in {"pie", "doughnut"}:
         figure.update_layout(showlegend=True)

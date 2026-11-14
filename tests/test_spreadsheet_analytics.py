@@ -5,6 +5,8 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
+from chat_upload import patch_chat_upload
+
 from openpyxl import load_workbook
 from openpyxl.utils.cell import range_boundaries
 import pandas as pd
@@ -157,9 +159,7 @@ class SpreadsheetAnalyticsUITests(unittest.TestCase):
     def start_app(self):
         self.upload = BytesIO(sales_frame().to_csv(index=False).encode())
         self.upload.name = "sales.csv"
-        self.enterContext(patch(
-            "streamlit.file_uploader",
-            side_effect=lambda *args, **kwargs: self.upload if kwargs.get("key") == "excel_upload_0" else None,
+        self.enterContext(patch_chat_upload(side_effect=lambda *args, **kwargs: self.upload if kwargs.get("key") == "excel_upload_0" else None,
         ))
         app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
         self.assertEqual(len(app.exception), 0)
@@ -330,9 +330,7 @@ class SpreadsheetAnalyticsUITests(unittest.TestCase):
         frame = pd.concat([sales_frame()] * 3, ignore_index=True)
         self.upload = BytesIO(frame.to_csv(index=False).encode())
         self.upload.name = "sales.csv"
-        self.enterContext(patch(
-            "streamlit.file_uploader",
-            side_effect=lambda *args, **kwargs: self.upload if kwargs.get("key") == "excel_upload_0" else None,
+        self.enterContext(patch_chat_upload(side_effect=lambda *args, **kwargs: self.upload if kwargs.get("key") == "excel_upload_0" else None,
         ))
         app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
         app.toggle(key="show_spreadsheet_analysis").set_value(True).run(timeout=30)
@@ -346,9 +344,7 @@ class SpreadsheetAnalyticsUITests(unittest.TestCase):
         frame.insert(0, "Record ID", range(len(frame)))
         self.upload = BytesIO(frame.to_csv(index=False).encode())
         self.upload.name = "sales.csv"
-        self.enterContext(patch(
-            "streamlit.file_uploader",
-            side_effect=lambda *args, **kwargs: self.upload if kwargs.get("key") == "excel_upload_0" else None,
+        self.enterContext(patch_chat_upload(side_effect=lambda *args, **kwargs: self.upload if kwargs.get("key") == "excel_upload_0" else None,
         ))
         app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
         app.toggle(key="show_spreadsheet_analysis").set_value(True).run(timeout=30)

@@ -100,14 +100,27 @@ are not a replacement for database permissions or access controls.
 - Generate workforce breakdowns and interactive charts.
 - Create business reports with key metrics, applied scope, factual findings, and
     relevant analyst notes.
-- Download reports as PDF files.
-- Upload `.xlsx`, `.csv` or `.parquet` files with arbitrary columns and select a worksheet to query.
+- Download reports as PDF files or PowerPoint slides (`.pptx`, with native editable charts).
+- Attach `.xlsx`, `.csv`, `.parquet` or `.pdf` files with the **+** button in the message
+  bar and select a worksheet to query. Tables found in text-based PDFs become worksheets.
+- Bricks-style workspace: a home screen with quick actions (**Create dashboard**,
+  **Analyze data**, **Build report**, **Edit in grid**), dashboards with KPI cards and a
+  chart grid, and a navy professional theme. Choose **Report theme** in the sidebar to
+  restyle dashboards, PDF reports and slides (Navy Corporate, Slate Minimal, Emerald
+  Finance, Midnight Executive).
+- Ask for **create a dashboard** with no file attached to build a dashboard from the
+  employee database; with a file attached, the dashboard uses the active worksheet.
+  Dashboards download as PowerPoint or PDF.
+- Turn on **Data grid** above the chat to view and edit the active worksheet like a
+  spreadsheet (edit cells, add or delete rows), then **Apply** the changes to the working
+  copy. Formula cells are protected, and row deletion is refused on sheets whose
+  formulas, merged cells or Excel tables could break. The original upload is unchanged.
 - Download query results and report summaries, breakdowns, and source data as Excel workbooks.
 - Look up employee details such as department, city, email, and phone number.
 - Azure OpenAI support for structured column queries; results are rendered directly
     from the database without displaying SQL or internal filter expressions in chat
     answers. Backend diagnostics separately include redacted SQL and calculation details.
-- Optional Azure Speech support for voice input and spoken responses.
+- Optional Azure Speech support for voice input (the mic in the message bar) and spoken responses.
 - Optional SMTP support for emailing PDF reports.
 - General answers use the last six exchanges in the current chat, with long
     messages shortened. Previous-question recall uses actual session history.
@@ -116,7 +129,7 @@ are not a replacement for database permissions or access controls.
   loading indicator appears in the pending reply without dimming the screen.
 - Analyze uploaded JPG, PNG, and WebP images when Azure OpenAI is configured.
 
-To analyze an image, attach it using the upload button in the message box and
+To analyze an image, attach it using the **+** button in the message bar and
 select **Send message**. A question is optional. Successful submissions display
 the image and analysis in the chat. Failed analyses keep the image with a specific
 error and a **Retry image analysis** button; retrying does not require reuploading.
@@ -127,10 +140,15 @@ is used for readability, but extracted text and numbers should still be checked.
 
 ### Explore uploaded Excel, CSV and Parquet data
 
-In **Automatic (SQL + Excel)** or **Excel workbook** mode, upload an `.xlsx`,
-`.csv` or `.parquet` file (up to 20 MB per file). For a workbook with several sheets, choose **Worksheet**
+In **Automatic (SQL + Excel)** or **Excel workbook** mode, attach an `.xlsx`,
+`.csv`, `.parquet` or `.pdf` file with the **+** button in the message bar (up to 20 MB per
+file). You can type a question with the attachment or send it on its own. Attaching a
+file in **Employee database** mode switches to Automatic. The sidebar shows the active
+file with a **Remove file** button. For a workbook with several sheets, choose **Worksheet**
 in the sidebar. CSV and Parquet files become a single-sheet Excel working copy; the original
-file is not modified. Quoted values and comma, semicolon, tab and pipe delimiters
+file is not modified. PDF tables with grid lines or horizontal rules become one worksheet
+per table (a table continued on the next page with a repeated header is joined); scanned
+PDFs are not supported. Quoted values and comma, semicolon, tab and pipe delimiters
 are supported. Invalid row widths produce an upload error rather than dropping data.
 
 Parquet supports flat text, numeric, boolean, date and timezone-free timestamp
@@ -342,14 +360,11 @@ the most recent independent question, rather than carrying unrelated requests
 across the conversation.
 
 An unfinished automatic question retains its workbook snapshot across Streamlit
-reruns. If the request has no snapshot, it uses the active uploaded workbook.
-The upload callback saves file bytes immediately instead of clearing the workbook
-and waiting for the sidebar preview to rebuild it. Question submission, retries,
-workbook commands and previews all resolve the same active upload; if the parsed
-cache is missing, it can be recovered from the current uploader widget. A hidden
-uploader during a source-mode change does not discard the remembered workbook.
-Explicit removal and **close Excel** still unload it, and an old uploader version
-cannot resurrect a closed workbook. Backend diagnostics record whether the
+reruns. If the request has no snapshot, it uses the active attached workbook.
+Attachments are saved to the session as soon as they are sent, before the sidebar
+preview is built. Question submission, retries, workbook commands and previews all
+resolve the same active workbook. A source-mode change does not discard it;
+**Remove file** and **close Excel** unload it. Backend diagnostics record whether the
 request attached a workbook, had no workbook, or intentionally used SQL only.
 An uploaded file with no readable sheets produces the worksheet/loading error,
 not a false request to upload the file again.
@@ -1038,6 +1053,12 @@ the new **Data source** controls appear; local tests alone do not update it.
 | `workbook_operations.py` | Bounded, read-only workbook calculations, expressions, lookups, joins, rankings, and pivots |
 | `workbook_edits.py` | Validated Excel row/column edits, ordered transformations and atomic working-copy serialization |
 | `workbook_charts.py` | Prompt-driven native Excel charts added on new worksheets without re-saving existing parts |
+| `dashboard_builder.py` | Headline KPI cards for dashboards |
+| `report_themes.py` | Report/dashboard colour themes shared by Plotly, PDF and PowerPoint output |
+| `slides_export.py` | PowerPoint (`.pptx`) export with native editable charts |
+| `deck_pdf.py` | Dashboard PDF export matching the slide content |
+| `pdf_tables.py` | Extracts tables from text-based PDFs into worksheets |
+| `data_grid.py` | Applies in-app grid edits to the physical worksheet rows of the working copy |
 | `backend_diagnostics.py` | Privacy-safe request traces, rotating server log files, and session log downloads |
 | `source_queries.py` | Live SQL/Excel source discovery, source-plan validation, and bounded cross-source execution |
 | `employee_dataset.xlsx` | Synthetic 150-employee sample dataset used to create the local database |
@@ -1423,8 +1444,8 @@ Secrets use TOML syntax, for example `AZURE_SPEECH_REGION = "eastus"` (use the
 actual region of your resource). Save, allow the app to restart, then reload.
 Never paste credentials into the chatbot, issue reports, or source code.
 Microphone access must also be allowed in the visitor's browser.
-Keep the recorder disabled until Speech settings are present; showing an enabled
-recorder alone does not verify that the Speech service works.
+The mic appears in the message bar only when Speech settings are present; showing
+it alone does not verify that the Speech service works.
 
 Verify each integration after configuration: record a short question, enable
 **Read responses aloud**, ask a general question, analyze a harmless sample image,

@@ -8,6 +8,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+from chat_upload import patch_chat_upload
+
 import pandas as pd
 from sqlalchemy import Numeric, String, create_engine, text
 from sqlalchemy.dialects.mssql import MONEY, SMALLMONEY, dialect
@@ -1143,44 +1145,17 @@ class SourceQueryTests(unittest.TestCase):
         self.assertEqual(message["source_labels"], ["SQL: main.Actuals", "EXCEL: Targets"])
         self.assertEqual(message["result"]["Variance"].tolist(), [-50, 5])
 
-    def test_automatic_request_recovers_uploaded_widget_when_workbook_cache_is_missing(self):
-        upload = BytesIO(workbook_bytes())
-        upload.name = "uploaded.xlsx"
-        client = Mock()
-        client.chat.completions.create.return_value = SimpleNamespace(choices=[
-            SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=json.dumps(self.combined_plan()))),
-        ])
-        with patch.dict(os.environ, {"AZURE_OPENAI_DEPLOYMENT_MINI": "test"}), patch.object(
-            self.chatbot, "get_azure_openai_client", return_value=client,
-        ), patch.object(self.chatbot, "get_engine", return_value=self.engine), patch.object(
-            self.chatbot.st, "session_state", {"excel_upload_0": upload},
-        ):
-            message = {"kind": "automatic", "question": "Compare actuals with targets using both sources"}
-            self.chatbot.display_automatic_message(message, "widget_recovery")
-            self.assertEqual(self.chatbot.st.session_state["excel_workbook"]["content"], upload.getvalue())
-        self.assertNotIn("error", message)
-        self.assertEqual(message["source_labels"], ["SQL: main.Actuals", "EXCEL: Targets"])
-
-    def test_upload_callback_captures_payload_and_honors_removal_and_close(self):
-        upload = BytesIO(workbook_bytes())
-        upload.name = "active.xlsx"
-        state = {"excel_upload_0": upload}
+    def test_attached_data_file_stays_active_until_removed(self):
+        content = workbook_bytes()
+        state = {"data_source": "Employee database"}
         with patch.object(self.chatbot.st, "session_state", state):
-            self.chatbot.synchronize_excel_upload()
-            original = state["excel_workbook"]
-            self.assertEqual(original["content"], upload.getvalue())
-            original["preview_sheet"] = "Targets"
-            self.chatbot.synchronize_excel_upload()
-            self.assertIs(state["excel_workbook"], original)
-            del state["excel_upload_0"]
+            original = self.chatbot.attach_data_file(content, "active.xlsx")
+            self.assertEqual(original["content"], content)
             self.assertIs(self.chatbot.active_excel_workbook(), original)
-            state["excel_upload_0"] = None
-            self.chatbot.synchronize_excel_upload()
-            self.assertIsNone(self.chatbot.active_excel_workbook())
-            state["excel_upload_0"] = upload
-            self.chatbot.synchronize_excel_upload()
-            state.pop("excel_workbook")
-            state["excel_uploader_version"] = 1
+            self.assertEqual(state["data_source"], "Automatic (SQL + Excel)")
+            original["preview_sheet"] = "Targets"
+            self.assertIs(self.chatbot.attach_data_file(content, "active.xlsx"), original)
+            self.chatbot.remove_active_file()
             self.assertIsNone(self.chatbot.active_excel_workbook())
 
     def test_uploaded_but_unreadable_sheets_are_not_reported_as_no_upload(self):
@@ -1243,7 +1218,7 @@ class SourceQueryTests(unittest.TestCase):
                 {"kind": "automatic", "question": "Show previous targets from Excel", "error": "Earlier error"},
                 {"kind": "automatic", "question": "Show targets from Excel", "error": "No Excel workbook available"},
             ]
-            with patch("streamlit.file_uploader", side_effect=lambda *args, **kwargs: (
+            with patch_chat_upload(side_effect=lambda *args, **kwargs: (
                 upload if kwargs.get("key") == "excel_upload_0" else None
             )):
                 app.run(timeout=30)
@@ -1278,8 +1253,7 @@ class SourceQueryTests(unittest.TestCase):
         }
         self.chatbot.st.cache_resource.clear()
         self.addCleanup(self.chatbot.st.cache_resource.clear)
-        with patch.dict(os.environ, environment), patch("openai.AzureOpenAI", return_value=client), patch(
-            "streamlit.file_uploader", side_effect=lambda *args, **kwargs: (
+        with patch.dict(os.environ, environment), patch("openai.AzureOpenAI", return_value=client), patch_chat_upload(side_effect=lambda *args, **kwargs: (
                 upload if kwargs.get("key") == "excel_upload_0" else None
             ),
         ):
@@ -1338,9 +1312,7 @@ class SourceQueryTests(unittest.TestCase):
         }
         self.chatbot.st.cache_resource.clear()
         self.addCleanup(self.chatbot.st.cache_resource.clear)
-        with patch.dict(os.environ, environment), patch("openai.AzureOpenAI", return_value=client), patch(
-            "streamlit.file_uploader",
-            side_effect=lambda *args, **kwargs: upload if kwargs.get("key") == "excel_upload_0" else None,
+        with patch.dict(os.environ, environment), patch("openai.AzureOpenAI", return_value=client), patch_chat_upload(side_effect=lambda *args, **kwargs: upload if kwargs.get("key") == "excel_upload_0" else None,
         ):
             app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
             self.assertEqual(len(app.exception), 0)
@@ -1397,9 +1369,7 @@ class SourceQueryTests(unittest.TestCase):
             self.addCleanup(self.chatbot.st.cache_resource.clear)
             with self.subTest(mode=selected_mode, old_error=previous_failure), patch.dict(
                 os.environ, environment,
-            ), patch("openai.AzureOpenAI", return_value=client), patch(
-                "streamlit.file_uploader",
-                side_effect=lambda *args, **kwargs: upload if kwargs.get("key") == "excel_upload_0" else None,
+            ), patch("openai.AzureOpenAI", return_value=client), patch_chat_upload(side_effect=lambda *args, **kwargs: upload if kwargs.get("key") == "excel_upload_0" else None,
             ):
                 app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
                 app.radio(key="data_source").set_value(selected_mode).run(timeout=30)
@@ -1544,8 +1514,7 @@ class SourceQueryTests(unittest.TestCase):
         self.addCleanup(self.chatbot.st.cache_resource.clear)
         with patch.dict(os.environ, environment), patch("openai.AzureOpenAI", return_value=client), patch(
             "sqlalchemy.create_engine", return_value=engine,
-        ), patch("source_queries.discover_excel_sources", side_effect=AssertionError("Unexpected Excel discovery")), patch(
-            "streamlit.file_uploader", return_value=None,
+        ), patch("source_queries.discover_excel_sources", side_effect=AssertionError("Unexpected Excel discovery")), patch_chat_upload(return_value=None,
         ):
             app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
             app.radio(key="data_source").set_value("Employee database").run(timeout=30)

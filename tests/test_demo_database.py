@@ -1,16 +1,23 @@
 import importlib
+from io import BytesIO
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
+import wave
 
+import azure.cognitiveservices.speech as speechsdk
 import pandas as pd
+from pptx import Presentation
 import streamlit as st
+from streamlit.elements.widgets.chat import ChatInputValue
 from sqlalchemy.exc import SQLAlchemyError
 from streamlit.testing.v1 import AppTest
 from backend_diagnostics import BackendTrace, diagnostic_log
+from chat_upload import REAL_CHAT_INPUT
 from demo_tables import REQUIRED_EMPLOYEE_COLUMNS, load_demo_tables
 
 
@@ -307,7 +314,7 @@ class DemoDatabaseTests(unittest.TestCase):
         self.assertEqual(len(app.exception), 0)
         self.assertFalse(any("portfolio demo" in caption.value.lower() for caption in app.caption))
         self.assertFalse(any("credentials" in caption.value.lower() for caption in app.caption))
-        self.assertTrue(app.get("audio_input")[0].disabled)
+        self.assertFalse(app.chat_input[0].proto.accept_audio)
         self.assertTrue(app.toggle[0].disabled)
         self.assertEqual(len(app.caption), 0)
         app.chat_input[0].set_value("How many employees do we have?").run(timeout=30)
@@ -458,9 +465,51 @@ class DemoDatabaseTests(unittest.TestCase):
         with patch.dict(os.environ, {"AZURE_SPEECH_KEY": "test-key", "AZURE_SPEECH_REGION": "eastus"}):
             app = employee_app().run(timeout=30)
         self.assertEqual(len(app.exception), 0)
-        self.assertFalse(app.get("audio_input")[0].disabled)
+        self.assertTrue(app.chat_input[0].proto.accept_audio)
+        self.assertEqual(len(app.sidebar.get("audio_input")), 0)
         self.assertFalse(app.toggle[0].disabled)
         self.assertFalse(any("Voice is not enabled" in caption.value for caption in app.caption))
+
+    def test_chat_bar_voice_question_and_home_dashboard_card(self):
+        wav = BytesIO()
+        with wave.open(wav, "wb") as recording:
+            recording.setnchannels(1)
+            recording.setsampwidth(2)
+            recording.setframerate(16000)
+            recording.writeframes(b"\0\0" * 1600)
+        audio = BytesIO(wav.getvalue())
+        audio.name = "question.wav"
+        pending = [audio]
+
+        def chat_input(*args, **kwargs):
+            value = REAL_CHAT_INPUT(*args, **kwargs)
+            if pending:
+                return ChatInputValue(text="", audio=pending.pop(), _include_audio=True)
+            return value
+
+        recognizer = Mock()
+        recognizer.return_value.recognize_once_async.return_value.get.return_value = SimpleNamespace(
+            reason=speechsdk.ResultReason.RecognizedSpeech, text="How many employees do we have?",
+        )
+        with patch.dict(os.environ, {"AZURE_SPEECH_KEY": "test-key", "AZURE_SPEECH_REGION": "eastus"}), patch(
+            "azure.cognitiveservices.speech.SpeechRecognizer", recognizer,
+        ), patch("streamlit.chat_input", side_effect=chat_input):
+            app = employee_app().run(timeout=30)
+            self.assertEqual(len(app.exception), 0)
+            first = app.session_state["chat_history"][0]
+            self.assertEqual(first["question"], "How many employees do we have?")
+            self.assertIn(f"{len(self.employees)} employees", first["answer"])
+            app.session_state["chat_history"].clear()
+            app.run(timeout=30)
+            app.button(key="home_dashboard").click().run(timeout=30)
+        self.assertEqual(len(app.exception), 0)
+        dashboard = app.session_state["chat_history"][-1]
+        self.assertEqual(dashboard["kind"], "sql_dashboard")
+        self.assertEqual(dashboard["kpis"][0][1], f"{len(self.employees):,}")
+        self.assertEqual(dashboard["rows"], len(self.employees))
+        slides = Presentation(BytesIO(dashboard["deck_export"]["deck_pptx"])).slides
+        self.assertEqual(len(slides), 3 + len(dashboard["charts"]))
+        self.assertTrue(dashboard["deck_export"]["deck_pdf"].startswith(b"%PDF-"))
 
 
 if __name__ == "__main__":

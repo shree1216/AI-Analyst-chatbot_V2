@@ -7,6 +7,8 @@ from pathlib import Path
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
+
+from chat_upload import patch_chat_upload
 from xml.etree import ElementTree as ET
 from zipfile import ZipFile
 
@@ -17,6 +19,7 @@ from streamlit.testing.v1 import AppTest
 
 from excel_support import append_result_sheet, preserve_formula_values, read_excel_sheet, spreadsheet_answer
 from workbook_edits import apply_safe_workbook_clean, apply_workbook_edit, excel_edit_prompt, is_excel_edit_request, local_excel_edit_plan, result_sheet_request, workbook_clean_request
+from data_grid import apply_grid_changes
 
 
 def content():
@@ -40,6 +43,39 @@ def content():
     workbook.save(output)
     workbook.close()
     return output.getvalue()
+
+
+class GridEditTests(unittest.TestCase):
+    def workbook(self, rows):
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Sales"
+        for row in rows:
+            sheet.append(row)
+        output = BytesIO()
+        workbook.save(output)
+        return output.getvalue()
+
+    def test_grid_edits_use_physical_rows_across_blank_rows(self):
+        original = self.workbook([["Name", "Amount"], ["Amy", 10], [None, None], ["Bob", 20], ["Cara", 30]])
+        frame = read_excel_sheet(original, "Sales")
+        self.assertEqual(frame.attrs["excel_row_numbers"], [2, 4, 5])
+        updated = apply_grid_changes(original, "Sales", frame, {
+            "edited_rows": {1: {"Amount": 25}}, "added_rows": [{"Name": "Dan", "Amount": 40}],
+            "deleted_rows": [0],
+        })
+        result = read_excel_sheet(updated, "Sales")
+        self.assertEqual(result.to_dict("list"), {"Name": ["Bob", "Cara", "Dan"], "Amount": [25, 30, 40]})
+
+    def test_grid_refuses_formula_cells_and_empty_changes(self):
+        original = formula_content()
+        frame = read_excel_sheet(original, "Sales")
+        with self.assertRaisesRegex(ValueError, "F2 contains a formula"):
+            apply_grid_changes(original, "Sales", frame, {"edited_rows": {0: {"Average sales": 5}}})
+        with self.assertRaisesRegex(ValueError, "no grid changes"):
+            apply_grid_changes(original, "Sales", frame, {"edited_rows": {}})
+        with self.assertRaisesRegex(ValueError, "Deleting rows could break formulas"):
+            apply_grid_changes(original, "Sales", frame, {"deleted_rows": [1]})
 
 
 class SafeCleanTests(unittest.TestCase):
@@ -747,7 +783,7 @@ class WorkbookEditChatTests(unittest.TestCase):
         self.addCleanup(self.chatbot.st.cache_resource.clear)
         self.upload = BytesIO(content())
         self.upload.name = "sales.xlsx"
-        self.enterContext(patch("streamlit.file_uploader", return_value=self.upload))
+        self.enterContext(patch_chat_upload(return_value=self.upload))
         self.app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "employee_sql_chatbot.py"))
 
     def test_edits_survive_reruns_mode_changes_following_queries_and_keep_original(self):
@@ -784,7 +820,7 @@ class WorkbookEditChatTests(unittest.TestCase):
         self.upload = BytesIO(original)
         self.upload.name = "regions.xlsx"
         question = "give sum of sales for all regions and save in other sheet in same workbook"
-        with patch("streamlit.file_uploader", return_value=self.upload):
+        with patch_chat_upload(return_value=self.upload):
             self.app.run(timeout=30)
             self.app.selectbox[0].select("products").run(timeout=30)
             snapshots = []
@@ -824,7 +860,7 @@ class WorkbookEditChatTests(unittest.TestCase):
         original = regional_content()
         self.upload = BytesIO(original)
         self.upload.name = "regions.xlsx"
-        with patch("streamlit.file_uploader", return_value=self.upload):
+        with patch_chat_upload(return_value=self.upload):
             self.app.run(timeout=30)
             self.app.selectbox[0].select("products").run(timeout=30)
             self.app.chat_input[0].set_value('preview and save in another sheet named "Selected data"').run(timeout=30)
@@ -841,7 +877,7 @@ class WorkbookEditChatTests(unittest.TestCase):
             self.client.chat.completions.create.assert_not_called()
 
     def test_saving_result_without_upload_fails_without_database_access(self):
-        with patch("streamlit.file_uploader", return_value=None):
+        with patch_chat_upload(return_value=None):
             self.app.run(timeout=30)
             self.app.chat_input[0].set_value(
                 "give sum of sales for all regions and save in other sheet in same workbook",
@@ -857,7 +893,7 @@ class WorkbookEditChatTests(unittest.TestCase):
         original = modern_formula_content(named_ranges=True)
         self.upload = BytesIO(original)
         self.upload.name = "formulas.xlsx"
-        with patch("streamlit.file_uploader", return_value=self.upload):
+        with patch_chat_upload(return_value=self.upload):
             self.app.run(timeout=30)
             self.app.chat_input[0].set_value(
                 'Add a column \u201cReviewed\u201d with \u201cYes\u201d for the top 3 amounts, '
@@ -890,7 +926,7 @@ class WorkbookEditChatTests(unittest.TestCase):
                 content=json.dumps(value),
             ))]) for value in (wrong, correct)
         ]
-        with patch("streamlit.file_uploader", return_value=self.upload), patch.dict(os.environ, {
+        with patch_chat_upload(return_value=self.upload), patch.dict(os.environ, {
             "AZURE_OPENAI_DEPLOYMENT_MINI": "test", "AZURE_OPENAI_ENDPOINT": "https://unit-test.invalid",
             "AZURE_OPENAI_API_KEY": "test-only", "AZURE_OPENAI_API_VERSION": "2024-02-01",
         }):
@@ -919,7 +955,7 @@ class WorkbookEditChatTests(unittest.TestCase):
         book.save(raw)
         book.close()
         broken = raw.getvalue()
-        with patch("streamlit.file_uploader", return_value=self.upload):
+        with patch_chat_upload(return_value=self.upload):
             self.app.session_state["excel_workbook"] = {
                 "content": broken, "file_name": self.upload.name, "digest": sha256(broken).hexdigest(),
                 "upload_digest": sha256(original).hexdigest(), "edited": True, "original_content": original,
@@ -951,7 +987,7 @@ class WorkbookEditChatTests(unittest.TestCase):
         self.client.chat.completions.create.return_value = SimpleNamespace(choices=[
             SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=json.dumps(valid))),
         ])
-        with patch("streamlit.file_uploader", return_value=self.upload), patch.dict(os.environ, {
+        with patch_chat_upload(return_value=self.upload), patch.dict(os.environ, {
             "AZURE_OPENAI_DEPLOYMENT_MINI": "test", "AZURE_OPENAI_ENDPOINT": "https://unit-test.invalid",
             "AZURE_OPENAI_API_KEY": "test-only", "AZURE_OPENAI_API_VERSION": "2024-02-01",
         }):

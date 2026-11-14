@@ -9,6 +9,8 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
+from chat_upload import patch_chat_upload
+
 from openpyxl import load_workbook
 import pandas as pd
 import pyarrow as pa
@@ -20,6 +22,13 @@ from data_explorer import (
     metadata_request, parquet_to_workbook, plan_charts,
 )
 from excel_support import excel_sheet_names, generate_excel_download, read_excel_sheet
+from pptx import Presentation
+from reportlab.lib import colors
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from dashboard_builder import dashboard_kpis
+from deck_pdf import build_deck_pdf
+from pdf_tables import pdf_to_workbook
+from slides_export import Deck, SlideChart, build_pptx
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -45,6 +54,44 @@ def parquet_bytes(table):
 
 
 class DataExplorerTests(unittest.TestCase):
+    def test_pdf_tables_with_full_or_horizontal_only_rules_become_worksheets(self):
+        output = BytesIO()
+        rows = [["Department", "Headcount", "Salary"], ["IT", "33", "81,436"], ["Sales", "28", "87,725"]]
+        grid = Table(rows)
+        grid.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.5, colors.black)]))
+        ruled = Table(rows, colWidths=[150, 120, 120])
+        ruled.setStyle(TableStyle([("LINEBELOW", (0, 0), (-1, -1), 0.5, colors.black),
+                                   ("ALIGN", (1, 0), (-1, -1), "RIGHT")]))
+        SimpleDocTemplate(output).build([Paragraph("Pay summary"), grid, Spacer(1, 40), ruled])
+        workbook = pdf_to_workbook(output.getvalue(), "pay.pdf")
+        names = excel_sheet_names(workbook)
+        self.assertEqual(names, ["pay T1", "pay T2"])
+        for name in names:
+            self.assertEqual(read_excel_sheet(workbook, name).to_dict("list"), {
+                "Department": ["IT", "Sales"], "Headcount": [33, 28], "Salary": [81436, 87725],
+            })
+        with self.assertRaisesRegex(ValueError, "No tables"):
+            text_only = BytesIO()
+            SimpleDocTemplate(text_only).build([Paragraph("No tables here.")])
+            pdf_to_workbook(text_only.getvalue(), "notes.pdf")
+
+    def test_dashboard_kpis_and_deck_exports_match_the_charts(self):
+        frame = staff_frame()
+        kpis = dashboard_kpis(frame)
+        self.assertEqual(kpis[0].value, "16")
+        self.assertIn(("Average Salary", "850"), [(kpi.label, kpi.value) for kpi in kpis])
+        charts, _ = build_charts(frame, auto_charts(frame))
+        deck = Deck("Staff dashboard", kpis=[(k.label, k.value, k.caption) for k in kpis], charts=[
+            SlideChart(chart.title, chart.chart_type, chart.table, chart.explanation) for chart in charts
+        ])
+        slides = Presentation(BytesIO(build_pptx(deck, "emerald"))).slides
+        self.assertEqual(len(slides), 2 + len(charts))
+        native = [shape.chart for slide in slides for shape in slide.shapes if shape.has_chart]
+        self.assertEqual(len(native), len(charts))
+        for chart, graphic in zip(charts, native):
+            self.assertEqual(list(graphic.plots[0].series[0].values), [float(v) for v in chart.table.iloc[:, 1]])
+        self.assertTrue(build_deck_pdf(deck, "navy").startswith(b"%PDF-"))
+
     def test_parquet_preserves_scalar_values_nulls_and_large_integer_precision(self):
         table = pa.table({
             " Name ": ["Ada", "Lin", "Grace"],
@@ -427,9 +474,7 @@ class UploadedDataUITests(unittest.TestCase):
     def start_app(self, content, name, mode="Automatic (SQL + Excel)"):
         self.upload = BytesIO(content)
         self.upload.name = name
-        self.uploader = self.enterContext(patch(
-            "streamlit.file_uploader",
-            side_effect=lambda *args, **kwargs: self.upload if kwargs.get("key") == "excel_upload_0" else None,
+        self.uploader = self.enterContext(patch_chat_upload(side_effect=lambda *args, **kwargs: self.upload if kwargs.get("key") == "excel_upload_0" else None,
         ))
         app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py"))
         app.session_state["data_source"] = mode
@@ -441,9 +486,10 @@ class UploadedDataUITests(unittest.TestCase):
         frame = staff_frame()
         content = frame.to_parquet(index=False)
         app = self.start_app(content, "staff.parquet")
-        upload_call = next(call for call in self.uploader.call_args_list if call.kwargs.get("key") == "excel_upload_0")
+        upload_call = self.uploader.call_args_list[0]
         self.assertEqual(upload_call.kwargs["max_upload_size"], 20)
-        self.assertEqual(upload_call.kwargs["type"], ["xlsx", "csv", "parquet"])
+        self.assertEqual(upload_call.kwargs["accept_file"], "multiple")
+        self.assertTrue({"xlsx", "csv", "parquet", "pdf"} <= set(upload_call.kwargs["file_type"]))
         app.chat_input[0].set_value("show me the data").run(timeout=30)
         self.assertEqual(len(app.session_state["chat_history"][-1]["result"]), len(frame))
         app.toggle(key="show_spreadsheet_analysis").set_value(True).run(timeout=30)
