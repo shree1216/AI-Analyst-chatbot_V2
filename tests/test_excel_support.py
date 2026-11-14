@@ -594,7 +594,8 @@ class ExcelChatTests(unittest.TestCase):
         with patch_chat_upload(return_value=upload):
             app = employee_app().run(timeout=30)
             app.radio(key="data_source").set_value("Excel workbook").run(timeout=30)
-            app.chat_input[0].set_value("show all data").run(timeout=30)
+            # "show all data" now returns the complete-data overview; "preview" keeps the capped Excel query path.
+            app.chat_input[0].set_value("preview").run(timeout=30)
             self.assertEqual(len(app.exception), 0)
             message = app.session_state["chat_history"][0]
             self.assertEqual(len(message["result"]), 151)
