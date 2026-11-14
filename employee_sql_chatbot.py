@@ -72,6 +72,7 @@ from data_explorer import (
 )
 from backend_diagnostics import BackendTrace, diagnostic_log, execution_code_log, generated_code_log
 from spreadsheet_analytics import filter_rows, render_spreadsheet_analysis
+from predictive_analysis import is_full_analysis_request, run_full_analysis
 from report_themes import ReportTheme, get_theme, style_figure
 from dashboard_builder import dashboard_kpis
 from slides_export import PPTX_MIME, Deck, SlideChart, build_pptx
@@ -3907,7 +3908,109 @@ def edited_workbook_state(
     }
 
 
+def full_analysis_message(question: str) -> dict[str, Any]:
+    """Clean + charts + supporting tables + prediction for the active uploaded worksheet."""
+    message: dict[str, Any] = {"kind": "full_analysis", "question": question}
+    workbook = active_excel_workbook()
+    if workbook is None or workbook.get("content") is None:
+        message["error"] = (
+            (workbook or {}).get("load_error")
+            or "Upload an Excel, CSV or Parquet file with the + button in the message bar, then ask again. "
+               "Nothing was analysed because no file is attached."
+        )
+        return message
+    try:
+        sheets = workbook.get("sheets") or excel_sheet_names(workbook["content"])
+        sheet = workbook.get("preview_sheet") or workbook.get("sheet") or sheets[0]
+        if workbook.get("sheet") == sheet and not workbook.get("frame_preview_only", True):
+            frame = workbook["frame"]
+        else:
+            frame = read_excel_sheet(workbook["content"], sheet)
+        message.update(frame=frame, file_name=workbook["file_name"], source_sheet=sheet,
+                       source=f"{workbook['file_name']} / {sheet}")
+    except ValueError as error:
+        message["error"] = str(error)
+    return message
+
+
+def display_full_analysis(message: dict[str, Any], render_key: str) -> str | None:
+    if "answer" not in message and "error" not in message:
+        trace = BackendTrace(message.setdefault("backend_log", []))
+        message["request_id"] = trace.request_id
+        trace.record("request_started", route="full_analysis")
+        try:
+            frame = message["frame"]
+            result = run_full_analysis(message["question"], frame, message["file_name"])
+            message.update(analysis=result, answer=result.answer)
+            trace.record_code("result_ready", run_full_analysis, rows=len(frame), columns=len(frame.columns))
+            trace.record("request_completed", route="full_analysis", status="success")
+        except ValueError as error:
+            logger.warning("Full analysis failed: %s", type(error).__name__)
+            message["error"] = str(error)
+            trace.record("request_failed", route="full_analysis", status="failed", error_type=type(error).__name__)
+        finally:
+            message.pop("frame", None)
+            if trace.file_error:
+                message["backend_log_error"] = trace.file_error
+    if message.get("backend_log_error"):
+        st.warning(message["backend_log_error"])
+    if message.get("error"):
+        st.warning(message["error"])
+        if st.button("Retry question", key=f"retry_full_analysis_{render_key}"):
+            question = message["question"]
+            message.clear()
+            message.update(full_analysis_message(question))
+            st.rerun()
+        return None
+
+    result = message["analysis"]
+    st.caption("Sources used: " + message["source"] + ".")
+    st.markdown(result.answer)
+    theme = selected_theme()
+    for chart in result.charts:
+        style_figure(chart.figure, theme)
+    labels = ["Charts", "Supporting tables", "Cleaning"] + (["Predictions", "Model"] if result.prediction else [])
+    tabs = st.tabs(labels)
+    with tabs[0]:
+        for start in range(0, len(result.charts), 2):
+            columns = st.columns(2)
+            for index in range(start, min(start + 2, len(result.charts))):
+                chart = result.charts[index]
+                with columns[index - start].container(border=True):
+                    st.plotly_chart(chart.figure, width="stretch", key=f"full_chart_{render_key}_{index}")
+                    st.caption(chart.explanation)
+    with tabs[1]:
+        for chart in result.charts:
+            st.subheader(chart.title)
+            st.dataframe(chart.table, hide_index=True, width="stretch")
+    with tabs[2]:
+        st.dataframe(result.cleaning_log, hide_index=True, width="stretch")
+        st.subheader(f"Cleaned data ({len(result.clean):,} rows)")
+        st.dataframe(result.clean, hide_index=True, width="stretch", height=320)
+    if result.prediction:
+        prediction = result.prediction
+        with tabs[3]:
+            if prediction.risk_bands is not None:
+                for column, (_, row) in zip(st.columns(len(prediction.risk_bands)), prediction.risk_bands.iterrows()):
+                    column.metric(f"{row['Risk band']} risk", f"{int(row['Records']):,}")
+            st.dataframe(prediction.predictions, hide_index=True, width="stretch", height=360)
+        with tabs[4]:
+            st.subheader("Model performance (25% hold-out)")
+            st.dataframe(prediction.metrics, hide_index=True, width="stretch")
+            st.subheader(f"Key drivers of {prediction.target}")
+            st.dataframe(prediction.drivers, hide_index=True, width="stretch")
+    for note in result.notes:
+        st.caption(note)
+    st.download_button(
+        "Download full analysis (Excel)", data=result.excel, mime=EXCEL_MIME,
+        file_name=f"{Path(message['file_name']).stem}_full_analysis.xlsx", key=f"full_analysis_download_{render_key}",
+    )
+    return result.answer
+
+
 def uploaded_data_message(question: str, enabled: bool) -> dict[str, Any] | None:
+    if enabled and is_full_analysis_request(question) and "sql" not in requested_source_kinds(question):
+        return full_analysis_message(question)
     compound = split_workbook_chart_command(question)
     task = compound[1] if compound else question
     native = is_excel_chart_request(task)
@@ -6481,6 +6584,9 @@ for index, message in enumerate(history):
         elif message.get("kind") == "uploaded_data":
             with st.spinner("Exploring your uploaded data...") if pending else nullcontext():
                 answer = display_uploaded_data(message, str(index))
+        elif message.get("kind") == "full_analysis":
+            with st.spinner("Cleaning, charting and modelling your data...") if pending else nullcontext():
+                answer = display_full_analysis(message, str(index))
         elif message.get("kind") == "uploaded_metadata":
             answer = display_uploaded_metadata(message, str(index))
         elif message.get("kind") == "sql_dashboard":

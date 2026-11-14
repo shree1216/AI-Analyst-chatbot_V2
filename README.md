@@ -252,6 +252,31 @@ dashboard, row/column/missing-value metrics, and **Dashboard**, **Supporting tab
 and **Data summary** tabs. Tables under each chart use the exact numbers plotted.
 The column-summary tab describes data types and missing values.
 
+### Clean, chart and predict in one request
+
+With a file attached, ask for example **clean the data, generate summary and charts with
+supporting tables and perform predictive analysis** (or simply **predict Churn**). Any
+request that mentions prediction, or cleaning together with charts or supporting tables,
+runs the full analysis workflow (`predictive_analysis.py`):
+
+1. **Clean**: removes empty and duplicate rows and duplicate IDs, converts text numbers
+   (`$1,200`), unifies spelling/capitalisation of categories, and fills missing values
+   (numbers with the median, text with `Unknown`). Every step is listed on the **Cleaning** tab.
+2. **Charts and supporting tables**: automatic charts of the cleaned data, each with the
+   exact table behind it.
+3. **Predictive analysis**: the target is the column you name (**predict Monthly_Charge_USD**)
+   or an outcome column such as `Churn`, `Attrition` or `Status`; otherwise the chatbot asks
+   which column to predict. Yes/no or category targets use logistic regression with
+   accuracy, baseline, precision, recall, F1 and ROC AUC on a 25% hold-out sample;
+   numeric targets use linear regression with R squared, MAE and RMSE. Key drivers are
+   ranked by permutation importance with the direction of each effect, and every record
+   gets a predicted value, probability and **High / Medium / Low** risk band.
+
+**Download full analysis (Excel)** contains **Cleaned Data**, **Cleaning Log**,
+**Predictions**, **Model Performance**, **Key Drivers**, a charts-only **Cleaned Data Charts**
+tab and a **Cleaned Data Summary** tab with key figures and supporting tables. Predictions
+show association, not cause, and should be validated before acting on individual records.
+
 Compound prompts are supported: **open worksheet employees_messy and draw charts
 in the excel sheet** first selects `employees_messy`, then builds a dashboard.
 You can also ask **create a dashboard for employees_messy with supporting tables**.
@@ -1060,6 +1085,7 @@ the new **Data source** controls appear; local tests alone do not update it.
 | `employee_sql_chatbot.py` | Main Streamlit application |
 | `excel_support.py` | Bounded Excel parsing, worksheet schema inference, and literal-safe workbook exports |
 | `data_explorer.py` | Local chart planning, business-oriented suggestions, cleaning for analysis and exact supporting tables |
+| `predictive_analysis.py` | One-request clean + charts + supporting tables + explainable prediction (logistic/linear regression in NumPy) |
 | `spreadsheet_analytics.py` | Read-only interactive filters, grouped summaries, chart selection and analysis workbook exports |
 | `workbook_operations.py` | Bounded, read-only workbook calculations, expressions, lookups, joins, rankings, and pivots |
 | `workbook_edits.py` | Validated Excel row/column edits, ordered transformations and atomic working-copy serialization |
