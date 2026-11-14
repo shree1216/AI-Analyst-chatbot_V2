@@ -1,4 +1,4 @@
-"""Upload conversion, data overview and question-driven charts for uploaded tabular data.
+﻿"""Upload conversion, data overview and question-driven charts for uploaded tabular data.
 
 Everything here is deterministic (no AI): questions are matched to real column names, and
 values are cleaned only for analysis. The uploaded data itself is never rewritten.
@@ -23,6 +23,7 @@ from excel_support import (
     MAX_EXCEL_BYTES, MAX_EXCEL_CELLS, MAX_EXCEL_COLUMNS, MAX_EXCEL_EXPANDED_BYTES, MAX_EXCEL_ROWS,
     MAX_UPLOAD_MB, generate_excel_download,
 )
+from code_export import chart_spec_code, chart_spec_excel, emit, emit_lazy, overview_code
 
 
 MISSING_TOKENS = {"", "na", "n/a", "nan", "null", "none", "nil", "-", "--", "?", "not available", "missing", "#n/a"}
@@ -34,7 +35,7 @@ DATE_FORMATS = (
 ID_NAME = re.compile(r"(?:^|[\s_-])(?:id|ids|no|number|code|phone|mobile|tel|zip|pin|postcode|postal)(?:$|[\s_-])|^(?:id|phone|email|e-mail)", re.I)
 TEXT_ONLY_NAME = re.compile(r"\b(?:name|email|e-mail|address|description|comment|notes?|url|link)\b", re.I)
 AVERAGE_FIRST = re.compile(r"salary|salaries|pay|wage|rating|score|price|rate|age|percent|grade|tenure|experience", re.I)
-COLORS = ["#1E3A8A", "#3B82F6", "#0EA5E9", "#F59E0B", "#64748B", "#10B981", "#8B5CF6", "#EF4444"]
+COLORS = ["#7B2D43", "#B5838D", "#C08A3E", "#D4A373", "#6B6560", "#8C6D4F", "#5E3A48", "#A3A3A3"]
 MAX_CATEGORIES = 25
 MAX_AUTO_CHARTS = 4
 MAX_SCATTER_POINTS = 500
@@ -207,7 +208,7 @@ def _to_number(value: Any) -> float | None:
     if isinstance(value, (int, float)):
         return float(value) if math.isfinite(value) else None
     if isinstance(value, str):
-        text = re.sub(r"(?i)^(?:rs\.?|inr|usd)\s*|[\s,₹$€£]", "", value.strip())
+        text = re.sub(r"(?i)^(?:rs\.?|inr|usd)\s*|[\s,â‚¹$â‚¬Â£]", "", value.strip())
         if _PLAIN_NUMBER.fullmatch(text):
             number = float(text)
             return number if math.isfinite(number) else None
@@ -297,10 +298,10 @@ _OVERVIEW = re.compile(
 _OVERVIEW_NOUN = re.compile(
     r"(?:please\s+)?(?:(?:can|could|would)\s+you\s+(?:please\s+)?)?"
     r"(?:(?:give|show|provide|get|display|create|generate|make|write)(?:\s+me)?\s+)?"
-    r"(?:(?:a|an|the)\s+)?(?:(?:quick|brief|short|basic|general|overall|high[\s-]?level|full|complete)\s+)*"
-    r"(?:summary|overview|description|profile|snapshot)\s+(?:of|for|on)\s+"
+    r"(?:(?:a|an|the)\s+)?(?:(?:quick|brief|short|basic|general|overall|high[\s-]?level|full|complete|data)\s+)*"
+    r"(?:summary|overview|description|profile|snapshot)(?:\s+(?:of|for|on)\s+"
     r"(?:(?:the|my|this|uploaded|that|all|complete|full|entire|whole|current|selected)\s+)*(?:excel\s+|csv\s+)?"
-    r"(?:file|data|dataset|data\s*set|csv|csv\s+file|uploaded\s+file|spreadsheet|table|workbook|sheet|worksheet)"
+    r"(?:file|data|dataset|data\s*set|csv|csv\s+file|uploaded\s+file|spreadsheet|table|workbook|sheet|worksheet))?"
     r"(?:\s+(?:please|now))?",
     re.I,
 )
@@ -322,6 +323,7 @@ def _display(value: Any) -> str:
 
 def data_overview(frame: pd.DataFrame) -> pd.DataFrame:
     rows = []
+    emit("python", "pandas data summary", overview_code())
     for column in frame.columns:
         series = frame[column]
         missing = int(missing_mask(series).sum())
@@ -506,10 +508,29 @@ _GENERIC_CHARTS = re.compile(
 _CHART_WORDS = re.compile(
     r"\b(?:charts?|graphs?|plots?|dashboard|visuali[sz]e|visuali[sz]ation|histogram|pie|trend|scatter|correlation|relationship)\b", re.I,
 )
+_VISUALS = r"(?:charts?|graphs?|plots?|visuals?|visuali[sz]ations?)"
+_DATA_NOUN = r"(?:(?:the|this|my|uploaded)\s+)?(?:data|dataset|file|sheet|worksheet|csv|table)"
+# "summary and charts" asks for the whole picture, which is what a dashboard gives.
+_SUMMARY_WITH_CHARTS = re.compile(
+    r"(?:please\s+)?(?:(?:can|could|would)\s+you\s+(?:please\s+)?)?"
+    r"(?:(?:make|create|generate|build|give|show|provide|produce|draw|get|prepare)(?:\s+me)?\s+)?"
+    r"(?:(?:an?|the|some|a\s+quick|quick)\s+)?"
+    rf"(?:(?:data\s+)?(?:summary|overview|summari[sz]e(?:\s+{_DATA_NOUN})?|analy[sz]e(?:\s+{_DATA_NOUN})?)"
+    rf"\s+(?:and|with|plus|&|including)\s+(?:(?:some|the|a\s+few)\s+)?{_VISUALS}"
+    rf"|{_VISUALS}\s+(?:and|with|plus|&|including)\s+(?:(?:an?|the)\s+)?(?:data\s+)?(?:summary|overview))"
+    rf"(?:\s+(?:for|from|of|on|about)\s+{_DATA_NOUN})?(?:\s+please)?",
+    re.I,
+)
+
+
+def is_summary_with_charts_request(question: str) -> bool:
+    return bool(_SUMMARY_WITH_CHARTS.fullmatch(question.strip().rstrip("?.!").strip()))
 
 
 def chart_presentation_question(question: str) -> str:
     text = question.strip().rstrip("?.!").strip()
+    if is_summary_with_charts_request(text):
+        return "create a dashboard"
     text = re.sub(
         r"\s+(?:and|with)\s+(?:(?:show|include|add|give|provide)\s+)?(?:a\s+|the\s+)?"
         r"(?:dashboard\s+)?(?:supporting|support|summary|data)\s+tables?\s*$",
@@ -1005,7 +1026,7 @@ def _finish(result: ChartResult) -> ChartResult:
     figure = result.figure
     horizontal = result.chart_type == "bar"
     if result.chart_type in {"bar", "column"}:
-        figure.update_traces(texttemplate="%{" + ("x" if horizontal else "y") + ":,.4~g}", textposition="outside",
+        figure.update_traces(texttemplate="%{" + ("x" if horizontal else "y") + ":,.4~r}", textposition="outside",
                              cliponaxis=False, selector={"type": "bar"})
     figure.update_layout(
         title=result.title, height=max(380, len(result.table) * 26 + 120) if horizontal else 400,
@@ -1018,11 +1039,16 @@ def _finish(result: ChartResult) -> ChartResult:
 
 def build_charts(frame: pd.DataFrame, specs: list[ChartSpec]) -> tuple[list[ChartResult], list[str]]:
     results, problems = [], []
+    columns = [str(column) for column in frame.columns]
+    last_row = max(frame.attrs.get("excel_row_numbers") or [len(frame) + 1])
     for spec in specs:
         try:
             results.append(build_chart(frame, spec))
         except ValueError as error:
             problems.append(str(error))
+            continue
+        emit_lazy("python", f"pandas for chart: {results[-1].title}", lambda: chart_spec_code(spec, spec.category_limit))
+        emit_lazy("excel", f"Excel formulas for chart: {results[-1].title}", lambda: chart_spec_excel(spec, columns, last_row))
     return results, problems
 
 

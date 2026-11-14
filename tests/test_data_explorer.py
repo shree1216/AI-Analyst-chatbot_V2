@@ -704,6 +704,34 @@ class UploadedDataUITests(unittest.TestCase):
         self.assertEqual(message["source"], "fixed.csv / fixed")
         self.assertEqual(len(message["result"]), 1)
 
+    def test_summary_and_chart_requests_use_the_attached_file_not_the_database(self):
+        app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py"))
+        app.session_state["data_source"] = "Excel workbook"
+        app.run(timeout=30)
+        app.chat_input[0].set_value("create a dashboard").run(timeout=30)
+        message = app.session_state["chat_history"][-1]
+        self.assertEqual(message["kind"], "uploaded_data")
+        self.assertIn("no file is attached", message["error"])
+        app = self.start_app(staff_frame().to_csv(index=False).encode(), "staff.csv", "Excel workbook")
+        for question in ("generate summary and charts", "charts and summary", "summarize the data with charts"):
+            with self.subTest(question=question):
+                app.chat_input[0].set_value(question).run(timeout=30)
+                self.assertEqual(len(app.exception), 0)
+                message = app.session_state["chat_history"][-1]
+                self.assertNotIn("error", message)
+                self.assertTrue(message["dashboard"])
+                self.assertEqual(message["source"], "staff.csv / staff")
+                self.assertGreaterEqual(len(message["charts"]), 3)
+                self.assertEqual(message["dashboard_rows"], len(staff_frame()))
+                languages = {snippet["language"] for snippet in message["generated_code"]}
+                self.assertEqual(languages, {"python", "excel"})
+                self.assertIn("pd.read_csv('staff.csv')", message["generated_code"][0]["code"])
+        self.assertIn("Code generated to produce each answer", app.sidebar.code[0].value)
+        self.assertIn("=AVERAGEIFS(", app.sidebar.code[0].value)
+        app.chat_input[0].set_value("generate a summary").run(timeout=30)
+        message = app.session_state["chat_history"][-1]
+        self.assertEqual(len(message["summary"]), len(staff_frame().columns))
+
     def test_missing_upload_and_unusable_chart_columns_show_actionable_errors(self):
         app = AppTest.from_file(str(ROOT / "employee_sql_chatbot.py")).run(timeout=30)
         app.chat_input[0].set_value("show me the data").run(timeout=30)

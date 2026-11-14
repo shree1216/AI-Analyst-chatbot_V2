@@ -105,11 +105,12 @@ are not a replacement for database permissions or access controls.
   bar and select a worksheet to query. Tables found in text-based PDFs become worksheets.
 - Bricks-style workspace: a home screen with quick actions (**Create dashboard**,
   **Analyze data**, **Build report**, **Edit in grid**), dashboards with KPI cards and a
-  chart grid, and a navy professional theme. Choose **Report theme** in the sidebar to
-  restyle dashboards, PDF reports and slides (Navy Corporate, Slate Minimal, Emerald
-  Finance, Midnight Executive).
-- Ask for **create a dashboard** with no file attached to build a dashboard from the
-  employee database; with a file attached, the dashboard uses the active worksheet.
+  chart grid, and one professional charcoal-and-wine palette (with ochre and bronze chart
+  accents) shared by the app, dashboards, PDF reports and slides.
+- Ask for **create a dashboard**, or a summary with charts (for example **generate summary
+  and charts**), to get KPI cards, charts and a data summary from the attached file. With
+  no file attached, Automatic mode builds the dashboard from the employee database and says
+  so; Excel workbook mode asks you to attach a file instead.
   Dashboards download as PowerPoint or PDF.
 - Turn on **Data grid** above the chat to view and edit the active worksheet like a
   spreadsheet (edit cells, add or delete rows), then **Apply** the changes to the working
@@ -722,8 +723,13 @@ than only a generic interpretation failure.
 
 Open **Backend diagnostics** in the sidebar after asking an employee database or Excel question, then
 select **Download backend log**. The sidebar and downloaded `chatbot_backend.log`
-show readable execution code for this chat, not timestamp-prefixed JSON events.
-SQL statements appear first, followed by the complete Python implementations used,
+start with **Code generated to produce each answer**, grouped by answer: the SQL query
+(with its parameters listed by name and type), the pandas code that loads the file and
+performs each calculation, chart and summary step, and equivalent Excel formulas such as
+`COUNTIFS`, `AVERAGEIFS`, `FREQUENCY` and `CORREL` for charts. Values typed in a question
+(for example `80000`) stay redacted as SQL parameters or a `params` list; column names and
+operations are shown. This generated code is kept only in your session, not in the server log.
+Below it, **Application internals** lists SQL statements, followed by the complete Python implementations used,
 the attempted Excel/pandas calculation steps, and any execution failures. Python
 source is shown with real line breaks and identical function snapshots appear
 only once; repeated SQL executions are retained. Existing cached traces also use
@@ -1054,7 +1060,8 @@ the new **Data source** controls appear; local tests alone do not update it.
 | `workbook_edits.py` | Validated Excel row/column edits, ordered transformations and atomic working-copy serialization |
 | `workbook_charts.py` | Prompt-driven native Excel charts added on new worksheets without re-saving existing parts |
 | `dashboard_builder.py` | Headline KPI cards for dashboards |
-| `report_themes.py` | Report/dashboard colour themes shared by Plotly, PDF and PowerPoint output |
+| `report_themes.py` | The single corporate colour palette shared by Plotly, PDF and PowerPoint output |
+| `code_export.py` | Generates the per-answer SQL, pandas and Excel-formula code shown in Backend diagnostics |
 | `slides_export.py` | PowerPoint (`.pptx`) export with native editable charts |
 | `deck_pdf.py` | Dashboard PDF export matching the slide content |
 | `pdf_tables.py` | Extracts tables from text-based PDFs into worksheets |

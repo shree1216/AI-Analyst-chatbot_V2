@@ -5,6 +5,7 @@ from unittest.mock import patch
 import pandas as pd
 
 from workbook_operations import evaluate_expression, execute_workbook_plan
+from code_export import workbook_plan_code
 
 
 def col(name):
@@ -28,6 +29,37 @@ def plan(*steps, sheet="Sales"):
 
 
 class WorkbookOperationTests(unittest.TestCase):
+    def test_diagnostic_pandas_code_reproduces_plan_results_and_redacts_question_values(self):
+        frame = pd.DataFrame({
+            "Region": ["N", "S", "N", "E", "S"], "Sales": [10, 20, 30, 40, 50], "Rep": list("abcde"),
+            "Date": pd.to_datetime(["2024-01-02", "2024-03-04", "2025-01-01", "2025-02-02", "2025-05-05"]),
+        })
+        plans = (
+            plan(
+                {"op": "filter", "where": fn("gt", col("Sales"), lit(15))},
+                {"op": "calculate", "columns": [{"name": "Year", "expression": fn("year", col("Date"))}]},
+                {"op": "aggregate", "group_by": ["Region"], "metrics": [metric("Total", "sum", "Sales"), metric("Rows", "count_rows")]},
+                {"op": "sort", "by": [{"column": "Total", "direction": "desc"}]}, {"op": "limit", "count": 2},
+            ),
+            plan({"op": "aggregate", "metrics": [
+                metric("Avg", "average", "Sales"), metric("N", "count_rows", where=fn("eq", col("Region"), lit("N"))),
+            ]}),
+            plan({"op": "rank", "column": "Sales", "name": "Rank", "direction": "desc"}, {"op": "select", "columns": ["Rep", "Rank"]}),
+        )
+        for workbook_plan in plans:
+            with self.subTest(steps=[step["op"] for step in workbook_plan["steps"]]):
+                code = workbook_plan_code(workbook_plan, "sales.xlsx", redact=False).replace(
+                    "df = pd.read_excel(WORKBOOK, sheet_name='Sales')", "df = SOURCE.copy()",
+                )
+                scope = {"SOURCE": frame}
+                exec(code, scope)
+                expected = execute_workbook_plan(workbook_plan, {"Sales": frame}).reset_index(drop=True)
+                self.assertEqual(scope["result"].reset_index(drop=True).to_dict("list"), expected.to_dict("list"))
+        redacted = workbook_plan_code(plans[0], "telecom.csv")
+        self.assertIn("pd.read_csv(WORKBOOK)", redacted)
+        self.assertIn("df['Sales'] > params[0]", redacted)
+        self.assertNotIn("15", redacted)
+
     def setUp(self):
         self.sales = pd.DataFrame({
             "Region": ["North", "North", "South", "South"],

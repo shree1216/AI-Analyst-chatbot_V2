@@ -66,17 +66,19 @@ from workbook_charts import (
 )
 from data_explorer import (
     _find_column, auto_charts, build_charts, chart_presentation_question, charts_answer, column_names_answer,
-    csv_to_workbook, data_overview, is_chart_question, is_generic_chart_request, is_overview_request, metadata_request,
+    csv_to_workbook, data_overview, is_chart_question, is_generic_chart_request, is_overview_request,
+    is_summary_with_charts_request, metadata_request,
     overview_answer, parquet_to_workbook, plan_charts, unique_counts_answer, unique_counts_table, unique_values_table,
 )
-from backend_diagnostics import BackendTrace, diagnostic_log, execution_code_log
+from backend_diagnostics import BackendTrace, diagnostic_log, execution_code_log, generated_code_log
 from spreadsheet_analytics import filter_rows, render_spreadsheet_analysis
-from report_themes import THEMES, ReportTheme, get_theme, style_figure
+from report_themes import ReportTheme, get_theme, style_figure
 from dashboard_builder import dashboard_kpis
 from slides_export import PPTX_MIME, Deck, SlideChart, build_pptx
 from deck_pdf import build_deck_pdf
 from pdf_tables import pdf_to_workbook
 from data_grid import MAX_GRID_ROWS, apply_grid_changes, grid_change_count
+from code_export import capture as capture_code, emit as emit_code, load_code, sql_code
 from demo_tables import demo_data_version, load_demo_tables
 from source_queries import (
     SALES_PLANNING_RULES, SourceMatchError, allows_unmatched_sources, discover_excel_sources, discover_sql_sources, execute_source_plan,
@@ -89,7 +91,7 @@ logger = logging.getLogger(__name__)
 
 
 def selected_theme() -> ReportTheme:
-    return get_theme(st.session_state.get("report_theme"))
+    return get_theme(None)
 
 
 SQL_TRACE: ContextVar[BackendTrace | None] = ContextVar("employee_backend_trace", default=None)
@@ -260,8 +262,8 @@ copy_response_component = st.components.v2.component(
             border-radius: 4px; color: #6B6558; cursor: pointer;
             font: inherit; font-size: 13px;
         }
-        button:hover { background: #EEF2FF; color: #1E3A8A; }
-        button:focus-visible { outline: 2px solid #1E3A8A; outline-offset: 2px; }
+        button:hover { background: #F7EEF0; color: #7B2D43; }
+        button:focus-visible { outline: 2px solid #7B2D43; outline-offset: 2px; }
         .copy-icon { font-family: "Material Symbols Rounded"; font-size: 16px; }
         .copy-status { font: inherit; font-size: 12px; }
         textarea { width: 100%; height: 100px; box-sizing: border-box; }
@@ -1239,6 +1241,10 @@ def render_database_tables() -> None:
 def run_query(sql: str, parameters: dict[str, Any] | None = None) -> pd.DataFrame:
     trace = SQL_TRACE.get()
     started = perf_counter()
+    emit_code(
+        "sql", "SQL query (SQLite demo database)" if DATA_MODE == "demo" else "SQL query (SQL Server)",
+        sql_code(sql, parameters),
+    )
     if trace:
         trace.record_code("query_started", run_query, compile_data_plan,
                          route="sqlite_demo" if DATA_MODE == "demo" else "sql_server",
@@ -2293,7 +2299,7 @@ def create_query_chart(result: pd.DataFrame, title: str, value_label: str, chart
     figure.update_layout(
         height=max(360, len(result) * 28 + 100) if horizontal else 400,
         margin={"l": 24, "r": 48, "t": 70, "b": 40},
-        paper_bgcolor="#F7F8FA",
+        paper_bgcolor="#FAF8F6",
         plot_bgcolor="#FFFFFF",
         showlegend=False,
         title=title,
@@ -2353,8 +2359,8 @@ def report_pdf_table(
             [
                 ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(theme.primary)),
                 ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                ("LINEBELOW", (0, 1), (-1, -1), 0.25, colors.HexColor("#E0E6E3")),
-                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F2F6F5")]),
+                ("LINEBELOW", (0, 1), (-1, -1), 0.25, colors.HexColor("#E7E2DD")),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F7F3EF")]),
                 ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
                 ("TOPPADDING", (0, 0), (-1, -1), 7),
@@ -2414,7 +2420,7 @@ def report_pdf_chart(report: BusinessReport, theme: ReportTheme | None = None) -
         chart.labels = [f"{label}: {value / sum(values):.1%}" for label, value in zip(labels, values)]
         chart.slices.fontSize = 9
         chart.slices.fontName = "Helvetica"
-        chart.slices.fontColor = colors.HexColor("#526158")
+        chart.slices.fontColor = colors.HexColor("#5E5852")
         chart.slices.strokeColor = colors.white
         chart.sideLabels = True
         if report.chart_type == "donut":
@@ -2452,14 +2458,14 @@ def report_pdf_chart(report: BusinessReport, theme: ReportTheme | None = None) -
     chart.categoryAxis.labels.boxAnchor = "e" if horizontal else "ne"
     chart.categoryAxis.labels.fontSize = 8
     chart.categoryAxis.labels.fontName = "Helvetica"
-    chart.categoryAxis.labels.fillColor = colors.HexColor("#526158")
-    chart.categoryAxis.strokeColor = colors.HexColor("#CBD8D1")
+    chart.categoryAxis.labels.fillColor = colors.HexColor("#5E5852")
+    chart.categoryAxis.strokeColor = colors.HexColor("#DDD6CF")
     chart.valueAxis.valueMin = 0
     chart.valueAxis.valueMax = max(max(values) * 1.15, 1)
     chart.valueAxis.labels.fontSize = 8
     chart.valueAxis.labels.fontName = "Helvetica"
-    chart.valueAxis.labels.fillColor = colors.HexColor("#526158")
-    chart.valueAxis.strokeColor = colors.HexColor("#CBD8D1")
+    chart.valueAxis.labels.fillColor = colors.HexColor("#5E5852")
+    chart.valueAxis.strokeColor = colors.HexColor("#DDD6CF")
     chart.valueAxis.labelTextFormat = lambda value: f"{value:,.0f}"
     if metric == "Headcount":
         chart.valueAxis.valueStep = max(1, math.ceil(max(values) / 5))
@@ -2487,7 +2493,7 @@ def generate_business_report_pdf(
     styles["Title"].fontSize = 25
     styles["Title"].leading = 29
     styles["Title"].alignment = 0
-    styles["Title"].textColor = colors.HexColor("#25332E")
+    styles["Title"].textColor = colors.HexColor("#1F1D1B")
     styles["Heading2"].fontName = "Helvetica-Bold"
     styles["Heading2"].fontSize = 12
     styles["Heading2"].leading = 16
@@ -2495,10 +2501,10 @@ def generate_business_report_pdf(
     styles["Heading2"].textColor = colors.HexColor(theme.primary)
     styles["BodyText"].fontSize = 10
     styles["BodyText"].leading = 15
-    styles["BodyText"].textColor = colors.HexColor("#35433D")
-    note_style = ParagraphStyle("ReportNote", parent=styles["BodyText"], fontSize=8, leading=11, textColor=colors.HexColor("#647269"))
+    styles["BodyText"].textColor = colors.HexColor("#3A3532")
+    note_style = ParagraphStyle("ReportNote", parent=styles["BodyText"], fontSize=8, leading=11, textColor=colors.HexColor("#6B6560"))
     brand_style = ParagraphStyle("ReportBrand", parent=note_style, fontName="Helvetica-Bold", textColor=colors.HexColor(theme.primary), spaceAfter=10)
-    metric_style = ParagraphStyle("ReportMetric", fontName="Helvetica-Bold", fontSize=15, leading=20, textColor=colors.HexColor("#25332E"))
+    metric_style = ParagraphStyle("ReportMetric", fontName="Helvetica-Bold", fontSize=15, leading=20, textColor=colors.HexColor("#1F1D1B"))
     story = [Paragraph("WORKFORCE COMPASS / ANALYTICS REPORT", brand_style), Paragraph(escape(report.title), styles["Title"])]
     story.append(Paragraph(f"Generated {report.generated_at:%d %B %Y, %H:%M} | Source: {SOURCE_LABEL}", note_style))
     story.append(Paragraph(f"Scope: {escape(report.scope)}", note_style))
@@ -2506,8 +2512,8 @@ def generate_business_report_pdf(
         metric_cells = [[Paragraph(escape(label.upper()), note_style), Paragraph(escape(value), metric_style)] for label, value in report.metrics]
         metric_table = Table([metric_cells], colWidths=[document.width / len(metric_cells)] * len(metric_cells), hAlign="LEFT")
         metric_table.setStyle(TableStyle([
-            ("LINEABOVE", (0, 0), (-1, 0), 0.6, colors.HexColor("#CBD8D1")),
-            ("LINEBELOW", (0, 0), (-1, 0), 0.6, colors.HexColor("#CBD8D1")),
+            ("LINEABOVE", (0, 0), (-1, 0), 0.6, colors.HexColor("#DDD6CF")),
+            ("LINEBELOW", (0, 0), (-1, 0), 0.6, colors.HexColor("#DDD6CF")),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ("TOPPADDING", (0, 0), (-1, -1), 11), ("BOTTOMPADDING", (0, 0), (-1, -1), 11),
         ]))
@@ -2541,8 +2547,8 @@ def generate_business_report_pdf(
     def footer(canvas, document) -> None:
         canvas.saveState()
         canvas.setFont("Helvetica", 8)
-        canvas.setFillColor(colors.HexColor("#647269"))
-        canvas.setStrokeColor(colors.HexColor("#CBD8D1"))
+        canvas.setFillColor(colors.HexColor("#6B6560"))
+        canvas.setStrokeColor(colors.HexColor("#DDD6CF"))
         canvas.line(document.leftMargin, 0.48 * inch, document.pagesize[0] - document.rightMargin, 0.48 * inch)
         canvas.drawString(document.leftMargin, 0.3 * inch, "Created by Vijayashree | All rights reserved 2026")
         canvas.drawRightString(document.pagesize[0] - document.rightMargin, 0.3 * inch, f"Page {document.page}")
@@ -2955,11 +2961,21 @@ def process_image_submission(image_bytes: bytes, image_name: str, question: str)
 def local_excel_result(question: str, frame: pd.DataFrame) -> pd.DataFrame | None:
     normalized = question.strip().lower().rstrip("?.!")
     if normalized in {"how many rows", "how many rows are there", "count rows", "row count"}:
+        emit_code("python", "pandas row count", "result = pd.DataFrame({'row_count': [len(df)]})")
+        emit_code("excel", "Excel row count", f"=COUNTA(A2:A{len(frame) + 1})")
         return pd.DataFrame({"row_count": [len(frame)]})
     if normalized in {"preview", "show data", "show all data", "show rows"}:
+        emit_code("python", "pandas preview", "result = df.copy()  # the chat shows the first 100 rows")
         return frame.copy()
     sales_total = query_sales_total(question, frame)
     if sales_total is not None:
+        grouped = len(sales_total.columns) > 1
+        emit_code(
+            "python", "pandas sales total",
+            "sales = pd.to_numeric(df[SALES_COLUMN], errors='coerce')  # the Sales/Revenue column in your sheet\n"
+            + ("result = sales.groupby(df['Region'].str.strip()).sum().reset_index()" if grouped else
+               "result = pd.DataFrame({'total': [sales.sum()]})  # filtered to one Region when you name it"),
+        )
         return sales_total.copy()
     return None
 
@@ -3035,6 +3051,10 @@ def query_excel_sheet(question: str, frame: pd.DataFrame) -> pd.DataFrame:
             if trace:
                 trace.record("source_loading", route="sqlite_spreadsheet", rows=len(data), columns=len(data.columns))
             data.to_sql("spreadsheet", connection, index=False, if_exists="replace")
+            emit_code(
+                "sql", "SQL query on the worksheet (loaded as table `spreadsheet`)",
+                sql_code(request.sql, request.parameters),
+            )
             if trace:
                 trace.record_code("query_started", query_excel_sheet, route="sqlite_spreadsheet", sql=request.sql,
                              parameters=request.parameters, operation="read", attempt=1)
@@ -3883,7 +3903,8 @@ def uploaded_data_message(question: str, enabled: bool) -> dict[str, Any] | None
     native = is_excel_chart_request(task)
     analysis_question = chart_presentation_question(excel_chart_analysis_question(chart_presentation_question(task)))
     generic = is_generic_chart_request(analysis_question)
-    dashboard = generic and (native or bool(re.search(r"\bdashboard\b", task, re.I)))
+    wants_board = bool(re.search(r"\bdashboard\b", task, re.I)) or is_summary_with_charts_request(task)
+    dashboard = generic and (native or wants_board)
     target = compound[0][1] if compound else None
     full_analysis_question = analysis_question
     named = None if compound else re.fullmatch(
@@ -3894,7 +3915,7 @@ def uploaded_data_message(question: str, enabled: bool) -> dict[str, Any] | None
     if named and is_generic_chart_request(named["task"]):
         target, analysis_question = named["target"], named["task"]
         generic = True
-        dashboard = dashboard or native or bool(re.search(r"\bdashboard\b", task, re.I))
+        dashboard = dashboard or native or wants_board
     metadata = None if compound or native else metadata_request(question)
     if metadata is not None:
         if not enabled or "sql" in requested_source_kinds(question):
@@ -3914,7 +3935,10 @@ def uploaded_data_message(question: str, enabled: bool) -> dict[str, Any] | None
             return None
         return {
             "kind": "uploaded_data", "question": question,
-            "error": "Upload an Excel (.xlsx), CSV or Parquet file and choose a worksheet first.",
+            "error": (
+                "Upload an Excel (.xlsx), CSV, Parquet or PDF file with the + button in the message bar, "
+                "then ask again. Nothing was charted because no file is attached."
+            ),
         }
     message = {
         "kind": "uploaded_data", "question": question, "analysis_question": analysis_question,
@@ -4113,6 +4137,8 @@ def display_uploaded_data(message: dict[str, Any], render_key: str) -> str | Non
         trace = BackendTrace(message.setdefault("backend_log", []))
         message["request_id"] = trace.request_id
         trace.record("request_started", route="uploaded_data")
+        if message.get("file_name"):
+            emit_code("python", f"Load {message['file_name']}", load_code(message["file_name"], message.get("source_sheet")))
         try:
             frame = message["frame"]
             specs = message["chart_specs"]
@@ -4879,16 +4905,16 @@ def apply_theme() -> None:
         @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Newsreader:opsz,wght@6..72,500;6..72,600;6..72,700&display=swap');
 
         :root {
-            --ink: #0F172A;
-            --muted: #64748B;
-            --line: #E2E8F0;
-            --canvas: #F8FAFC;
+            --ink: #1F1D1B;
+            --muted: #6B6560;
+            --line: #E7E2DD;
+            --canvas: #FAF8F6;
             --surface: #ffffff;
-            --evergreen: #1E3A8A;
-            --evergreen-soft: #E0E7FF;
-            --coral: #1E3A8A;
-            --coral-dark: #1E40AF;
-            --coral-soft: #E0E7FF;
+            --evergreen: #7B2D43;
+            --evergreen-soft: #F6E9ED;
+            --coral: #7B2D43;
+            --coral-dark: #64233A;
+            --coral-soft: #F6E9ED;
         }
 
         .stApp {
@@ -4912,7 +4938,7 @@ def apply_theme() -> None:
             align-items: flex-start;
             justify-content: space-between;
             gap: 2rem;
-            background: rgba(247, 248, 250, 0.92);
+            background: rgba(250, 248, 246, 0.92);
             border-bottom: 1px solid var(--line);
             margin-bottom: 1.35rem;
             padding: 0.65rem 0 1rem;
@@ -5017,12 +5043,12 @@ def apply_theme() -> None:
             background: var(--surface);
             border-radius: 10px;
             border: 1px solid var(--line);
-            box-shadow: 0 10px 24px rgba(23, 33, 43, 0.06);
+            box-shadow: 0 10px 24px rgba(31, 29, 27, 0.06);
         }
 
         [data-testid="stChatInput"]:focus-within {
             border-color: var(--coral);
-            box-shadow: 0 0 0 3px var(--coral-soft), 0 12px 28px rgba(23, 33, 43, 0.09);
+            box-shadow: 0 0 0 3px var(--coral-soft), 0 12px 28px rgba(31, 29, 27, 0.09);
         }
 
         [data-testid="stChatInput"] > div {
@@ -5057,7 +5083,7 @@ def apply_theme() -> None:
         }
 
         [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {
-            background: #e8f0fe;
+            background: #F3EEEA;
             border-radius: 8px;
             margin-left: auto;
             margin-right: 0;
@@ -5182,16 +5208,16 @@ def apply_theme() -> None:
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
             :root {
-                --wc-bg: #F8FAFC;
+                --wc-bg: #FAF8F6;
                 --wc-sidebar: #FFFFFF;
-                --wc-ink: #0F172A;
-                --wc-muted: #64748B;
-                --wc-accent: #1E3A8A;
-                --wc-accent-hover: #1E40AF;
-                --wc-accent-soft: #E0E7FF;
-                --wc-line: #E2E8F0;
-                --wc-user: #EEF2FF;
-                --wc-code: #F1F5F9;
+                --wc-ink: #1F1D1B;
+                --wc-muted: #6B6560;
+                --wc-accent: #7B2D43;
+                --wc-accent-hover: #64233A;
+                --wc-accent-soft: #F6E9ED;
+                --wc-line: #E7E2DD;
+                --wc-user: #F7EEF0;
+                --wc-code: #F3EFEB;
                 --wc-font: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
             }
 
@@ -5212,7 +5238,7 @@ def apply_theme() -> None:
             }
 
             ::selection {
-                background: #C7D2FE;
+                background: #E7C9D1;
                 color: var(--wc-ink);
             }
 
@@ -5252,7 +5278,7 @@ def apply_theme() -> None:
             }
 
             .sidebar-brand .brand-logo {
-                background: linear-gradient(135deg, #1E3A8A 0%, #3B82F6 100%);
+                background: linear-gradient(135deg, #7B2D43 0%, #A04460 100%);
                 border-radius: 9px;
                 color: #FFFFFF;
                 display: grid;
@@ -5266,7 +5292,7 @@ def apply_theme() -> None:
             .active-file {
                 align-items: center;
                 background: var(--wc-accent-soft);
-                border: 1px solid #C7D2FE;
+                border: 1px solid #E7C9D1;
                 border-radius: 10px;
                 color: var(--wc-accent);
                 display: flex;
@@ -5279,7 +5305,7 @@ def apply_theme() -> None:
             }
 
             .attach-hint {
-                border: 1px dashed #CBD5E1;
+                border: 1px dashed #D6CFC8;
                 border-radius: 10px;
                 color: var(--wc-muted);
                 font-size: 0.8rem;
@@ -5406,7 +5432,7 @@ def apply_theme() -> None:
             }
 
             .empty-mark span {
-                background: linear-gradient(180deg, #3B82F6 0%, #1E3A8A 100%);
+                background: linear-gradient(180deg, #C08A3E 0%, #7B2D43 100%);
                 border-radius: 2px 2px 0 0;
                 display: block;
                 width: 6px;
@@ -5438,7 +5464,7 @@ def apply_theme() -> None:
                 background: #FFFFFF !important;
                 border: 1px solid var(--wc-line) !important;
                 border-radius: 14px !important;
-                box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04) !important;
+                box-shadow: 0 1px 2px rgba(31, 29, 27, 0.04) !important;
                 color: var(--wc-ink) !important;
                 flex-direction: column !important;
                 font-weight: 600 !important;
@@ -5451,7 +5477,7 @@ def apply_theme() -> None:
 
             .st-key-home_actions .stButton > button:hover {
                 border-color: var(--wc-accent) !important;
-                box-shadow: 0 6px 18px rgba(30, 58, 138, 0.12) !important;
+                box-shadow: 0 6px 18px rgba(123, 45, 67, 0.12) !important;
                 color: var(--wc-accent) !important;
             }
 
@@ -5485,7 +5511,7 @@ def apply_theme() -> None:
                 background: #FFFFFF;
                 border: 1px solid var(--wc-line);
                 border-radius: 14px;
-                box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+                box-shadow: 0 1px 2px rgba(31, 29, 27, 0.04);
                 min-width: 0;
                 padding: 0.85rem 1rem;
             }
@@ -5522,6 +5548,33 @@ def apply_theme() -> None:
                 font-size: 1.25rem;
                 font-weight: 700;
                 margin: 0.2rem 0 0;
+            }
+
+            .source-notice {
+                background: var(--wc-accent-soft);
+                border-left: 3px solid var(--wc-accent);
+                border-radius: 8px;
+                color: var(--wc-ink);
+                font-size: 0.92rem;
+                line-height: 1.5;
+                margin: 0.3rem 0 0.8rem;
+                padding: 0.7rem 0.9rem;
+            }
+
+            /* Streamlit alerts default to blue/green; keep them in the corporate palette. */
+            [data-testid="stAlertContentInfo"], [data-testid="stAlertContentSuccess"] {
+                color: var(--wc-ink) !important;
+            }
+
+            [data-testid="stAlert"]:has([data-testid="stAlertContentInfo"]) > div,
+            [data-testid="stAlert"]:has([data-testid="stAlertContentSuccess"]) > div {
+                background: var(--wc-accent-soft) !important;
+            }
+
+            [data-testid="stAlert"]:has([data-testid="stAlertContentInfo"]) svg,
+            [data-testid="stAlert"]:has([data-testid="stAlertContentSuccess"]) svg {
+                color: var(--wc-accent) !important;
+                fill: var(--wc-accent) !important;
             }
 
             /* Suggestions and controls */
@@ -5655,7 +5708,7 @@ def apply_theme() -> None:
                 border: 1px solid var(--wc-line) !important;
                 border-radius: 18px !important;
                 bottom: 28px !important;
-                box-shadow: 0 8px 28px rgba(15, 23, 42, 0.08) !important;
+                box-shadow: 0 8px 28px rgba(31, 29, 27, 0.08) !important;
                 left: 50% !important;
                 max-width: 760px;
                 position: fixed !important;
@@ -5667,7 +5720,7 @@ def apply_theme() -> None:
 
             [data-testid="stChatInput"]:focus-within {
                 border-color: var(--wc-accent) !important;
-                box-shadow: 0 0 0 3px rgba(30, 58, 138, 0.14), 0 8px 22px rgba(15, 23, 42, 0.08) !important;
+                box-shadow: 0 0 0 3px rgba(123, 45, 67, 0.14), 0 8px 22px rgba(31, 29, 27, 0.08) !important;
             }
 
             [data-testid="stChatInput"] textarea {
@@ -5720,30 +5773,30 @@ def apply_theme() -> None:
             }
 
             * {
-                scrollbar-color: #CBD5E1 transparent;
+                scrollbar-color: #D6CFC8 transparent;
                 scrollbar-width: thin;
             }
 
             *::-webkit-scrollbar { width: 8px; }
-            *::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 8px; }
+            *::-webkit-scrollbar-thumb { background: #D6CFC8; border-radius: 8px; }
             *::-webkit-scrollbar-track { background: transparent; }
 
             /* Dark mode */
             @media (prefers-color-scheme: dark) {
                 :root {
-                    --wc-bg: #0F172A;
-                    --wc-sidebar: #111C33;
-                    --wc-ink: #E2E8F0;
-                    --wc-muted: #94A3B8;
-                    --wc-line: #1E293B;
-                    --wc-user: #1E293B;
-                    --wc-code: #1E293B;
-                    --wc-accent-soft: #1E293B;
+                    --wc-bg: #1F1D1B;
+                    --wc-sidebar: #262321;
+                    --wc-ink: #E7E2DD;
+                    --wc-muted: #A39C95;
+                    --wc-line: #2E2A27;
+                    --wc-user: #2E2A27;
+                    --wc-code: #2E2A27;
+                    --wc-accent-soft: #2E2A27;
                 }
 
-                .workspace-header { background: #0F172A !important; }
-                [data-testid="stChatInput"] { background: #111C33 !important; }
-                .kpi-card, .st-key-home_actions .stButton > button { background: #111C33 !important; }
+                .workspace-header { background: #1F1D1B !important; }
+                [data-testid="stChatInput"] { background: #262321 !important; }
+                .kpi-card, .st-key-home_actions .stButton > button { background: #262321 !important; }
                 [data-testid="stMain"] .stButton > button[kind="secondary"] { color: var(--wc-ink) !important; }
             }
 
@@ -5953,10 +6006,12 @@ DASHBOARD_ROW_LIMIT = 50_000
 DASHBOARD_COLUMNS = ("age", "gender", "department", "city", "status", "job_title", "salary", "join_date")
 
 
-def wants_database_dashboard(question: str, workbook: dict[str, Any] | None) -> bool:
+def wants_database_dashboard(question: str, workbook: dict[str, Any] | None, excel_only: bool = False) -> bool:
+    # In Excel-only mode a dashboard must come from an attached file, never the employee database.
     return (
-        (workbook is None or workbook.get("content") is None)
-        and bool(re.search(r"\bdashboards?\b", question, re.I))
+        not excel_only
+        and (workbook is None or workbook.get("content") is None)
+        and bool(re.search(r"\bdashboards?\b", chart_presentation_question(question), re.I))
         and not is_excel_chart_request(question)
         and "excel" not in requested_source_kinds(question)
     )
@@ -5980,6 +6035,11 @@ def display_database_dashboard(message: dict[str, Any], render_key: str) -> str 
         token = SQL_TRACE.set(trace)
         try:
             frame = load_dashboard_frame()
+            emit_code(
+                "python", "Load the SQL result into pandas",
+                "import numpy as np\nimport pandas as pd\n\n# SQL is the query shown above\n"
+                "df = pd.read_sql(SQL, connection).rename(columns=FRIENDLY_COLUMN_NAMES)",
+            )
             truncated = len(frame) > DASHBOARD_ROW_LIMIT
             frame = frame.head(DASHBOARD_ROW_LIMIT)
             if frame.empty:
@@ -6015,6 +6075,11 @@ def display_database_dashboard(message: dict[str, Any], render_key: str) -> str 
     for chart in charts:
         style_figure(chart.figure, theme)
     st.subheader("Employee dashboard")
+    st.markdown(
+        '<div class="source-notice">No file is attached, so this dashboard uses the built-in employee database. '
+        "Attach your own file with the <strong>+</strong> button to build a dashboard from it.</div>",
+        unsafe_allow_html=True,
+    )
     st.caption(
         f"Sources used: SQL: {SOURCE_LABEL}."
         + (f" Based on the first {DASHBOARD_ROW_LIMIT:,} rows." if message.get("truncated") else "")
@@ -6202,13 +6267,6 @@ with st.sidebar:
     recent_chats_placeholder = st.empty()
     render_recent_chats(recent_chats_placeholder)
 
-    st.markdown('<div class="recent-label">Report theme</div>', unsafe_allow_html=True)
-    st.selectbox(
-        "Report theme", list(THEMES), format_func=lambda key: THEMES[key].name, key="report_theme",
-        label_visibility="collapsed",
-        help="Colours used for dashboards, PDF reports and PowerPoint slides.",
-    )
-
     st.markdown('<div class="recent-label">Voice</div>', unsafe_allow_html=True)
     read_answers_aloud = st.toggle(
         "Read responses aloud",
@@ -6267,7 +6325,7 @@ if submitted_question:
             "kind": "recall", "question": submitted_question,
             "answer": recall_previous_question(history),
         })
-    elif wants_database_dashboard(submitted_question, active_excel_workbook()):
+    elif wants_database_dashboard(submitted_question, active_excel_workbook(), excel_selected):
         history.append({"kind": "sql_dashboard", "question": submitted_question})
     elif calculation_explanation:
         history.append({
@@ -6404,7 +6462,10 @@ for index, message in enumerate(history):
                 st.write(message["question"])
         else:
             st.write(message["question"])
-    with turn.chat_message("assistant"):
+    if "answer" not in message and "error" not in message:
+        message["generated_code"] = []
+    code_source = message.get("file_name") or (active_excel_workbook() or {}).get("file_name")
+    with turn.chat_message("assistant"), capture_code(message.setdefault("generated_code", []), code_source):
         answer = None
         pending = "answer" not in message and "error" not in message
         if pending:
@@ -6484,10 +6545,11 @@ backend_events = (
     + st.session_state.get("employee_connection_log", [])
 )[-1000:]
 with st.sidebar.expander("Backend diagnostics"):
-    if backend_events:
-        session_log = execution_code_log(backend_events)
+    generated = generated_code_log([message.get("generated_code", []) for message in history])
+    if backend_events or generated:
+        session_log = generated + ("# Application internals\n\n" + execution_code_log(backend_events) if backend_events else "")
         st.download_button(
             "Download backend log", data=session_log, file_name="chatbot_backend.log",
             mime="text/plain", key="download_backend_log",
         )
-        st.code(session_log, language="text", wrap_lines=True)
+        st.code(session_log, language="python", wrap_lines=True)

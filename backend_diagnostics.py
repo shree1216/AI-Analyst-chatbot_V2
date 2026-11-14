@@ -169,6 +169,23 @@ def diagnostic_log(events: list[dict[str, Any]]) -> str:
     return "".join(json.dumps(event, ensure_ascii=True, allow_nan=False) + "\n" for event in events[-1000:])
 
 
+def generated_code_log(answers: list[list[dict[str, str]]]) -> str:
+    """Per-answer SQL, pandas and Excel code that produced each result, in the order it ran."""
+    labels = {"sql": "SQL", "python": "Python (pandas)", "excel": "Excel formulas"}
+    sections = []
+    for number, snippets in enumerate(answers, start=1):
+        if not snippets:
+            continue
+        blocks = [
+            f"# --- {labels.get(item['language'], item['language'])}: {item['title']} ---\n{item['code'].rstrip()}"
+            for item in snippets
+        ]
+        sections.append(f"# ===== Answer {number} =====\n\n" + "\n\n".join(blocks))
+    if not sections:
+        return ""
+    return "# Code generated to produce each answer\n\n" + "\n\n".join(sections) + "\n\n"
+
+
 def execution_code_log(events: list[dict[str, Any]]) -> str:
     sql_blocks: list[str] = []
     python_blocks: list[str] = []

@@ -190,8 +190,8 @@ def build_pptx(deck: Deck, theme_key: str | None = None) -> bytes:
     background.line.fill.background()
     _text(slide, Inches(0.8), Inches(2.4), Inches(11.5), Inches(1.4), deck.title, 40, "#FFFFFF", True)
     _text(slide, Inches(0.8), Inches(3.9), Inches(11.5), Inches(0.8),
-          deck.subtitle or f"Generated {datetime.now():%d %B %Y}", 16, "#E2E8F0")
-    _text(slide, Inches(0.8), Inches(6.6), Inches(8), Inches(0.4), "Workforce Compass", 12, "#E2E8F0", True)
+          deck.subtitle or f"Generated {datetime.now():%d %B %Y}", 16, "#E7E2DD")
+    _text(slide, Inches(0.8), Inches(6.6), Inches(8), Inches(0.4), "Workforce Compass", 12, "#E7E2DD", True)
 
     if deck.kpis:
         number += 1

@@ -6,6 +6,7 @@ from typing import Any
 
 import pandas as pd
 from backend_diagnostics import BackendTrace
+from code_export import emit_lazy, workbook_plan_code
 
 
 MAX_STEPS = 20
@@ -602,6 +603,7 @@ def execute_workbook_plan(
     steps = plan["steps"]
     _require(isinstance(steps, list) and 1 <= len(steps) <= MAX_STEPS,
              "A workbook question must contain between 1 and 20 calculation steps.")
+    emit_lazy("python", f"pandas calculation on worksheet '{sheet}'", lambda: workbook_plan_code(plan))
     if trace:
         trace.record_code("source_selected", execute_workbook_plan, evaluate_expression, _evaluate,
                           _aggregate_frame, _aggregate, _aggregate_values, _join, _extrema, _select, _append,

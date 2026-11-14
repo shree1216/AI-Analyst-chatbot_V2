@@ -344,6 +344,8 @@ class DemoDatabaseTests(unittest.TestCase):
         self.assertEqual(len(app.sidebar.code), 1)
         self.assertIn("SELECT", app.sidebar.code[0].value)
         self.assertIn("def run_query(", app.sidebar.code[0].value)
+        self.assertIn("# --- SQL: SQL query (SQLite demo database) ---", app.sidebar.code[0].value)
+        self.assertIn(":filter_1  (float, value from your question - redacted)", app.sidebar.code[0].value)
         self.assertNotIn('"timestamp":', app.sidebar.code[0].value)
         self.assertNotIn('"elapsed_ms":', app.sidebar.code[0].value)
         self.assertFalse(any("SELECT" in message["answer"] for message in app.session_state["chat_history"]))

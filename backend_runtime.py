@@ -6,9 +6,9 @@ from threading import Lock
 
 
 MODULES = (
-    "backend_diagnostics", "excel_support", "data_explorer", "workbook_operations", "source_queries", "workbook_charts",
-    "workbook_edits", "spreadsheet_analytics", "report_themes", "dashboard_builder", "slides_export", "pdf_tables",
-    "data_grid", "deck_pdf",
+    "backend_diagnostics", "code_export", "excel_support", "data_explorer", "workbook_operations", "source_queries",
+    "workbook_charts", "workbook_edits", "spreadsheet_analytics", "report_themes", "dashboard_builder", "slides_export",
+    "pdf_tables", "data_grid", "deck_pdf",
 )
 RELOAD_LOCK = Lock()
 LOADED_REVISIONS: dict[str, str] = {}
