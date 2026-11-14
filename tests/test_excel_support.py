@@ -1,4 +1,4 @@
-﻿import importlib
+import importlib
 from io import BytesIO
 import json
 import os

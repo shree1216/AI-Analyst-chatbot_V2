@@ -1,4 +1,4 @@
-﻿"""Upload conversion, data overview and question-driven charts for uploaded tabular data.
+"""Upload conversion, data overview and question-driven charts for uploaded tabular data.
 
 Everything here is deterministic (no AI): questions are matched to real column names, and
 values are cleaned only for analysis. The uploaded data itself is never rewritten.
@@ -208,7 +208,7 @@ def _to_number(value: Any) -> float | None:
     if isinstance(value, (int, float)):
         return float(value) if math.isfinite(value) else None
     if isinstance(value, str):
-        text = re.sub(r"(?i)^(?:rs\.?|inr|usd)\s*|[\s,â‚¹$â‚¬Â£]", "", value.strip())
+        text = re.sub(r"(?i)^(?:rs\.?|inr|usd)\s*|[\s,₹$€£]", "", value.strip())
         if _PLAIN_NUMBER.fullmatch(text):
             number = float(text)
             return number if math.isfinite(number) else None

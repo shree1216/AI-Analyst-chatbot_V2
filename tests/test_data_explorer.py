@@ -19,7 +19,7 @@ from streamlit.testing.v1 import AppTest
 
 from data_explorer import (
     ChartSpec, auto_charts, build_chart, build_charts, csv_to_workbook, data_overview, is_overview_request,
-    metadata_request, parquet_to_workbook, plan_charts,
+    metadata_request, numbers, parquet_to_workbook, plan_charts,
 )
 from excel_support import excel_sheet_names, generate_excel_download, read_excel_sheet
 from pptx import Presentation
@@ -54,6 +54,10 @@ def parquet_bytes(table):
 
 
 class DataExplorerTests(unittest.TestCase):
+    def test_currency_symbols_and_codes_are_stripped_from_numbers(self):
+        values = pd.Series(["\u20b91,200", "\u20ac30", "\u00a35", "$7.5", "INR 99,604.80", "Rs. 10"])
+        self.assertEqual(list(numbers(values)), [1200.0, 30.0, 5.0, 7.5, 99604.8, 10.0])
+
     def test_pdf_tables_with_full_or_horizontal_only_rules_become_worksheets(self):
         output = BytesIO()
         rows = [["Department", "Headcount", "Salary"], ["IT", "33", "81,436"], ["Sales", "28", "87,725"]]

@@ -1,4 +1,4 @@
-﻿import base64
+import base64
 from contextlib import nullcontext
 from contextvars import ContextVar
 from datetime import datetime
@@ -3079,8 +3079,8 @@ def query_excel_sheet(question: str, frame: pd.DataFrame) -> pd.DataFrame:
 def workbook_columns_message(schemas: dict[str, dict[str, str]], unavailable: dict[str, str]) -> str:
     available = "; ".join(f"{sheet}: {', '.join(list(columns)[:20])}" for sheet, columns in list(schemas.items())[:5])
     failed = "; ".join(f"{sheet}: {reason}" for sheet, reason in list(unavailable.items())[:3])
-    return (f" Available columns â€” {available}." if available else "") + (
-        f" Unavailable worksheets â€” {failed}" if failed else ""
+    return (f" Available columns — {available}." if available else "") + (
+        f" Unavailable worksheets — {failed}" if failed else ""
     )
 
 
@@ -3534,7 +3534,7 @@ def business_report_deck(report: BusinessReport) -> Deck:
         ))
     return Deck(
         title=report.title,
-        subtitle=f"{report.scope} Â· Generated {report.generated_at:%d %B %Y}",
+        subtitle=f"{report.scope} · Generated {report.generated_at:%d %B %Y}",
         kpis=[(label, value, "") for label, value in report.metrics[:4]],
         charts=charts,
         sections=[

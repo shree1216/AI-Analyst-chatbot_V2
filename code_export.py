@@ -1,4 +1,4 @@
-﻿"""Readable code (pandas, SQL, Excel formulas) for what the backend actually ran, shown in Backend diagnostics.
+"""Readable code (pandas, SQL, Excel formulas) for what the backend actually ran, shown in Backend diagnostics.
 
 Generated code is kept in the user's own session only; it is never written to the redacted server log.
 """
