@@ -1,0 +1,177 @@
+Option Explicit
+
+' Row of the employee selected in the results list (0 = adding a new employee)
+Private selectedRow As Long
+
+Private Sub UserForm_Initialize()
+    cboGender.List = ListValues("GenderList")
+    cboDepartment.List = ListValues("DepartmentList")
+    cboStatus.List = ListValues("StatusList")
+    lstResults.ColumnCount = 5
+    lstResults.ColumnWidths = "50;104;98;56;0"
+    ShowResults SearchEmployees("")
+    ClearForm
+End Sub
+
+' ----- Buttons ---------------------------------------------------------------
+
+Private Sub cmdAdd_Click()
+    Dim values As Variant, problem As String, newId As String
+    values = FormValues()
+    problem = ValidateEmployee(values)
+    If problem <> "" Then
+        MsgBox problem, vbExclamation, "Please check the details"
+        Exit Sub
+    End If
+    If MsgBox("Add " & values(COL_FIRST) & " " & values(COL_LAST) & " as a new employee?", _
+              vbQuestion + vbYesNo, "Confirm new employee") = vbNo Then Exit Sub
+
+    newId = AddEmployee(values)
+    MsgBox values(COL_FIRST) & " " & values(COL_LAST) & " was added as " & newId & ".", vbInformation, "Employee added"
+    txtSearch.Value = ""
+    ShowResults SearchEmployees("")
+    ClearForm
+End Sub
+
+Private Sub cmdUpdate_Click()
+    Dim values As Variant, problem As String
+    If selectedRow = 0 Then
+        MsgBox "Select an employee from the list first.", vbExclamation, "No employee selected"
+        Exit Sub
+    End If
+    values = FormValues()
+    problem = ValidateEmployee(values, txtEmployeeID.Value)
+    If problem <> "" Then
+        MsgBox problem, vbExclamation, "Please check the details"
+        Exit Sub
+    End If
+    If MsgBox("Save changes to " & txtEmployeeID.Value & "?", vbQuestion + vbYesNo, "Confirm update") = vbNo Then Exit Sub
+
+    UpdateEmployee selectedRow, values
+    MsgBox "Employee " & txtEmployeeID.Value & " was updated.", vbInformation, "Employee updated"
+    ShowResults SearchEmployees(txtSearch.Value)
+    ClearForm
+End Sub
+
+Private Sub cmdDelete_Click()
+    If selectedRow = 0 Then
+        MsgBox "Select an employee from the list first.", vbExclamation, "No employee selected"
+        Exit Sub
+    End If
+    If MsgBox("Delete " & txtEmployeeID.Value & " (" & txtFirstName.Value & " " & txtLastName.Value & ")?" & _
+              vbCrLf & vbCrLf & "This cannot be undone.", vbExclamation + vbYesNo + vbDefaultButton2, _
+              "Confirm delete") = vbNo Then Exit Sub
+
+    DeleteEmployee selectedRow
+    MsgBox "Employee " & txtEmployeeID.Value & " was deleted.", vbInformation, "Employee deleted"
+    ShowResults SearchEmployees(txtSearch.Value)
+    ClearForm
+End Sub
+
+Private Sub cmdSearch_Click()
+    Dim results As Collection
+    Set results = SearchEmployees(txtSearch.Value)
+    If results.Count = 0 Then
+        MsgBox "No employees match """ & txtSearch.Value & """.", vbInformation, "Search"
+    End If
+    ShowResults results
+End Sub
+
+Private Sub cmdShowAll_Click()
+    txtSearch.Value = ""
+    ShowResults SearchEmployees("")
+End Sub
+
+Private Sub cmdClear_Click()
+    ClearForm
+End Sub
+
+Private Sub cmdClose_Click()
+    Unload Me
+End Sub
+
+Private Sub txtSearch_KeyDown(ByVal KeyCode As MSForms.ReturnInteger, ByVal Shift As Integer)
+    If KeyCode = vbKeyReturn Then cmdSearch_Click
+End Sub
+
+' Selecting an employee in the list loads their details for Update / Delete
+Private Sub lstResults_Click()
+    Dim values As Variant
+    If lstResults.ListIndex < 0 Then Exit Sub
+    selectedRow = CLng(lstResults.List(lstResults.ListIndex, 4))
+    values = ReadEmployee(selectedRow)
+    txtEmployeeID.Value = values(COL_ID)
+    txtFirstName.Value = values(COL_FIRST)
+    txtLastName.Value = values(COL_LAST)
+    cboGender.Value = values(COL_GENDER)
+    cboDepartment.Value = values(COL_DEPT)
+    txtJobTitle.Value = values(COL_TITLE)
+    txtEmail.Value = values(COL_EMAIL)
+    txtPhone.Value = values(COL_PHONE)
+    txtHireDate.Value = values(COL_HIRE)
+    txtSalary.Value = values(COL_SALARY)
+    cboStatus.Value = values(COL_STATUS)
+    SetMode True
+End Sub
+
+' ----- Helpers ---------------------------------------------------------------
+
+Private Function FormValues() As Variant
+    Dim values(1 To FIELD_COUNT) As Variant
+    values(COL_ID) = txtEmployeeID.Value
+    values(COL_FIRST) = Trim$(txtFirstName.Value)
+    values(COL_LAST) = Trim$(txtLastName.Value)
+    values(COL_GENDER) = cboGender.Value
+    values(COL_DEPT) = cboDepartment.Value
+    values(COL_TITLE) = Trim$(txtJobTitle.Value)
+    values(COL_EMAIL) = Trim$(txtEmail.Value)
+    values(COL_PHONE) = Trim$(txtPhone.Value)
+    values(COL_HIRE) = Trim$(txtHireDate.Value)
+    values(COL_SALARY) = Trim$(txtSalary.Value)
+    values(COL_STATUS) = cboStatus.Value
+    FormValues = values
+End Function
+
+Private Sub ShowResults(rows As Collection)
+    Dim rowNumber As Variant, values As Variant, item As Long
+    lstResults.Clear
+    For Each rowNumber In rows
+        values = ReadEmployee(rowNumber)
+        lstResults.AddItem values(COL_ID)
+        item = lstResults.ListCount - 1
+        lstResults.List(item, 1) = values(COL_FIRST) & " " & values(COL_LAST)
+        lstResults.List(item, 2) = values(COL_DEPT)
+        lstResults.List(item, 3) = values(COL_STATUS)
+        lstResults.List(item, 4) = rowNumber
+    Next rowNumber
+    lblCount.Caption = rows.Count & " employee(s) shown"
+End Sub
+
+Private Sub ClearForm()
+    txtEmployeeID.Value = NextEmployeeId() & "  (new)"
+    txtFirstName.Value = ""
+    txtLastName.Value = ""
+    cboGender.ListIndex = -1
+    cboDepartment.ListIndex = -1
+    txtJobTitle.Value = ""
+    txtEmail.Value = ""
+    txtPhone.Value = ""
+    txtHireDate.Value = Format$(Date, DATE_FORMAT)
+    txtSalary.Value = ""
+    cboStatus.Value = "Active"
+    lstResults.ListIndex = -1
+    SetMode False
+    If Me.Visible Then txtFirstName.SetFocus
+End Sub
+
+' Add is available for a new record; Update/Delete only after selecting one
+Private Sub SetMode(ByVal editing As Boolean)
+    If Not editing Then selectedRow = 0
+    cmdAdd.Enabled = Not editing
+    cmdUpdate.Enabled = editing
+    cmdDelete.Enabled = editing
+End Sub
+
+Private Function ListValues(ByVal listName As String) As Variant
+    ListValues = Application.WorksheetFunction.Transpose(ThisWorkbook.Names(listName).RefersToRange.Value)
+End Function

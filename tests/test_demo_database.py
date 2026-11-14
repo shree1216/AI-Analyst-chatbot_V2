@@ -315,11 +315,13 @@ class DemoDatabaseTests(unittest.TestCase):
         self.assertFalse(any("portfolio demo" in caption.value.lower() for caption in app.caption))
         self.assertFalse(any("credentials" in caption.value.lower() for caption in app.caption))
         self.assertFalse(app.chat_input[0].proto.accept_audio)
-        self.assertTrue(app.toggle[0].disabled)
+        self.assertEqual(len(app.toggle), 0)
         self.assertEqual(len(app.caption), 0)
         app.chat_input[0].set_value("How many employees do we have?").run(timeout=30)
         self.assertEqual(len(app.exception), 0)
         self.assertIn(f"{len(self.employees)} employees", app.session_state["chat_history"][0]["answer"])
+        # Without Azure Speech the read-aloud icon is shown but disabled.
+        self.assertTrue(app.chat_message[-1].button(key="read_aloud_0").disabled)
         first = app.session_state["chat_history"][0]
         first_events = list(first["backend_log"])
         self.assertEqual(first_events[0]["route"], "sqlite_demo")
@@ -464,13 +466,34 @@ class DemoDatabaseTests(unittest.TestCase):
         self.assertNotIn("PRIVATE_PATH", diagnostic_log(message["backend_log"]))
 
     def test_cloud_voice_controls_enable_when_speech_settings_are_present(self):
-        with patch.dict(os.environ, {"AZURE_SPEECH_KEY": "test-key", "AZURE_SPEECH_REGION": "eastus"}):
+        synthesizer = Mock()
+        synthesizer.return_value.speak_text_async.return_value.get.return_value = SimpleNamespace(
+            reason=speechsdk.ResultReason.SynthesizingAudioCompleted, audio_data=b"RIFF-test-audio",
+        )
+        st.cache_data.clear()
+        self.addCleanup(st.cache_data.clear)
+        with patch.dict(os.environ, {"AZURE_SPEECH_KEY": "test-key", "AZURE_SPEECH_REGION": "eastus"}), patch(
+            "azure.cognitiveservices.speech.SpeechSynthesizer", synthesizer,
+        ):
             app = employee_app().run(timeout=30)
+            self.assertEqual(len(app.exception), 0)
+            self.assertTrue(app.chat_input[0].proto.accept_audio)
+            self.assertEqual(len(app.sidebar.get("audio_input")), 0)
+            self.assertEqual(len(app.sidebar.toggle), 0)
+            self.assertFalse(any("Voice is not enabled" in caption.value for caption in app.caption))
+            app.chat_input[0].set_value("How many employees do we have?").run(timeout=30)
+            read_aloud = app.chat_message[-1].button(key="read_aloud_0")
+            self.assertFalse(read_aloud.disabled)
+            self.assertEqual(len(app.get("audio")), 0)
+            synthesizer.assert_not_called()
+            read_aloud.click().run(timeout=30)
         self.assertEqual(len(app.exception), 0)
-        self.assertTrue(app.chat_input[0].proto.accept_audio)
-        self.assertEqual(len(app.sidebar.get("audio_input")), 0)
-        self.assertFalse(app.toggle[0].disabled)
-        self.assertFalse(any("Voice is not enabled" in caption.value for caption in app.caption))
+        spoken = synthesizer.return_value.speak_text_async.call_args.args[0]
+        self.assertIn(f"{len(self.employees)} employees", spoken)
+        self.assertNotIn("*", spoken)
+        audio = app.get("audio")
+        self.assertEqual(len(audio), 1)
+        self.assertTrue(audio[0].proto.autoplay)
 
     def test_chat_bar_voice_question_and_home_dashboard_card(self):
         wav = BytesIO()

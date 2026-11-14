@@ -232,8 +232,8 @@ class ApplyChartTests(unittest.TestCase):
         result = apply_excel_dashboard(
             original, "Sales", tables, source_rows=len(frame), source_columns=len(frame.columns), missing_values=0,
         )
-        self.assertEqual((result.sheet, result.tables_sheet), ("Sales Dashboard", "Sales Tables"))
-        self.assertEqual(excel_sheet_names(result.content), [*excel_sheet_names(original), "Sales Dashboard", "Sales Tables"])
+        self.assertEqual((result.sheet, result.tables_sheet), ("Sales Charts", "Sales Summary"))
+        self.assertEqual(excel_sheet_names(result.content), [*excel_sheet_names(original), "Sales Charts", "Sales Summary"])
         main = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
         with ZipFile(BytesIO(original)) as before, ZipFile(BytesIO(result.content)) as after:
             for name in before.namelist():
@@ -247,25 +247,30 @@ class ApplyChartTests(unittest.TestCase):
                     self.assertEqual(before.read(name), after.read(name), name)
         workbook = load_workbook(BytesIO(result.content))
         self.addCleanup(workbook.close)
-        dashboard, supporting = workbook[result.sheet], workbook[result.tables_sheet]
-        self.assertEqual(len(dashboard._charts), 4)
-        self.assertEqual(len(supporting._charts), 0)
-        self.assertEqual(dashboard["B2"].value, "Sales Dashboard")
-        self.assertEqual((dashboard["B5"].value, dashboard["B6"].value), ("Rows", f"{len(frame):,}"))
-        self.assertEqual((dashboard["G5"].value, dashboard["G6"].value), ("Columns", f"{len(frame.columns):,}"))
-        self.assertEqual((dashboard["Q5"].value, dashboard["Q6"].value), ("Charts", "4"))
-        self.assertIn("B5:E5", {str(merged) for merged in dashboard.merged_cells.ranges})
-        self.assertFalse(dashboard.sheet_view.showGridLines)
-        self.assertEqual(supporting["A1"].value, "Supporting tables")
-        self.assertEqual(supporting["A5"].fill.fgColor.rgb, "FF7B2D43")
-        start = 4
-        for chart, table in zip(dashboard._charts, charts):
-            self.assertEqual(supporting.cell(start, 1).value, table.title)
+        charts_tab, summary = workbook[result.sheet], workbook[result.tables_sheet]
+        self.assertEqual(len(charts_tab._charts), 4)
+        self.assertEqual(len(summary._charts), 0)
+        # The charts tab holds only its title and the charts; key figures live on the Summary tab.
+        self.assertEqual(charts_tab["B2"].value, "Sales Charts")
+        self.assertEqual(
+            {cell.coordinate for row in charts_tab.iter_rows() for cell in row if cell.value is not None}, {"B2", "B3"},
+        )
+        self.assertFalse(charts_tab.sheet_view.showGridLines)
+        self.assertEqual(summary["A1"].value, "Sales Summary")
+        self.assertEqual(summary["A4"].value, "Key figures")
+        self.assertEqual((summary["A5"].value, summary["B5"].value), ("Rows", f"{len(frame):,}"))
+        self.assertEqual((summary["A6"].value, summary["B6"].value), ("Columns", f"{len(frame.columns):,}"))
+        self.assertEqual((summary["A8"].value, summary["B8"].value), ("Charts", "4"))
+        self.assertEqual(summary["A10"].value, "Supporting tables")
+        self.assertEqual(summary["A14"].fill.fgColor.rgb, "FF7B2D43")
+        start = 13
+        for chart, table in zip(charts_tab._charts, charts):
+            self.assertEqual(summary.cell(start, 1).value, table.title)
             header = start + 1
-            self.assertEqual([supporting.cell(header, column).value for column in (1, 2)], list(table.table.columns))
+            self.assertEqual([summary.cell(header, column).value for column in (1, 2)], list(table.table.columns))
             saved = pd.DataFrame(
                 [
-                    [supporting.cell(row, column).value for column in (1, 2)]
+                    [summary.cell(row, column).value for column in (1, 2)]
                     for row in range(header + 1, header + 1 + len(table.table))
                 ],
                 columns=table.table.columns,
@@ -278,7 +283,7 @@ class ApplyChartTests(unittest.TestCase):
         repeated = apply_excel_dashboard(
             result.content, "Sales", tables, source_rows=len(frame), source_columns=len(frame.columns), missing_values=0,
         )
-        self.assertEqual((repeated.sheet, repeated.tables_sheet), ("Sales Dashboard (2)", "Sales Tables (2)"))
+        self.assertEqual((repeated.sheet, repeated.tables_sheet), ("Sales Charts (2)", "Sales Summary (2)"))
 
     def test_dashboard_limits_and_unknown_sources_fail_explicitly(self):
         table = pd.DataFrame({"Group": ["One"], "Value": [1]})

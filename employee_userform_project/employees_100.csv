@@ -1,0 +1,101 @@
+Employee ID,Full Name,Gender,Department,Job Title,Email,Phone,Hire Date,Annual Salary,Status
+EMP001,Ryan Young,Male,Operations,Logistics Coordinator,ryan.young@company.com,555-328-7891,2017-04-20,59000,Active
+EMP002,Susan Thomas,Female,Finance,Financial Analyst,susan.thomas@company.com,555-394-2606,2017-06-26,76000,Active
+EMP003,Hannah Anderson,Female,Marketing,Marketing Executive,hannah.anderson@company.com,555-924-7166,2022-12-31,65000,Active
+EMP004,Ryan Brown,Male,Operations,Operations Associate,ryan.brown@company.com,555-568-3308,2021-06-14,53000,Active
+EMP005,Emily White,Female,IT,Software Engineer,emily.white@company.com,555-508-9166,2017-01-12,114500,Active
+EMP006,Nancy Young,Female,IT,Systems Administrator,nancy.young@company.com,555-625-9486,2025-09-30,85000,Active
+EMP007,Michael Young,Male,Sales,Sales Executive,michael.young@company.com,555-581-3333,2024-08-18,50500,Active
+EMP008,Edward Walker,Male,Sales,Sales Manager,edward.walker@company.com,555-673-7587,2020-08-18,113500,Active
+EMP009,Nancy Clark,Female,Human Resources,HR Executive,nancy.clark@company.com,555-109-1542,2021-01-12,47000,On Leave
+EMP010,Laura White,Female,Human Resources,HR Executive,laura.white@company.com,555-577-9376,2025-11-21,56500,Active
+EMP011,Sarah Moore,Female,IT,Software Engineer,sarah.moore@company.com,555-548-9440,2017-03-16,90500,On Leave
+EMP012,George Walker,Male,Finance,Financial Analyst,george.walker@company.com,555-479-2583,2026-03-07,70000,Active
+EMP013,Edward Carter,Male,Finance,Accountant,edward.carter@company.com,555-724-4257,2016-11-11,60000,Active
+EMP014,Zoe Wilson,Female,Finance,Accountant,zoe.wilson@company.com,555-806-3209,2026-01-13,66000,Active
+EMP015,Andrew Brown,Male,Marketing,Content Specialist,andrew.brown@company.com,555-902-6013,2018-01-13,60000,Active
+EMP016,Joseph Harris,Male,Finance,Finance Manager,joseph.harris@company.com,555-175-1841,2023-09-25,124000,Active
+EMP017,James Young,Male,Marketing,Marketing Executive,james.young@company.com,555-560-6341,2021-10-23,63500,Active
+EMP018,Ava Wilson,Female,Operations,Operations Associate,ava.wilson@company.com,555-738-6511,2024-09-22,47000,Active
+EMP019,Brian Johnson,Male,Human Resources,Recruiter,brian.johnson@company.com,555-146-9925,2018-11-21,67000,Active
+EMP020,Steven Carter,Male,Human Resources,Recruiter,steven.carter@company.com,555-904-9468,2019-11-27,66000,Active
+EMP021,Brian Taylor,Male,Marketing,Marketing Executive,brian.taylor@company.com,555-492-5995,2016-10-06,51000,Active
+EMP022,Laura Clark,Female,IT,Software Engineer,laura.clark@company.com,555-631-8897,2022-04-22,98000,Active
+EMP023,Sophia Anderson,Female,Human Resources,HR Executive,sophia.anderson@company.com,555-999-8440,2017-02-01,54500,Active
+EMP024,James White,Male,Human Resources,HR Executive,james.white@company.com,555-212-5595,2019-11-09,53500,Active
+EMP025,Andrew Scott,Male,IT,Systems Administrator,andrew.scott@company.com,555-203-5320,2017-12-22,67500,Active
+EMP026,Michael White,Male,Sales,Account Manager,michael.white@company.com,555-618-6137,2017-05-20,67000,Active
+EMP027,Hannah Martinez,Female,IT,Software Engineer,hannah.martinez@company.com,555-521-5211,2015-04-24,96500,Active
+EMP028,Thomas Carter,Male,IT,Software Engineer,thomas.carter@company.com,555-422-8471,2022-11-09,104500,Active
+EMP029,Brian Jackson,Male,Operations,Operations Associate,brian.jackson@company.com,555-536-2956,2025-05-18,50500,Active
+EMP030,Nancy Moore,Female,IT,Software Engineer,nancy.moore@company.com,555-999-1387,2024-10-17,91500,Active
+EMP031,Andrew Clark,Male,IT,Systems Administrator,andrew.clark@company.com,555-655-6611,2015-06-16,70000,Active
+EMP032,William Green,Male,Finance,Accountant,william.green@company.com,555-635-6800,2017-10-26,67000,Resigned
+EMP033,Emily Clark,Female,Operations,Operations Associate,emily.clark@company.com,555-493-7179,2024-04-25,43500,Active
+EMP034,Robert Martinez,Male,Operations,Operations Associate,robert.martinez@company.com,555-361-3419,2023-11-26,43500,Active
+EMP035,Linda Taylor,Female,IT,Software Engineer,linda.taylor@company.com,555-959-3937,2017-01-02,102000,Active
+EMP036,Hannah Young,Female,Sales,Sales Executive,hannah.young@company.com,555-742-4978,2015-04-04,50500,Resigned
+EMP037,Brian White,Male,Human Resources,Recruiter,brian.white@company.com,555-451-4292,2021-03-09,56500,Active
+EMP038,Laura Scott,Female,IT,Software Engineer,laura.scott@company.com,555-257-8943,2024-03-17,116000,Resigned
+EMP039,Sarah Martinez,Female,Finance,Accountant,sarah.martinez@company.com,555-241-2650,2020-12-11,75000,Active
+EMP040,Andrew Scott,Male,Finance,Finance Manager,andrew.scott2@company.com,555-651-9463,2023-07-15,123500,Active
+EMP041,David Wilson,Male,Sales,Sales Executive,david.wilson@company.com,555-417-1681,2020-11-11,55500,Active
+EMP042,William Moore,Male,IT,Software Engineer,william.moore@company.com,555-237-7367,2023-01-05,87500,Active
+EMP043,Steven Clark,Male,IT,Systems Administrator,steven.clark@company.com,555-839-9457,2018-10-31,65500,Active
+EMP044,William Carter,Male,Finance,Accountant,william.carter@company.com,555-962-7136,2015-01-17,56500,Active
+EMP045,Thomas Wilson,Male,Finance,Finance Manager,thomas.wilson@company.com,555-209-2198,2025-11-13,108500,Active
+EMP046,Kevin Walker,Male,Marketing,Marketing Executive,kevin.walker@company.com,555-352-6876,2026-08-22,59500,Active
+EMP047,Olivia Brown,Female,Finance,Financial Analyst,olivia.brown@company.com,555-371-4703,2021-12-31,69000,Active
+EMP048,Hannah Walker,Female,Marketing,Marketing Executive,hannah.walker@company.com,555-925-8585,2019-05-29,51500,Active
+EMP049,Zoe Clark,Female,Operations,Operations Associate,zoe.clark@company.com,555-552-3090,2018-06-18,46500,Active
+EMP050,Ryan Taylor,Male,Marketing,Marketing Executive,ryan.taylor@company.com,555-339-6435,2021-01-05,64500,Active
+EMP051,Charles Moore,Male,Operations,Operations Associate,charles.moore@company.com,555-509-1355,2023-12-31,48000,Active
+EMP052,Hannah Davis,Female,Sales,Account Manager,hannah.davis@company.com,555-794-9952,2026-02-04,73000,Active
+EMP053,Sarah Harris,Female,Sales,Sales Executive,sarah.harris@company.com,555-672-5131,2020-12-27,44500,Active
+EMP054,Laura Walker,Female,IT,Software Engineer,laura.walker@company.com,555-751-2979,2019-12-07,106500,On Leave
+EMP055,Emily Anderson,Female,Marketing,Marketing Executive,emily.anderson@company.com,555-180-4074,2023-04-15,57000,Active
+EMP056,Robert Jackson,Male,Human Resources,HR Manager,robert.jackson@company.com,555-720-3798,2019-08-18,102500,Active
+EMP057,Emma Davis,Female,Finance,Accountant,emma.davis@company.com,555-145-4035,2024-05-29,66000,Active
+EMP058,Steven Jackson,Male,IT,Software Engineer,steven.jackson@company.com,555-361-9000,2025-10-04,115500,Active
+EMP059,Steven Wilson,Male,Finance,Accountant,steven.wilson@company.com,555-359-8636,2023-03-19,59000,Active
+EMP060,Lily Anderson,Female,Operations,Operations Associate,lily.anderson@company.com,555-983-2057,2024-03-19,51000,Active
+EMP061,Laura Green,Female,Finance,Financial Analyst,laura.green@company.com,555-710-6326,2026-09-19,77000,Active
+EMP062,Ava Brown,Female,Operations,Logistics Coordinator,ava.brown@company.com,555-877-5218,2018-11-29,61500,Resigned
+EMP063,Sophia Green,Female,Human Resources,HR Executive,sophia.green@company.com,555-314-8028,2020-05-27,52500,Active
+EMP064,Charles Walker,Male,Human Resources,Recruiter,charles.walker@company.com,555-472-7422,2022-04-22,59500,Active
+EMP065,Robert Green,Male,Operations,Logistics Coordinator,robert.green@company.com,555-846-3358,2018-06-08,50000,Active
+EMP066,Michael Taylor,Male,IT,IT Manager,michael.taylor@company.com,555-242-5383,2019-01-06,143500,Active
+EMP067,Edward Martinez,Male,Human Resources,Recruiter,edward.martinez@company.com,555-796-3521,2019-03-01,57500,Active
+EMP068,Andrew Thomas,Male,Operations,Operations Associate,andrew.thomas@company.com,555-576-7664,2017-01-23,42500,Active
+EMP069,Steven Carter,Male,Finance,Accountant,steven.carter2@company.com,555-436-1460,2020-10-08,58500,Active
+EMP070,George Clark,Male,Human Resources,Recruiter,george.clark@company.com,555-346-4680,2018-10-30,62000,Active
+EMP071,Ava King,Female,Marketing,Content Specialist,ava.king@company.com,555-976-6950,2025-04-21,64000,Resigned
+EMP072,Laura Brown,Female,Human Resources,Recruiter,laura.brown@company.com,555-874-2291,2017-08-07,56500,Active
+EMP073,Daniel Martinez,Male,Human Resources,Recruiter,daniel.martinez@company.com,555-538-1499,2019-03-31,60000,Active
+EMP074,Lily White,Female,Marketing,Marketing Executive,lily.white@company.com,555-571-5474,2026-09-08,62500,Active
+EMP075,Daniel Wilson,Male,Operations,Operations Associate,daniel.wilson@company.com,555-566-7183,2023-01-19,49000,Active
+EMP076,Chloe Brown,Female,Marketing,Marketing Executive,chloe.brown@company.com,555-940-9688,2026-10-14,64000,Active
+EMP077,Sarah Brown,Female,Operations,Operations Associate,sarah.brown@company.com,555-677-2782,2025-02-23,46000,Active
+EMP078,Laura King,Female,Finance,Accountant,laura.king@company.com,555-237-1435,2022-02-21,57000,Active
+EMP079,Emily Johnson,Female,Sales,Sales Manager,emily.johnson@company.com,555-222-6487,2026-09-06,115000,Active
+EMP080,Grace Jackson,Female,Sales,Sales Manager,grace.jackson@company.com,555-509-4906,2020-06-09,108000,Active
+EMP081,Sarah Walker,Female,Human Resources,Recruiter,sarah.walker@company.com,555-293-2863,2024-11-01,60500,Active
+EMP082,Emily Walker,Female,Human Resources,HR Executive,emily.walker@company.com,555-642-8625,2015-10-06,57000,Active
+EMP083,Chloe Clark,Female,Sales,Account Manager,chloe.clark@company.com,555-716-9519,2022-12-05,64000,Active
+EMP084,Mia Scott,Female,Finance,Accountant,mia.scott@company.com,555-515-2819,2025-04-04,71000,Active
+EMP085,Nancy Carter,Female,Human Resources,HR Executive,nancy.carter@company.com,555-869-3768,2020-11-21,53000,On Leave
+EMP086,Charles Martinez,Male,Finance,Accountant,charles.martinez@company.com,555-558-1582,2017-08-05,62000,On Leave
+EMP087,Sarah Anderson,Female,Sales,Account Manager,sarah.anderson@company.com,555-148-5772,2025-10-19,62500,Active
+EMP088,Mia Carter,Female,IT,Systems Administrator,mia.carter@company.com,555-582-5249,2015-12-24,67000,Active
+EMP089,Thomas Walker,Male,Finance,Accountant,thomas.walker@company.com,555-649-7438,2020-02-14,64500,Active
+EMP090,George Harris,Male,Operations,Operations Associate,george.harris@company.com,555-275-4881,2019-01-02,42500,Active
+EMP091,Nancy Taylor,Female,Sales,Account Manager,nancy.taylor@company.com,555-194-1310,2025-07-01,68500,Active
+EMP092,Thomas Walker,Male,Sales,Sales Executive,thomas.walker2@company.com,555-279-9109,2022-03-26,52000,Active
+EMP093,Olivia Walker,Female,Sales,Sales Executive,olivia.walker@company.com,555-624-6832,2022-08-05,43500,Active
+EMP094,Charles Thomas,Male,Finance,Accountant,charles.thomas@company.com,555-411-3943,2020-06-28,61000,Active
+EMP095,Ryan Martinez,Male,Sales,Sales Executive,ryan.martinez@company.com,555-348-8724,2017-03-06,55500,Active
+EMP096,Sophia Brown,Female,Human Resources,HR Executive,sophia.brown@company.com,555-418-3418,2026-10-30,51000,Active
+EMP097,Lily Wilson,Female,Marketing,Content Specialist,lily.wilson@company.com,555-554-2990,2015-02-11,52000,Active
+EMP098,Olivia Harris,Female,IT,Software Engineer,olivia.harris@company.com,555-845-5872,2024-12-16,90000,Active
+EMP099,Laura Moore,Female,IT,Systems Administrator,laura.moore@company.com,555-727-9977,2017-04-12,66000,Active
+EMP100,Nancy Thomas,Female,Sales,Account Manager,nancy.thomas@company.com,555-919-2663,2018-09-20,65500,Active

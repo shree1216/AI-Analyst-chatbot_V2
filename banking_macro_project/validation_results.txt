@@ -1,0 +1,21 @@
+﻿PASS  Recorded macro fails on renamed sheet (Sheet1 -> Transactions) [ERROR 9: Subscript out of range]
+PASS  Recorded macro overwrites new data in row 102 [TXN00096 replaced by TOTAL]
+PASS  Recorded macro formats amounts as percent [325166.00%]
+PASS  Recorded macro computes Debit + Credit (wrong sign)
+PASS  Recorded macro leaves rows 103-106 uncalculated
+PASS  Corrected macro runs on any sheet name [rows=100]
+PASS  Net Amount column added in I
+PASS  Net Amount = Credit - Debit [=N($H2)-N($G2)]
+PASS  Totals row at row 102
+PASS  Debit total [69,162.19]
+PASS  Credit total [78,981.53]
+PASS  Net total [9,819.34]
+PASS  Date format dd-mmm-yyyy [02-Nov-2026]
+PASS  Amount format #,##0.00 [3,251.66]
+PASS  Header styled bold
+PASS  Header row frozen
+PASS  Rerun is safe (one TOTAL row, no extra Net column)
+PASS  Added rows are included [rows=105, net=13,802.61]
+PASS  Deleted rows are handled [rows=95]
+PASS  Changed layout (title rows, column B start, Credit before Debit) [net=9,819.34]
+PASS  Invalid amount is reported and sheet is left unchanged [ERROR -2147221499: Row 10: Debit 'abc' is not a number.]

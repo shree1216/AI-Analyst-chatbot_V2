@@ -1,0 +1,101 @@
+Transaction ID,Date,Account Number,Customer Name,Branch,Transaction Type,Debit,Credit
+TXN00001,2026-11-02,1002345740,Sophia Thomas,Dallas,Transfer Out,3251.66,
+TXN00002,2026-11-02,1002345726,Olivia Martinez,Houston,Card Purchase,248.90,
+TXN00003,2026-11-02,1002345740,Sophia Thomas,Dallas,Cash Withdrawal,1556.74,
+TXN00004,2026-11-02,1002345740,Sophia Thomas,Dallas,Transfer Out,1996.65,
+TXN00005,2026-11-02,1002345671,James Carter,New York,Transfer Out,1176.63,
+TXN00006,2026-11-02,1002345688,Emily Johnson,New York,Cash Withdrawal,1461.39,
+TXN00007,2026-11-02,1002345757,Robert Taylor,Boston,Transfer In,,3695.69
+TXN00008,2026-11-03,1002345695,Michael Brown,Chicago,Card Purchase,761.35,
+TXN00009,2026-11-03,1002345740,Sophia Thomas,Dallas,Card Purchase,590.72,
+TXN00010,2026-11-03,1002345740,Sophia Thomas,Dallas,Cash Withdrawal,469.71,
+TXN00011,2026-11-03,1002345733,Daniel Anderson,Dallas,Salary Credit,,7600.00
+TXN00012,2026-11-03,1002345688,Emily Johnson,New York,Cash Deposit,,2987.07
+TXN00013,2026-11-03,1002345688,Emily Johnson,New York,Bill Payment,159.34,
+TXN00014,2026-11-03,1002345688,Emily Johnson,New York,Bill Payment,463.52,
+TXN00015,2026-11-03,1002345719,David Wilson,Houston,Loan EMI,1770.82,
+TXN00016,2026-11-03,1002345695,Michael Brown,Chicago,Cash Deposit,,3389.99
+TXN00017,2026-11-03,1002345764,Emma Moore,Boston,Transfer Out,3329.78,
+TXN00018,2026-11-03,1002345740,Sophia Thomas,Dallas,Loan EMI,2375.03,
+TXN00019,2026-11-04,1002345757,Robert Taylor,Boston,Transfer In,,2392.94
+TXN00020,2026-11-04,1002345764,Emma Moore,Boston,Card Purchase,464.15,
+TXN00021,2026-11-04,1002345688,Emily Johnson,New York,Cash Withdrawal,404.23,
+TXN00022,2026-11-04,1002345695,Michael Brown,Chicago,Transfer Out,3211.05,
+TXN00023,2026-11-05,1002345719,David Wilson,Houston,Bill Payment,264.72,
+TXN00024,2026-11-05,1002345695,Michael Brown,Chicago,Bill Payment,158.18,
+TXN00025,2026-11-05,1002345671,James Carter,New York,Card Purchase,362.63,
+TXN00026,2026-11-05,1002345688,Emily Johnson,New York,Cash Deposit,,1865.69
+TXN00027,2026-11-05,1002345726,Olivia Martinez,Houston,Card Purchase,851.66,
+TXN00028,2026-11-05,1002345671,James Carter,New York,Bill Payment,230.27,
+TXN00029,2026-11-06,1002345719,David Wilson,Houston,Cash Withdrawal,1836.52,
+TXN00030,2026-11-06,1002345740,Sophia Thomas,Dallas,Card Purchase,523.02,
+TXN00031,2026-11-06,1002345695,Michael Brown,Chicago,Salary Credit,,5600.00
+TXN00032,2026-11-06,1002345733,Daniel Anderson,Dallas,Bill Payment,302.35,
+TXN00033,2026-11-06,1002345702,Sarah Davis,Chicago,Loan EMI,639.02,
+TXN00034,2026-11-06,1002345733,Daniel Anderson,Dallas,Cash Deposit,,3306.71
+TXN00035,2026-11-06,1002345695,Michael Brown,Chicago,Cash Deposit,,2814.88
+TXN00036,2026-11-06,1002345671,James Carter,New York,Cash Withdrawal,1533.95,
+TXN00037,2026-11-06,1002345702,Sarah Davis,Chicago,Bill Payment,423.25,
+TXN00038,2026-11-06,1002345671,James Carter,New York,Cash Deposit,,2743.70
+TXN00039,2026-11-09,1002345757,Robert Taylor,Boston,Card Purchase,141.20,
+TXN00040,2026-11-09,1002345771,William Jackson,Seattle,Card Purchase,363.17,
+TXN00041,2026-11-09,1002345733,Daniel Anderson,Dallas,Bill Payment,527.43,
+TXN00042,2026-11-09,1002345733,Daniel Anderson,Dallas,Interest Credit,,30.80
+TXN00043,2026-11-09,1002345719,David Wilson,Houston,Cash Withdrawal,1998.56,
+TXN00044,2026-11-09,1002345733,Daniel Anderson,Dallas,Transfer In,,790.15
+TXN00045,2026-11-09,1002345757,Robert Taylor,Boston,Bill Payment,116.06,
+TXN00046,2026-11-10,1002345757,Robert Taylor,Boston,Transfer Out,2874.92,
+TXN00047,2026-11-10,1002345702,Sarah Davis,Chicago,Transfer In,,3819.33
+TXN00048,2026-11-10,1002345740,Sophia Thomas,Dallas,Loan EMI,1316.00,
+TXN00049,2026-11-10,1002345771,William Jackson,Seattle,Salary Credit,,3100.00
+TXN00050,2026-11-10,1002345695,Michael Brown,Chicago,Cash Withdrawal,1405.60,
+TXN00051,2026-11-10,1002345757,Robert Taylor,Boston,Transfer In,,2521.06
+TXN00052,2026-11-10,1002345719,David Wilson,Houston,Bill Payment,362.42,
+TXN00053,2026-11-10,1002345702,Sarah Davis,Chicago,Bill Payment,359.56,
+TXN00054,2026-11-10,1002345771,William Jackson,Seattle,Bill Payment,105.80,
+TXN00055,2026-11-10,1002345719,David Wilson,Houston,Cash Deposit,,2293.05
+TXN00056,2026-11-10,1002345688,Emily Johnson,New York,Loan EMI,2018.23,
+TXN00057,2026-11-10,1002345788,Ava White,Seattle,Transfer Out,2296.21,
+TXN00058,2026-11-11,1002345688,Emily Johnson,New York,Bill Payment,202.23,
+TXN00059,2026-11-11,1002345688,Emily Johnson,New York,Transfer In,,1326.95
+TXN00060,2026-11-11,1002345719,David Wilson,Houston,Transfer In,,154.10
+TXN00061,2026-11-11,1002345719,David Wilson,Houston,Cash Withdrawal,129.32,
+TXN00062,2026-11-11,1002345688,Emily Johnson,New York,Transfer In,,1308.68
+TXN00063,2026-11-11,1002345688,Emily Johnson,New York,Loan EMI,1652.96,
+TXN00064,2026-11-11,1002345726,Olivia Martinez,Houston,Interest Credit,,39.20
+TXN00065,2026-11-11,1002345771,William Jackson,Seattle,Loan EMI,1730.29,
+TXN00066,2026-11-11,1002345733,Daniel Anderson,Dallas,Interest Credit,,21.17
+TXN00067,2026-11-11,1002345740,Sophia Thomas,Dallas,Cash Withdrawal,1384.25,
+TXN00068,2026-11-11,1002345688,Emily Johnson,New York,Loan EMI,2222.60,
+TXN00069,2026-11-11,1002345771,William Jackson,Seattle,Card Purchase,241.39,
+TXN00070,2026-11-11,1002345719,David Wilson,Houston,Card Purchase,333.56,
+TXN00071,2026-11-11,1002345788,Ava White,Seattle,Loan EMI,2256.83,
+TXN00072,2026-11-12,1002345719,David Wilson,Houston,Loan EMI,1079.11,
+TXN00073,2026-11-12,1002345688,Emily Johnson,New York,Transfer In,,1724.88
+TXN00074,2026-11-12,1002345764,Emma Moore,Boston,Card Purchase,497.10,
+TXN00075,2026-11-12,1002345726,Olivia Martinez,Houston,Salary Credit,,3300.00
+TXN00076,2026-11-12,1002345688,Emily Johnson,New York,Salary Credit,,3600.00
+TXN00077,2026-11-12,1002345671,James Carter,New York,Cash Deposit,,1899.40
+TXN00078,2026-11-12,1002345771,William Jackson,Seattle,Card Purchase,285.97,
+TXN00079,2026-11-12,1002345733,Daniel Anderson,Dallas,Bill Payment,245.78,
+TXN00080,2026-11-12,1002345733,Daniel Anderson,Dallas,Cash Withdrawal,1575.54,
+TXN00081,2026-11-12,1002345771,William Jackson,Seattle,Transfer In,,588.31
+TXN00082,2026-11-12,1002345757,Robert Taylor,Boston,Cash Deposit,,3642.88
+TXN00083,2026-11-12,1002345757,Robert Taylor,Boston,Loan EMI,1293.72,
+TXN00084,2026-11-12,1002345719,David Wilson,Houston,Transfer Out,876.07,
+TXN00085,2026-11-12,1002345671,James Carter,New York,Transfer In,,1967.49
+TXN00086,2026-11-12,1002345719,David Wilson,Houston,Card Purchase,142.02,
+TXN00087,2026-11-12,1002345771,William Jackson,Seattle,Bill Payment,511.75,
+TXN00088,2026-11-12,1002345757,Robert Taylor,Boston,Cash Deposit,,4357.41
+TXN00089,2026-11-13,1002345757,Robert Taylor,Boston,Transfer Out,1258.42,
+TXN00090,2026-11-13,1002345757,Robert Taylor,Boston,Transfer Out,1179.49,
+TXN00091,2026-11-13,1002345771,William Jackson,Seattle,Card Purchase,572.52,
+TXN00092,2026-11-13,1002345702,Sarah Davis,Chicago,Cash Withdrawal,1943.37,
+TXN00093,2026-11-13,1002345771,William Jackson,Seattle,Bill Payment,132.97,
+TXN00094,2026-11-13,1002345788,Ava White,Seattle,Card Purchase,371.19,
+TXN00095,2026-11-13,1002345726,Olivia Martinez,Houston,Card Purchase,224.61,
+TXN00096,2026-11-13,1002345719,David Wilson,Houston,Cash Withdrawal,481.86,
+TXN00097,2026-11-13,1002345726,Olivia Martinez,Houston,Cash Withdrawal,969.36,
+TXN00098,2026-11-13,1002345740,Sophia Thomas,Dallas,Card Purchase,612.59,
+TXN00099,2026-11-13,1002345719,David Wilson,Houston,Salary Credit,,6100.00
+TXN00100,2026-11-13,1002345695,Michael Brown,Chicago,Bill Payment,52.92,

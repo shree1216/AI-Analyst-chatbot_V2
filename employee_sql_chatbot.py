@@ -297,7 +297,7 @@ copy_response_component = st.components.v2.component(
 
 
 def render_copy_response(answer: str, render_key: str) -> None:
-    copy_response_component(data={"text": answer}, key=f"copy_response_{render_key}")
+    copy_response_component(data={"text": answer}, key=f"copy_response_{render_key}", width="content")
 
 
 chat_scroll_component = st.components.v2.component(
@@ -1742,6 +1742,16 @@ def synthesize_speech(answer: str) -> bytes | None:
     if result.reason != speechsdk.ResultReason.SynthesizingAudioCompleted:
         return None
     return bytes(result.audio_data)
+
+
+def spoken_text(answer: str) -> str:
+    """Turn a Markdown answer into plain sentences for read-aloud (no symbols, code or table rules)."""
+    text = re.sub(r"```.*?```", " ", answer, flags=re.S)
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+    text = re.sub(r"^\s*\|?\s*:?-{3,}.*$", " ", text, flags=re.M)
+    text = re.sub(r"^\s{0,3}(?:#{1,6}|[-*+]|\d+\.)\s+", "", text, flags=re.M)
+    text = re.sub(r"[*_`#>|]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def filter_description(parameters: dict[str, Any]) -> str:
@@ -3999,9 +4009,7 @@ def uploaded_data_message(question: str, enabled: bool) -> dict[str, Any] | None
             file_name=workbook["file_name"], edit_base_digest=workbook["digest"],
             chart_upload_digest=workbook.get("upload_digest", workbook["digest"]),
             workbook_content=workbook["content"],
-            chart_placement=chart_placement_for_question(
-                question, st.session_state.get("excel_chart_placement", "new_sheet"),
-            ),
+            chart_placement=chart_placement_for_question(question, "new_sheet"),
         )
     except ValueError as error:
         logger.warning("Uploaded data exploration failed: %s", type(error).__name__)
@@ -4307,7 +4315,7 @@ def display_uploaded_data(message: dict[str, Any], render_key: str) -> str | Non
             if message.get("chart_placement") == "same_sheet":
                 where = f"beside the original data in '{message['dashboard_sheet']}'"
             elif message.get("dashboard_tables_sheet"):
-                where = (f"on a '{message['dashboard_sheet']}' tab, with their data on a "
+                where = (f"on a '{message['dashboard_sheet']}' tab, with the summary and supporting tables on a "
                          f"'{message['dashboard_tables_sheet']}' tab")
             else:
                 where = f"on tab '{message['dashboard_sheet']}'"
@@ -4388,7 +4396,7 @@ def build_excel_chart(
     question: str, content: bytes, sources: dict[str, Any], schemas: dict[str, dict[str, str]],
     selected_sheet: str, trace: BackendTrace,
 ):
-    placement = chart_placement_for_question(question, st.session_state.get("excel_chart_placement", "new_sheet"))
+    placement = chart_placement_for_question(question, "new_sheet")
     proposed = local_excel_chart_plan(question, schemas, selected_sheet)
     if proposed is not None:
         try:
@@ -5311,18 +5319,6 @@ def apply_theme() -> None:
                 padding: 0.55rem 0.7rem;
             }
 
-            .attach-hint {
-                border: 1px dashed #D6CFC8;
-                border-radius: 10px;
-                color: var(--wc-muted);
-                font-size: 0.8rem;
-                line-height: 1.45;
-                margin: 0.4rem 0 0.6rem;
-                padding: 0.6rem 0.7rem;
-            }
-
-            .attach-hint strong { color: var(--wc-accent); }
-
             .sidebar-caption, .recent-chat {
                 color: var(--wc-muted);
                 font-size: 0.82rem;
@@ -5834,7 +5830,6 @@ if workbook_action:
             workbook["requested_sheet"] = workbook_action["sheet"]
             workbook["sheet_widget_version"] = workbook.get("sheet_widget_version", 0) + 1
 voice_enabled = speech_is_configured()
-read_answers_aloud = False
 excel_frame = None
 excel_source = None
 excel_selected = False
@@ -5890,6 +5885,8 @@ data_uploads = [upload for upload in attachments if Path(upload.name).suffix.cas
 image_uploads = [upload for upload in attachments if upload not in data_uploads]
 if data_uploads:
     attached_workbook = attach_data_file(data_uploads[0].getvalue(), data_uploads[0].name)
+    if st.session_state.pop("open_grid_after_upload", False) and attached_workbook.get("content") is not None:
+        st.session_state["show_data_grid"] = True
     st.toast(
         attachment_answer(attached_workbook, [upload.name for upload in data_uploads[1:]]),
         icon=":material/attach_file:" if attached_workbook.get("content") is not None else ":material/error:",
@@ -5919,7 +5916,12 @@ def queue_home_prompt(prompt: str) -> None:
 def open_data_grid() -> None:
     workbook = st.session_state.get("excel_workbook")
     if workbook is None or workbook.get("content") is None:
-        st.session_state["home_notice"] = "Attach an Excel, CSV, Parquet or PDF file with the + button to open the data grid."
+        # A file shown in the message bar only reaches the app when it is sent, so open the grid after upload.
+        st.session_state["open_grid_after_upload"] = True
+        st.session_state["home_notice"] = (
+            "Press send (↑) to upload the file in the message bar. The data grid opens automatically. "
+            "No file yet? Attach one with the + button."
+        )
         return
     if st.session_state.get("data_source") == "Employee database":
         st.session_state["data_source"] = "Automatic (SQL + Excel)"
@@ -6199,12 +6201,6 @@ with st.sidebar:
                 "Remove file", key="remove_active_file", type="tertiary", icon=":material/close:",
                 on_click=remove_active_file, use_container_width=True,
             )
-        else:
-            st.markdown(
-                '<div class="attach-hint">Attach Excel, CSV, Parquet or PDF files with the <strong>+</strong> '
-                f"button in the message bar (up to {MAX_UPLOAD_MB} MB).</div>",
-                unsafe_allow_html=True,
-            )
         if remembered_workbook and remembered_workbook.get("content") is not None:
             content = remembered_workbook["content"]
             file_name = remembered_workbook["file_name"]
@@ -6263,27 +6259,10 @@ with st.sidebar:
         else:
             st.session_state.pop("excel_workbook", None)
 
-        st.selectbox(
-            "Excel chart placement", ["new_sheet", "same_sheet"],
-            format_func=lambda value: {
-                "new_sheet": "Separate Dashboard + Tables tabs", "same_sheet": "Same worksheet (beside the data)",
-            }[value],
-            key="excel_chart_placement",
-            help="Separate tabs keep your data sheet clean and give a presentation-ready Dashboard tab. "
-                 "Existing data cells are never overwritten.",
-        )
-
     st.markdown('<div class="recent-label">Recent chats</div>', unsafe_allow_html=True)
     recent_chats_placeholder = st.empty()
     render_recent_chats(recent_chats_placeholder)
 
-    st.markdown('<div class="recent-label">Voice</div>', unsafe_allow_html=True)
-    read_answers_aloud = st.toggle(
-        "Read responses aloud",
-        key="read_answers_aloud",
-        disabled=not voice_enabled,
-        help=None if voice_enabled else "Voice input (the mic in the message bar) and read-aloud need Azure Speech.",
-    )
     st.markdown(
         '<div class="sidebar-credit"><strong>Created by Vijayashree</strong><br>All rights reserved 2026</div>',
         unsafe_allow_html=True,
@@ -6540,15 +6519,23 @@ for index, message in enumerate(history):
         else:
             with st.spinner("Thinking...") if pending else nullcontext():
                 answer = display_employee_message(message, str(index), conversation_context(history[:index]))
-        if read_answers_aloud and answer:
-            audio_response = synthesize_speech(answer)
-            if audio_response:
-                st.audio(audio_response, format="audio/wav")
-        if answer and (
-            message.get("kind") == "image"
-            or getattr(message.get("request"), "response_kind", None) != "business_report"
-        ):
-            render_copy_response(answer, str(index))
+        if answer:
+            # Copy and read-aloud sit together at the end of every answer.
+            with st.container(horizontal=True, gap="small", vertical_alignment="center"):
+                if message.get("kind") == "image" or getattr(message.get("request"), "response_kind", None) != "business_report":
+                    render_copy_response(answer, str(index))
+                read_aloud = st.button(
+                    "", icon=":material/volume_up:", key=f"read_aloud_{index}", type="tertiary",
+                    help="Read this answer aloud" if voice_enabled else "Read aloud needs Azure Speech settings.",
+                    disabled=not voice_enabled,
+                )
+            if read_aloud:
+                with st.spinner("Preparing audio..."):
+                    audio_response = synthesize_speech(spoken_text(answer))
+                if audio_response:
+                    st.audio(audio_response, format="audio/wav", autoplay=True)
+                else:
+                    st.warning("Read aloud is unavailable right now. Please try again.")
 
 backend_events = (
     [event for message in history for event in message.get("backend_log", [])]

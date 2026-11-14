@@ -1,0 +1,15 @@
+﻿PASS  All 50 employees: Bonus, Deductions and Net Pay match independent calculation [0 mismatches]
+PASS  Total Bonus [38,152.50]
+PASS  Total Deductions [49,774.00]
+PASS  Total Net Pay [2,85,578.50]
+PASS  Manual case 1: Top rating, below tax limit [bonus 800.00, deductions 630.00]
+PASS  Manual case 2: Salary exactly at tax limit [bonus 500.00, deductions 750.00]
+PASS  Manual case 3: Salary above tax limit [bonus 900.00, deductions 970.00]
+PASS  Manual case 4: Needs improvement [bonus 500.00, deductions 1,850.00]
+PASS  Manual case 5: Unsatisfactory - no bonus [bonus 0.00, deductions 1,520.00]
+PASS  Manual case 6: Outstanding, high salary [bonus 2,400.00, deductions 2,290.00]
+PASS  Manual case 7: Bonus with cents [bonus 487.50, deductions 540.00]
+PASS  Manual case 8: Invalid rating (6) [bonus #VALUE!, deductions 1,190.00]
+PASS  Manual case 9: Invalid salary (0) [bonus #VALUE!, deductions #VALUE!]
+PASS  UDFs recalculate when rating changes
+PASS  Text salary returns #VALUE!

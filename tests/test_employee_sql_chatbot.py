@@ -1194,7 +1194,7 @@ class WorkforceTests(unittest.TestCase):
             self.chatbot.render_copy_response(answer, "first")
             self.chatbot.render_copy_response("Another answer", "second")
         self.assertEqual(component.call_args_list[0].kwargs, {
-            "data": {"text": answer}, "key": "copy_response_first",
+            "data": {"text": answer}, "key": "copy_response_first", "width": "content",
         })
         self.assertEqual(component.call_args_list[1].kwargs["key"], "copy_response_second")
 

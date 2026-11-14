@@ -1,0 +1,84 @@
+﻿{
+    "validatedAt":  "2026-11-07T16:35:47.2651655Z",
+    "workbook":  "C:\\Users\\sushindra\\OneDrive\\Desktop\\practice_py\\myfirstproject\\banking_macro_demo\\Banking_Transactions_Demo.xlsm",
+    "engine":  "Desktop Excel VBA",
+    "worksheetIsolation":  true,
+    "tests":  [
+                  {
+                      "test":  "Baseline calculations, formatting, input preservation, and state restoration",
+                      "result":  "PASS"
+                  },
+                  {
+                      "test":  "Rerun without duplicated output columns or totals",
+                      "result":  "PASS"
+                  },
+                  {
+                      "test":  "Renamed worksheet, reordered columns, title rows, and added data",
+                      "result":  "PASS"
+                  },
+                  {
+                      "test":  "Inserted table row included in formulas and totals",
+                      "result":  "PASS"
+                  },
+                  {
+                      "test":  "Deleted table row and totals correctly resized",
+                      "result":  "PASS"
+                  },
+                  {
+                      "test":  "Duplicate transaction ID refused before formatting",
+                      "result":  "PASS"
+                  },
+                  {
+                      "test":  "Missing ID",
+                      "result":  "PASS"
+                  },
+                  {
+                      "test":  "Missing header",
+                      "result":  "PASS"
+                  },
+                  {
+                      "test":  "Duplicate header",
+                      "result":  "PASS"
+                  },
+                  {
+                      "test":  "Negative debit",
+                      "result":  "PASS"
+                  },
+                  {
+                      "test":  "Text amount",
+                      "result":  "PASS"
+                  },
+                  {
+                      "test":  "Fractional cent",
+                      "result":  "PASS"
+                  },
+                  {
+                      "test":  "Both debit and credit",
+                      "result":  "PASS"
+                  },
+                  {
+                      "test":  "Neither debit nor credit",
+                      "result":  "PASS"
+                  },
+                  {
+                      "test":  "Invalid date",
+                      "result":  "PASS"
+                  },
+                  {
+                      "test":  "Mixed currency",
+                      "result":  "PASS"
+                  },
+                  {
+                      "test":  "Protected sheet refused without unprotecting",
+                      "result":  "PASS"
+                  },
+                  {
+                      "test":  "Empty dataset refused explicitly",
+                      "result":  "PASS"
+                  },
+                  {
+                      "test":  "Data below totals refused explicitly",
+                      "result":  "PASS"
+                  }
+              ]
+}

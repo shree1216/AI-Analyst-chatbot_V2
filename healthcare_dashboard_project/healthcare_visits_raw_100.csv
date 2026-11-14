@@ -1,0 +1,101 @@
+Visit ID,Patient ID,Patient Name,Department,Doctor,Appointment Date,Visit Type,Status,Billing Amount
+V0001,PT1038,Daniel Jackson,Pediatrics,Dr. Omar Haddad,2026-08-01,Follow-up,No-Show,
+V0002,PT1003,Andrew Young,Dermatology,Dr. Rachel Green,2026-08-01,Follow-up,Completed,105.00
+V0003,PT1057,Michael Carter,Cardiology,Dr. Alan Reed,2026-08-04,New,no-show,
+V0004,PT1033, Sarah Walker  ,ORTHOPEDICS,Dr. Priya Nair,2026-08-09,Follow-up,Completed,395.00
+V0005,PT1014,William Brown,General Medicine,Dr. Emily Stone,2026-08-09,Follow-up,completed,55.00
+V0006,PT1017, David Jackson  ,Pediatrics,Dr. Laura Chen,2026-08-09,New,Completed,195.00
+V0007,PT1032,Grace Taylor,general medicine,Dr. John Miller,2026-08-11,follow-up,Completed,100.00
+V0008,PT1055,Mia Wilson,Cardiology,Dr. Alan Reed,2026-08-12,Follow-up,COMPLETED,555.00
+V0009,PT1029,Charles Davis,Dermatology,Dr. Rachel Green,2026-08-12,New,completed,195.00
+V0010,PT1022,Sarah Lewis,General Medicine,Dr. John Miller,2026-08-13,Follow-up,Cancelled,0.00
+V0011,PT1008,Sarah Walker,Dermatology,Dr. Samuel Ortiz,2026-08-14,New,Completed,280.00
+V0012,PT1033,sarah walker,General Medicine,Dr. Emily Stone,2026-08-14,Follow-up,Completed,145.00
+V0013,PT1042,Charles Young,General Medicine,Dr. Emily Stone,2026-08-15,New,Completed,80.00
+V0014,PT1054,Sarah Anderson,Dermatology,Dr. Rachel Green,2026-08-16,New,Completed,185.00
+V0015,PT1010,William Anderson,Cardiology,Dr. Maria Lopez,2026-08-18,New,completed,485.00
+V0016,PT1038,Daniel Jackson,Dermatology,Dr. Rachel Green,2026-08-18,Follow-up,Completed,295.00
+V0017,PT1007,Sarah Jackson,ORTHOPEDICS,Dr. Priya Nair,2026-08-20,follow-up,Cancelled,
+V0018,PT1049,Thomas Moore,Orthopedics,Dr. Priya Nair,2026-08-21,Follow-up,Completed,270.00
+V0019,PT1054,Sarah Anderson,Pediatrics,Dr. Omar Haddad,2026-08-22,Follow-up,Completed,105.00
+V0020,PT1024,Joseph Moore,Orthopedics,Dr. Priya Nair,2026-08-26,New,Completed,370.00
+V0021,PT1028,David Johnson,orthopedics,Dr. Priya Nair,2026-08-26,Follow-up,Completed,280.00
+V0022,PT1025,Mia Young,Cardiology,Dr. Maria Lopez,2026-08-28,New,Completed,485.00
+V0023,PT1003,Andrew Young,General Medicine,Dr. Emily Stone,2026-08-28,Follow-up,Completed,50.00
+V0024,PT1054,sarah anderson,General Medicine,Dr. Emily Stone,2026-08-28,follow-up,Completed,55.00
+V0025,PT1032,Grace Taylor,Orthopedics,Dr. Kevin Shaw,2026-08-30,New,Completed,225.00
+V0026,PT1029,CHARLES DAVIS,Orthopedics,Dr. Kevin Shaw,2026-08-31,NEW, Completed  ,410.00
+V0027,PT1046,Mia Johnson,Pediatrics,Dr. Omar Haddad,2026-09-02,Follow-up,Completed,195.00
+V0028,PT1031,Grace Wilson,GENERAL MEDICINE,Dr. Emily Stone,2026-09-03,Follow-up,Cancelled,
+V0029,PT1023,Charles Young,Orthopedics,Dr. Priya Nair,2026-09-03,New,Cancelled,0.00
+V0030,PT1032,Grace Taylor, Dermatology  ,Dr. Samuel Ortiz,2026-09-04,Follow-up,Completed,160.00
+V0031,PT1011,Joseph Moore,Cardiology,Dr. Maria Lopez,2026-09-04,New,Completed,530.00
+V0032,PT1001,Charles Davis,Pediatrics,Dr. Omar Haddad,2026-09-07, Follow-up  ,Completed,
+V0033,PT1020,Mia Brown, Orthopedics  ,Dr. Kevin Shaw,2026-09-07, New  ,Completed,360.00
+V0034,PT1051,Mia Young,DERMATOLOGY,Dr. Samuel Ortiz,2026-09-08,New,completed,260.00
+V0035,PT1048,Thomas Davis,Orthopedics,Dr. Kevin Shaw,2026-09-09,Follow-up,Completed,390.00
+V0036,PT1034,Grace Moore, Cardiology  ,Dr. Alan Reed,2026-09-09,follow-up,Completed,390.00
+V0034,PT1051,Mia Young,DERMATOLOGY,Dr. Samuel Ortiz,2026-09-08,New,completed,260.00
+V0037,PT1054,Sarah Anderson, Dermatology  ,Dr. Rachel Green,2026-09-09,New,Cancelled,0.00
+V0038,PT1053,Grace Harris,General Medicine,Dr. Emily Stone,2026-09-10,Follow-up,Completed,115.00
+V0039,PT1013,Joseph Brown,General Medicine,Dr. John Miller,2026-09-11,New,completed,95.00
+V0040,PT1022, Sarah Lewis  ,Dermatology,Dr. Samuel Ortiz,2026-09-11,New, Completed  ,130.00
+V0041,PT1050,Thomas Martinez,Orthopedics,Dr. Priya Nair,2026-09-11,Follow-up,completed,320.00
+V0042,PT1035,Chloe Clark, Orthopedics  ,Dr. Priya Nair,2026-09-11,Follow-up,COMPLETED,315.00
+V0043,PT1022,Sarah Lewis,Pediatrics,Dr. Omar Haddad,2026-09-12,new,COMPLETED,180.00
+V0044,PT1036,Emma Young,Cardiology,Dr. Alan Reed,2026-09-13,New,completed,530.00
+V0045,PT1025,Mia Young,Cardiology,Dr. Alan Reed,2026-09-14,New,Completed,340.00
+V0046,PT1021,Joseph Young,Dermatology,Dr. Rachel Green,2026-09-14,Follow-up,Completed,195.00
+V0047,PT1020,Mia Brown,Pediatrics,Dr. Omar Haddad,2026-09-15,Follow-up,completed,150.00
+V0048,PT1024,Joseph Moore,Dermatology,Dr. Samuel Ortiz,2026-09-16,Follow-up,Completed,255.00
+V0049,PT1037,Joseph Lewis,CARDIOLOGY,Dr. Alan Reed,2026-09-19,New,Completed,430.00
+V0050,PT1051,Mia Young,cardiology,Dr. Alan Reed,2026-09-20,Follow-up,COMPLETED,595.00
+V0051,PT1058, Thomas Brown  ,,Dr. Kevin Shaw,2026-09-20,Follow-up, Completed  ,480.00
+V0052,PT1029,Charles Davis,General Medicine,Dr. John Miller,2026-09-21,follow-up,completed,145.00
+V0053,PT1017,David Jackson,Orthopedics,Dr. Kevin Shaw,2026-09-22,New,COMPLETED,395.00
+V0054,PT1014,WILLIAM BROWN,Pediatrics,Dr. Omar Haddad,,New,completed,110.00
+V0055,PT1032,Grace Taylor,Dermatology,Dr. Rachel Green,2026-09-25,follow-up,Completed,295.00
+V0056,PT1036,Emma Young,General Medicine,Dr. Emily Stone,2026-09-26,New,completed,130.00
+V0057,PT1052,Michael Moore,Orthopedics,Dr. Priya Nair,2026-09-27, Follow-up  ,No-Show,0.00
+V0058,PT1041,Lily Walker,Orthopedics,Dr. Kevin Shaw,2026-09-30,Follow-up,completed,465.00
+V0059,PT1021, Joseph Young  ,General Medicine,Dr. John Miller,2026-10-01,follow-up, Completed  ,95.00
+V0060,PT1019,Ava Walker,Cardiology,Dr. Alan Reed,2026-10-02,Follow-up, No-Show  ,
+V0061,PT1007,Sarah Jackson,Cardiology,Dr. Maria Lopez,2026-10-03,Follow-up,Cancelled,0.00
+V0062,PT1053,Grace Harris,Orthopedics,Dr. Kevin Shaw,2026-10-04,New,completed,385.00
+V0063,PT1044, Robert Young  ,Orthopedics,Dr. Kevin Shaw,2026-10-05,New,NO-SHOW,0.00
+V0064,PT1041,Lily Walker,Pediatrics,Dr. Omar Haddad,2026-10-05,Follow-up,Completed,145.00
+V0065,PT1015,Chloe Jackson,Cardiology,Dr. Maria Lopez,2026-10-05,New,Completed,505.00
+V0066,PT1031,Grace Wilson,Dermatology,Dr. Samuel Ortiz,2026-10-05,Follow-up,Completed,250.00
+V0067,PT1056,Thomas Carter,Pediatrics,Dr. Omar Haddad,2026-10-05,Follow-up,Cancelled,0.00
+V0068,PT1000,Sarah White,Pediatrics,Dr. Laura Chen,2026-10-06,Follow-up,Completed,155.00
+V0069,PT1055,Mia Wilson,Cardiology,Dr. Alan Reed,2026-10-07,Follow-up,Completed,310.00
+V0070,PT1034, Grace Moore  ,Cardiology,Dr. Alan Reed,2026-10-07,Follow-up,Completed,325.00
+V0071,PT1000, Sarah White  ,Cardiology,Dr. Alan Reed,2026-10-09,New,Completed,370.00
+V0072,PT1031,GRACE WILSON,Orthopedics,Dr. Kevin Shaw,2026-10-10,Follow-up,completed,225.00
+V0073,PT1043,Ava Anderson,PEDIATRICS,Dr. Omar Haddad,2026-10-10,New,Cancelled,
+V0074,PT1027,andrew taylor,Dermatology,Dr. Rachel Green,2026-10-12,New,Completed,210.00
+V0075,PT1050,thomas martinez,Orthopedics,Dr. Kevin Shaw,2026-10-13,Follow-up, Completed  ,330.00
+V0076,PT1016, Emma Walker  ,Orthopedics,Dr. Priya Nair,2026-10-13, Follow-up  ,Cancelled,0.00
+V0077,PT1029, Charles Davis  ,Orthopedics,Dr. Kevin Shaw,2026-10-14,Follow-up,Completed,460.00
+V0073,PT1043,Ava Anderson,PEDIATRICS,Dr. Omar Haddad,2026-10-10,New,Cancelled,
+V0075,PT1050,thomas martinez,Orthopedics,Dr. Kevin Shaw,2026-10-13,Follow-up, Completed  ,330.00
+V0078,PT1016,emma walker,Orthopedics,Dr. Priya Nair,2026-10-17,Follow-up,Cancelled,
+V0079,PT1007,Sarah Jackson,Dermatology,Dr. Rachel Green,2026-10-17,Follow-up,Completed,185.00
+V0080,PT1048,Thomas Davis,Dermatology,Dr. Samuel Ortiz,2026-10-17,Follow-up,Completed,215.00
+V0081,PT1000,Sarah White,Orthopedics,Dr. Kevin Shaw,2026-10-19,New,Completed,380.00
+V0082,PT1024,joseph moore,orthopedics,Dr. Kevin Shaw,2026-10-19,New,Cancelled,0.00
+V0083,PT1039,Robert Carter,Pediatrics,Dr. Omar Haddad,2026-10-19,NEW, Completed  ,155.00
+V0084,PT1004,Andrew Walker,General Medicine,Dr. Emily Stone,2026-10-20, New  ,Completed,55.00
+V0085,PT1048,Thomas Davis,General Medicine,Dr. Emily Stone,2026-10-22,New,Completed,140.00
+V0086,PT1009,James Young,Orthopedics,Dr. Kevin Shaw,2026-10-23,Follow-up,No-Show,
+V0087,PT1030,Lily Lewis,Pediatrics,Dr. Laura Chen,2026-10-26,Follow-up,Completed,175.00
+V0088,PT1029,Charles Davis,Pediatrics,Dr. Laura Chen,2026-10-28,New,Completed,120.00
+V0089,PT1023,Charles Young,Pediatrics,Dr. Omar Haddad,2026-10-28,New,Completed,200.00
+V0085,PT1048,Thomas Davis,General Medicine,Dr. Emily Stone,2026-10-22,New,Completed,140.00
+V0090,PT1019,Ava Walker,Pediatrics,Dr. Omar Haddad,2026-10-28,New,COMPLETED,145.00
+V0091,PT1043,Ava Anderson,cardiology,Dr. Maria Lopez,2026-10-29, Follow-up  ,Completed,475.00
+V0092,PT1039, Robert Carter  ,General Medicine,Dr. John Miller,2026-10-29,Follow-up,Completed,130.00
+V0093,PT1058,Thomas Brown,Orthopedics,Dr. Kevin Shaw,2026-10-30,New,Completed,320.00
+V0094,PT1043,Ava Anderson,General Medicine,Dr. John Miller,2026-10-30,New,Completed,80.00
+V0095,PT1056,THOMAS CARTER, Orthopedics  ,Dr. Priya Nair,2026-10-31,New,Completed,360.00
+V0096,PT1053,GRACE HARRIS,Pediatrics,Dr. Omar Haddad,2026-10-31,Follow-up, Completed  ,170.00

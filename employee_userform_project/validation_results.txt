@@ -1,0 +1,14 @@
+﻿PASS  Dashboard tiles (total, active, on leave, average salary) [100 / 90 / 5 / 68590]
+PASS  Headcount by department matches data
+PASS  Dashboard button opens the form
+PASS  Form loads with 30 controls and filled dropdowns (2 genders, 6 departments, 3 statuses) [30, 2, 6, 3]
+PASS  New mode: next ID shown, Add enabled, Update disabled
+PASS  Search result loads into the form (edit mode) [Emily White | Editing employee EMP005]
+PASS  Search by ID (any case), full name, partial name; unknown = not found
+PASS  Valid input passes validation
+PASS  Invalid input: all 9 problems reported [9 messages, e.g. '- Full Name is required (letters and spaces only).']
+PASS  Duplicate email rejected, but allowed for the same employee on update
+PASS  Add: saved as EMP101 with clean values [OK:EMP101 | Jane Doe | 15-Mar-2024]
+PASS  Add with invalid input is refused and nothing is saved
+PASS  Update: row changed in place, dashboard refreshed
+PASS  Delete: record removed and no longer found

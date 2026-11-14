@@ -1,0 +1,12 @@
+﻿PASS  Sheets: Dashboard, 3 monthly reports, Clean Data, Raw Data
+PASS  Clean records / duplicates / incomplete [clean=93, dup=4, incomplete=3]
+PASS  Clean Data: unique IDs, standard departments and statuses [Cardiology, Dermatology, General Medicine, Orthopedics, Pediatrics | Cancelled, Completed, No-Show]
+PASS  KPI Total Appointments [93]
+PASS  KPI Completion Rate [81.7%]
+PASS  KPI Total Revenue [19,755.00]
+PASS  KPI Average Bill [259.93]
+PASS  Department performance (values, sorted by revenue, total row)
+PASS  Monthly trend table and monthly report sheets
+PASS  Dashboard has 3 charts and the Refresh button
+PASS  Refresh is repeatable (same sheets, charts and totals)
+PASS  New month in raw data creates a new monthly report

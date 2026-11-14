@@ -1,0 +1,32 @@
+﻿[
+    {
+        "Fault":  "Hard-coded sheet name Sheets(\"Daily Report\")",
+        "Evidence":  "Run-time ERROR 9: Subscript out of range (sheet was renamed to \u0027Raw Transactions\u0027)",
+        "Fix":  "Worksheet passed in as a parameter / ActiveSheet; no sheet names in code"
+    },
+    {
+        "Fault":  "Net formula =RC[-3]+RC[-2] adds Debit and Credit",
+        "Evidence":  "Recorded total 192,278.47 vs correct net 58,822.65",
+        "Fix":  "Net Amount = Credit - Debit, located by header name"
+    },
+    {
+        "Fault":  "Debit/Credit formatted as \"0%\"",
+        "Evidence":  "E6 displays 10698% / F6 displays 0%",
+        "Fix":  "#,##0.00 with negatives in red"
+    },
+    {
+        "Fault":  "Fixed column H overwrites new data",
+        "Evidence":  "Channel column H6 \u0027ATM\u0027 replaced by formula =E6+F6",
+        "Fix":  "Calculated columns appended after the last header"
+    },
+    {
+        "Fault":  "Fixed ranges A5:G5, E6:F105, H6:H105, H106",
+        "Evidence":  "On 110-row reordered layout: header row 8 not bolded; rows 106-118 missed; data cell H106 \u002746340\u0027 overwritten by =SUM(H6:H105)",
+        "Fix":  "Header row located by name in rows 1-20; ranges sized from data; Excel table with totals row"
+    },
+    {
+        "Fault":  "Select/Selection and no validation or error handling",
+        "Evidence":  "Depends on the active sheet; bad data formatted silently",
+        "Fix":  "Fully qualified ranges, row-level validation before any change, friendly error messages"
+    }
+]

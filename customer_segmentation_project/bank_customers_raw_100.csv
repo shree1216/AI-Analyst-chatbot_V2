@@ -1,0 +1,101 @@
+Customer ID,Customer Name,Age,City,Phone,Email,Account Type,Loan Type,Loan Amount
+CUST1001,Sarah Jackson,67,Boston,555-805-6747,SARAH.JACKSON31@EXAMPLE.COM,Savings,Car Loan,44500
+CUST1002,Hannah Jackson,43,Seattle,+1 555 961 6569,HANNAH.JACKSON32@EXAMPLE.COM,Savings,Home,409500
+CUST1003,Chloe Walker,53,Houston,555-767-9821,chloe.walker33@example.com,Savings,None,
+CUST1004,Kevin Young,27,New York,555-908-8515,kevin.young34@example.com,Fixed Deposit,None,
+CUST1005,chloe young,48,Seattle,555-551-3674,chloe.young35@example.com,Savings,Personal Loan,21000
+CUST1006,Nancy Clark,39,Seattle,555-265-0441,nancy.clark36@example.com,Fixed Deposit,Personal Loan,10500
+CUST1007,Daniel Clark,26,Chicago,555-239-3608,daniel.clark37@example.com,CURRENT,Home Loan,292500
+CUST1008,Susan Walker,55,boston,555-320-1443,susan.walker38@example.com,Fixed Deposit,Personal Loan,14000
+CUST1009,Daniel Harris,27,New York,555-682-1993,daniel.harris39@example.com,Savings,Home Loan,137000
+CUST1010,Charles Anderson,42,New York,(555) 216-6158,charles.anderson40@example.com,Fixed Deposit,Car Loan,16500
+CUST1011,Charles Anderson,65,Dallas,555.412.0649,CHARLES.ANDERSON41@EXAMPLE.COM,current,none,
+CUST1012,thomas davis,54,Dallas,555-488-1154,thomas.davis42@example.com,Fixed Deposit,CAR LOAN,15500
+CUST1013,Kevin Taylor,34,HOUSTON ,555-12,kevin.taylor43@example.com,Fixed Deposit,Personal Loan,8500
+CUST1014,GEORGE BROWN,31,new york,(555) 205-4935,george.brown44@example.com,Fixed Deposit,Home Loan,322000
+CUST1015,Lily Johnson,66,Seattle,555-876-2311,lily.johnson45@example.com,Current,No Loan,
+CUST1016,KEVIN CLARK,69,Houston,(555) 305-2109,kevin.clark46@example.com,savings,none,
+CUST1017,Lily Moore,29,Dallas,(555) 744-4227,lily.moore47@example.com,Fixed Deposit,HOME LOAN,164500
+CUST1018,James Taylor,47,Boston,555-250-0668,james.taylor48@example.com,Current,car loan,41500
+CUST1019,Sophia Walker,64,Houston,555.769.5356,sophia.walker49@example.com,Current,Home Loan,372000
+CUST1020,Andrew Moore,47,Boston,555-694-6386,ANDREW.MOORE50@EXAMPLE.COM,fixed deposit,Home Loan,87000
+CUST1021,Daniel Moore,77,New York,5553651537,DANIEL.MOORE51@EXAMPLE.COM,Savings,PERSONAL LOAN,6500
+CUST1022,Zoe Carter,71,New York,(555) 386-6978,zoe.carter52@example.com,Fixed Deposit,none,
+CUST1023,  Daniel  King ,29,New York,555-912-9648,DANIEL.KING53@EXAMPLE.COM,FIXED DEPOSIT,Home Loan,248500
+CUST1024,ANDREW WHITE,52,HOUSTON ,555-479-2454,ANDREW.WHITE54@EXAMPLE.COM,Savings,Home,159000
+CUST1025,  Thomas  Wilson ,28,,555-845-6619,THOMAS.WILSON55@EXAMPLE.COM,Fixed Deposit,Auto Loan,43500
+CUST1026,William Davis,52,Houston,5558120860,WILLIAM.DAVIS56@EXAMPLE.COM,current,Personal Loan,17000
+CUST1027,  Robert  Jackson ,50,Chicago,555.719.8079,robert.jackson57@example.com,FIXED DEPOSIT,Home,343500
+CUST1028,Hannah King,22,Boston,5554108116,HANNAH.KING58@EXAMPLE.COM,Current,Home,129500
+CUST1029,Grace White,33,Dallas,555-959-4862,grace.white59@example.com,Fixed Deposit,Home Loan,363500
+CUST1030,EMMA WALKER,54,Houston,555-920-7994,EMMA.WALKER60@EXAMPLE.COM,Fixed Deposit,Personal Loan,24500
+CUST1021,DANIEL MOORE,77,New York,5553651537,DANIEL.MOORE51@EXAMPLE.COM,Savings,PERSONAL LOAN,6500
+CUST1031,JAMES LEWIS,48,Seattle,555-961-8145,JAMES.LEWIS61@EXAMPLE.COM,Fixed Deposit,HOME LOAN,349500
+CUST1032,  David  Johnson ,23,Seattle,(555) 333-5198,david.johnson62@example.com,Fixed Deposit,None,
+CUST1033,Chloe Carter,53,chicago,555-881-2140,CHLOE.CARTER63@EXAMPLE.COM,Fixed Deposit,car loan,18000
+CUST1034,Daniel Brown,48,HOUSTON ,555-476-9051,daniel.brown64@example.com,Current,Car Loan,32000
+CUST1035,Chloe Walker,34,seattle,555-693-8050,CHLOE.WALKER65@EXAMPLE.COM,Savings,Home Loan,372000
+CUST1036,Emma White,54,Chicago,555-694-2204,emma.white66@example.com,FIXED DEPOSIT,Car Loan,58500
+CUST1037,michael lewis,55,Boston,555-563-2460,MICHAEL.LEWIS67@EXAMPLE.COM,FIXED DEPOSIT,car loan,29500
+CUST1038,OLIVIA KING,62,Seattle,+1 555 973 7793,olivia.king68@example.com,Current,,
+CUST1039,Grace Thomas,63,Dallas,(555) 899-1168,grace.thomas69@example.com,Savings,PERSONAL LOAN,22000
+CUST1040,Andrew Carter,54,BOSTON ,555-718-2184,andrew.carter70@example.com,current,CAR LOAN,36000
+CUST1040,ANDREW CARTER,54,BOSTON ,555-718-2184,andrew.carter70@example.com,current,CAR LOAN,36000
+CUST1041,Susan White,66,Boston,555-294-0945,susan.white71@example.com,Current,Home Loan,414000
+CUST1042,DANIEL WALKER,26,Boston,555.568.2900,daniel.walker72@example.com,fixed deposit,Home Loan,164500
+CUST1043,Joseph Lewis,21,chicago,555-249-9444,JOSEPH.LEWIS73@EXAMPLE.COM,Fixed Deposit,home loan,356500
+CUST1044,David Young,30,New York,+1 555 394 7862,david.young74@example.com,Fixed Deposit,No Loan,
+CUST1045,Hannah Carter,36,seattle,555-609-5902,HANNAH.CARTER75@EXAMPLE.COM,FIXED DEPOSIT,Personal Loan,5500
+CUST1046,CHARLES WALKER,79,dallas,(555) 621-9134,charles.walker76@example.com,Savings,home loan,393000
+CUST1047,Robert Lewis,74,Houston,555.788.6067,robert.lewis77@example.com,CURRENT,,
+CUST1048,Sophia Harris,42,SEATTLE ,5556081476,SOPHIA.HARRIS78@EXAMPLE.COM,Current,Home,315500
+CUST1044,DAVID YOUNG,30,New York,+1 555 394 7862,david.young74@example.com,Fixed Deposit,No Loan,
+CUST1049,Hannah Johnson,59,Chicago,555-599-8714,hannah.johnson79@example.com,Fixed Deposit,Personal Loan,10000
+CUST1005,CHLOE YOUNG,48,Seattle,555-551-3674,chloe.young35@example.com,Savings,Personal Loan,21000
+CUST1050,Ava Harris,47,Houston,(555) 749-9671,AVA.HARRIS80@EXAMPLE.COM,Savings,Car Loan,18000
+CUST1051,Charles Anderson,55,Dallas,555-464-6483,charles.anderson81@example.com,savings,car loan,48000
+CUST1052,Hannah Wilson,47,Boston,5554199040,HANNAH.WILSON82@EXAMPLE.COM,Current,CAR LOAN,14500
+CUST1053,Hannah Lewis,25,Seattle,555-852-9953,HANNAH.LEWIS83@EXAMPLE.COM,Current,CAR LOAN,40000
+CUST1054,Nancy Moore,48,SEATTLE ,5557121919,NANCY.MOORE84@EXAMPLE.COM,CURRENT,Home Loan,187500
+CUST1055,ZOE TAYLOR,49,new york,555-967-7339,ZOE.TAYLOR85@EXAMPLE.COM,Fixed Deposit,Home,306500
+CUST1056,Lily Harris,48,Houston,5556443169,lily.harris86@example.com,Savings,Personal Loan,22000
+CUST1057,Emma King,28,houston,555.538.9361,EMMA.KING87@EXAMPLE.COM,fixed deposit,,
+CUST1058,LINDA CLARK,62,Boston,555-751-2004,linda.clark88@example.com,Current,home loan,233500
+CUST1059,  David  Taylor ,31,Dallas,(555) 181-9136,DAVID.TAYLOR89@EXAMPLE.COM,SAVINGS,Personal Loan,5500
+CUST1060,William Martinez,39,Houston,(555) 882-3429,WILLIAM.MARTINEZ90@EXAMPLE.COM,current,None,
+CUST1061,Michael Thomas,N/A,DALLAS ,555.425.7875,michael.thomas91@example.com,Current,Car Loan,41000
+CUST1062,Emma King,67,CHICAGO ,555-563-1390,emma.king92@example.com,SAVINGS,Home Loan,384000
+CUST1063,  ,40,chicago,5552139847,MICHAEL.WALKER93@EXAMPLE.COM,Savings,Car Loan,44000
+CUST1064,,52,Houston,5558196606,chloe.thomas94@example.com,Fixed Deposit,Home Loan,87500
+CUST1065,Thomas Johnson,64,Seattle,,thomas.johnson95@example.com,Fixed Deposit,Personal Loan,18000
+CUST1066,Sarah Johnson,54,Seattle,5557606184,sarah.johnson96@example.com,Current,PERSONAL LOAN,10500
+CUST1067,Ava Anderson,57,Seattle,555-539-2141,ava.anderson0@example.com,Fixed Deposit,PERSONAL LOAN,6000
+CUST1068,Zoe Thomas,47,houston,+1 555 559 9279,ZOE.THOMAS1@EXAMPLE.COM,Current,,
+CUST1069,Sarah Taylor,24,Houston,5556463350,sarah.taylor2@example.com,current,Home Loan,127500
+CUST1070,Nancy Taylor,62,Boston,(555) 721-1807,nancy.taylor3@example.com,savings,Car,12500
+CUST1030,EMMA WALKER,54,Houston,555-920-7994,EMMA.WALKER60@EXAMPLE.COM,Fixed Deposit,Personal Loan,24500
+CUST1054,NANCY MOORE,48,SEATTLE ,5557121919,NANCY.MOORE84@EXAMPLE.COM,CURRENT,Home Loan,187500
+CUST1071,james davis,24,houston,+1 555 926 6988,james.davis4@example.com,Fixed Deposit,Car Loan,30000
+CUST1072,michael davis,36,NEW YORK ,555.108.4179,MICHAEL.DAVIS5@EXAMPLE.COM,CURRENT,Car Loan,54000
+CUST1073,grace davis,,Dallas,555.175.3074,grace.davis6@example.com,Current,Car Loan,40000
+CUST1057,EMMA KING,28,houston,555.538.9361,EMMA.KING87@EXAMPLE.COM,fixed deposit,,
+CUST1074,olivia martinez,53,Dallas,(555) 924-2340,OLIVIA.MARTINEZ7@EXAMPLE.COM,Current,Home Loan,206000
+CUST1058,LINDA CLARK,62,Boston,555-751-2004,linda.clark88@example.com,Current,home loan,233500
+CUST1075,ROBERT KING,24,Dallas,555-653-2724,robert.king8@example.com,Savings,,
+CUST1076,Thomas Martinez,35,Boston,555-967-2537,THOMAS.MARTINEZ9@EXAMPLE.COM,fixed deposit,Auto Loan,17000
+CUST1077,olivia young,81,Seattle,555-712-0699,olivia.young10@example.com,SAVINGS,Home Loan,100000
+CUST1078,Sarah Thomas,42,Dallas,555-711-4885,sarah.thomas11@example.com,Savings,Home Loan,129500
+CUST1079,Kevin Harris,66,new york,555-679-6019,kevin.harris12@example.com,Fixed Deposit,PERSONAL LOAN,7000
+CUST1080,Grace Moore,41,houston,555-437-8416,grace.moore13@example.com,Fixed Deposit,None,
+CUST1081,Brian Walker,28,New York,+1 555 495 0271,brian.walker14@example.com,savings,home loan,152000
+CUST1082,Ryan Carter,43,SEATTLE ,555-694-7320,RYAN.CARTER15@EXAMPLE.COM,fixed deposit,Home Loan,129500
+CUST1083,Daniel Young,25,Chicago,555-290-9834,daniel.young16@example.com,CURRENT,Car Loan,12500
+CUST1084,kevin carter,72,Houston,555-645-3000,KEVIN.CARTER17@EXAMPLE.COM,CURRENT,car loan,24000
+CUST1085,SUSAN LEWIS,61,Boston,+1 555 706 5175,SUSAN.LEWIS18@EXAMPLE.COM,SAVINGS,Home Loan,393500
+CUST1086,LILY MARTINEZ,51,Dallas,555.773.2341,lily.martinez19@example.com,Savings,Car Loan,56000
+CUST1087,George Clark,51,Dallas,(555) 945-2710,george.clark20@example.com,Fixed Deposit,Car Loan,38500
+CUST1088,  Olivia  Martinez ,73,dallas,555-657-3942,olivia.martinez21@example.com,current,Home Loan,380500
+CUST1089,Olivia Carter,26,HOUSTON ,555-342-9012,OLIVIA.CARTER22@EXAMPLE.COM,Fixed Deposit,none,
+CUST1090,  Brian  Lewis ,45,Dallas,(555) 448-4650,brian.lewis23@example.com,Savings,Home Loan,442000
+CUST1091,Joseph Lewis,62,NEW YORK ,555-159-3704,joseph.lewis24@example.com,Fixed Deposit,HOME LOAN,436000
+CUST1092,Sarah Martinez,52,Seattle,555-146-1284,SARAH.MARTINEZ25@EXAMPLE.COM,CURRENT,None,

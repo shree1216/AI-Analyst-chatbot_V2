@@ -1,0 +1,101 @@
+Employee ID,First Name,Last Name,Gender,Department,Job Title,Email,Phone,Hire Date,Annual Salary,Status
+EMP1001,Manish,Singh,Male,Marketing,Marketing Manager,manish.singh@company.com,9210205473,2024-11-30,1334000,On Leave
+EMP1002,Swati,Kapoor,Female,Operations,Logistics Coordinator,swati.kapoor@company.com,9906407983,2023-09-02,604000,Active
+EMP1003,Gaurav,Iyer,Male,Human Resources,HR Manager,gaurav.iyer@company.com,9976990827,2016-02-06,1136000,Active
+EMP1004,Shreya,Gupta,Female,Sales,Account Manager,shreya.gupta@company.com,9473294770,2025-12-27,887000,Active
+EMP1005,Manish,Iyer,Male,Marketing,Marketing Manager,manish.iyer@company.com,9413663472,2018-03-24,1580000,Active
+EMP1006,Ananya,Mehta,Female,IT,System Administrator,ananya.mehta@company.com,9553352586,2016-01-07,759000,On Leave
+EMP1007,Sneha,Desai,Female,Marketing,Marketing Manager,sneha.desai@company.com,9627240211,2019-06-19,1650000,Active
+EMP1008,Swati,Bose,Female,Marketing,Marketing Manager,swati.bose@company.com,9964548086,2015-04-14,1335000,Active
+EMP1009,Rajesh,Reddy,Male,Operations,Operations Manager,rajesh.reddy@company.com,9561074970,2020-04-09,1249000,Active
+EMP1010,Rohan,Chopra,Male,Operations,Logistics Coordinator,rohan.chopra@company.com,9867213565,2025-06-04,593000,Active
+EMP1011,Riya,Kapoor,Female,Operations,Operations Manager,riya.kapoor@company.com,9849819208,2020-05-15,1521000,Active
+EMP1012,Neha,Sharma,Female,Human Resources,HR Executive,neha.sharma@company.com,9803990996,2024-11-21,577000,Resigned
+EMP1013,Divya,Gupta,Female,IT,IT Manager,divya.gupta@company.com,9621375890,2020-03-26,2036000,Active
+EMP1014,Nandini,Kapoor,Female,Operations,Operations Executive,nandini.kapoor@company.com,9992712094,2018-04-03,463000,Active
+EMP1015,Deepak,Singh,Male,IT,System Administrator,deepak.singh@company.com,9296547184,2025-11-05,773000,Active
+EMP1016,Priya,Menon,Female,Sales,Account Manager,priya.menon@company.com,9203790621,2017-03-08,1092000,On Leave
+EMP1017,Deepak,Sharma,Male,Human Resources,HR Executive,deepak.sharma@company.com,9584504869,2021-07-06,563000,Resigned
+EMP1018,Gaurav,Gupta,Male,Finance,Accountant,gaurav.gupta@company.com,9766873846,2015-07-02,647000,Active
+EMP1019,Divya,Nair,Female,Human Resources,HR Manager,divya.nair@company.com,9813588766,2021-07-16,1201000,Active
+EMP1020,Kavya,Kapoor,Female,Finance,Financial Analyst,kavya.kapoor@company.com,9731289885,2016-06-21,964000,On Leave
+EMP1021,Priya,Desai,Female,Operations,Operations Executive,priya.desai@company.com,9245326801,2023-10-14,585000,On Leave
+EMP1022,Sanjana,Desai,Female,Sales,Sales Executive,sanjana.desai@company.com,9658378947,2024-01-19,483000,Active
+EMP1023,Kiran,Iyer,Male,Human Resources,HR Manager,kiran.iyer@company.com,9793929754,2018-12-18,1390000,Active
+EMP1024,Aarav,Singh,Male,Sales,Account Manager,aarav.singh@company.com,9833144986,2018-05-28,936000,Active
+EMP1025,Amit,Chopra,Male,Marketing,Marketing Manager,amit.chopra@company.com,9964296256,2016-11-30,1261000,Active
+EMP1026,Pranav,Agarwal,Male,IT,System Administrator,pranav.agarwal@company.com,9742333410,2017-08-13,586000,Active
+EMP1027,Siddharth,Patel,Male,Human Resources,Recruiter,siddharth.patel@company.com,9684938506,2025-06-10,600000,Active
+EMP1028,Amit,Sharma,Male,Finance,Finance Manager,amit.sharma@company.com,9669015044,2017-06-14,1742000,On Leave
+EMP1029,Rahul,Patel,Male,Sales,Account Manager,rahul.patel@company.com,9556720675,2020-12-23,917000,On Leave
+EMP1030,Riya,Patel,Female,IT,Software Engineer,riya.patel@company.com,9382870507,2020-03-15,1222000,Resigned
+EMP1031,Riya,Chopra,Female,Finance,Financial Analyst,riya.chopra@company.com,9657631828,2020-05-28,883000,Active
+EMP1032,Sneha,Gupta,Female,Finance,Accountant,sneha.gupta@company.com,9199986403,2024-11-07,569000,Active
+EMP1033,Pallavi,Patel,Female,Human Resources,HR Manager,pallavi.patel@company.com,9268318828,2018-12-11,1195000,Active
+EMP1034,Rohan,Agarwal,Male,Operations,Logistics Coordinator,rohan.agarwal@company.com,9696785442,2023-06-05,599000,Active
+EMP1035,Swati,Menon,Female,Operations,Operations Manager,swati.menon@company.com,9242397668,2016-02-20,1377000,Active
+EMP1036,Meera,Reddy,Female,Operations,Operations Executive,meera.reddy@company.com,9915091094,2018-12-30,569000,Active
+EMP1037,Rajesh,Joshi,Male,IT,IT Manager,rajesh.joshi@company.com,9999141997,2015-09-19,1805000,Resigned
+EMP1038,Nikhil,Menon,Male,Human Resources,HR Executive,nikhil.menon@company.com,9541997588,2024-09-19,624000,Active
+EMP1039,Vihaan,Reddy,Male,Finance,Accountant,vihaan.reddy@company.com,9432772643,2016-05-18,475000,Active
+EMP1040,Shreya,Chopra,Female,Marketing,Marketing Manager,shreya.chopra@company.com,9802997131,2023-01-04,1140000,Resigned
+EMP1041,Anjali,Gupta,Female,Marketing,Content Strategist,anjali.gupta@company.com,9557547120,2025-12-24,613000,Active
+EMP1042,Lakshmi,Kulkarni,Female,IT,Software Engineer,lakshmi.kulkarni@company.com,9889615695,2023-01-08,1158000,On Leave
+EMP1043,Shreya,Kulkarni,Female,Operations,Operations Executive,shreya.kulkarni@company.com,9418839064,2023-08-12,489000,Active
+EMP1044,Harsh,Joshi,Male,Finance,Finance Manager,harsh.joshi@company.com,9160285397,2023-02-03,1318000,Active
+EMP1045,Rohan,Verma,Male,Finance,Finance Manager,rohan.verma@company.com,9480148254,2021-09-11,1879000,Resigned
+EMP1046,Ananya,Desai,Female,Marketing,Marketing Executive,ananya.desai@company.com,9482221433,2019-08-29,501000,Active
+EMP1047,Pooja,Nair,Female,Finance,Finance Manager,pooja.nair@company.com,9130512653,2022-06-02,1768000,Active
+EMP1048,Neha,Nair,Female,Finance,Accountant,neha.nair@company.com,9117819606,2018-02-07,592000,Active
+EMP1049,Shreya,Nair,Female,Operations,Operations Manager,shreya.nair@company.com,9196042769,2024-05-31,1288000,Active
+EMP1050,Shreya,Singh,Female,Operations,Logistics Coordinator,shreya.singh@company.com,9160404143,2022-05-18,670000,Active
+EMP1051,Amit,Verma,Male,Finance,Finance Manager,amit.verma@company.com,9646126839,2024-09-01,1358000,Resigned
+EMP1052,Divya,Rao,Female,Marketing,Content Strategist,divya.rao@company.com,9469032122,2024-08-28,655000,Active
+EMP1053,Aishwarya,Kapoor,Female,Sales,Sales Manager,aishwarya.kapoor@company.com,9723392705,2018-07-02,1297000,Active
+EMP1054,Kavya,Bose,Female,Human Resources,HR Manager,kavya.bose@company.com,9973761791,2025-09-18,1338000,Active
+EMP1055,Diya,Patel,Female,Human Resources,HR Manager,diya.patel@company.com,9500284363,2021-02-17,1283000,Active
+EMP1056,Aarav,Kapoor,Male,Finance,Finance Manager,aarav.kapoor@company.com,9725334646,2018-06-10,1800000,Active
+EMP1057,Lakshmi,Kapoor,Female,Marketing,Marketing Manager,lakshmi.kapoor@company.com,9810569828,2016-10-09,1633000,Active
+EMP1058,Kiran,Joshi,Male,Marketing,Content Strategist,kiran.joshi@company.com,9433310702,2015-06-20,649000,Active
+EMP1059,Riya,Kapoor,Female,IT,System Administrator,riya.kapoor2@company.com,9243886503,2025-11-28,754000,Active
+EMP1060,Gaurav,Bose,Male,Sales,Account Manager,gaurav.bose@company.com,9972016138,2023-08-30,982000,Active
+EMP1061,Rahul,Joshi,Male,Marketing,Marketing Executive,rahul.joshi@company.com,9276027085,2015-04-27,633000,Active
+EMP1062,Suresh,Iyer,Male,IT,System Administrator,suresh.iyer@company.com,9332133692,2020-12-19,631000,Active
+EMP1063,Karan,Reddy,Male,IT,System Administrator,karan.reddy@company.com,9215312910,2024-10-19,588000,Active
+EMP1064,Sneha,Mehta,Female,Sales,Account Manager,sneha.mehta@company.com,9229856863,2021-03-25,972000,Active
+EMP1065,Aishwarya,Shetty,Female,IT,Software Engineer,aishwarya.shetty@company.com,9174125615,2023-09-26,792000,Active
+EMP1066,Neha,Rao,Female,Finance,Financial Analyst,neha.rao@company.com,9564497086,2020-09-04,944000,Active
+EMP1067,Lakshmi,Joshi,Female,Finance,Accountant,lakshmi.joshi@company.com,9965841450,2020-03-11,508000,On Leave
+EMP1068,Divya,Desai,Female,Marketing,Content Strategist,divya.desai@company.com,9328573374,2016-09-24,782000,Active
+EMP1069,Pranav,Menon,Male,IT,Software Engineer,pranav.menon@company.com,9443634488,2017-12-27,1166000,Active
+EMP1070,Pooja,Joshi,Female,Finance,Finance Manager,pooja.joshi@company.com,9929381940,2016-05-19,1481000,Active
+EMP1071,Lakshmi,Pillai,Female,Human Resources,Recruiter,lakshmi.pillai@company.com,9869295525,2018-09-10,557000,Active
+EMP1072,Amit,Kapoor,Male,Marketing,Marketing Executive,amit.kapoor@company.com,9555735051,2018-12-13,570000,Active
+EMP1073,Meera,Sharma,Female,IT,IT Manager,meera.sharma@company.com,9853436007,2017-10-29,1637000,Active
+EMP1074,Tanvi,Bose,Female,IT,Software Engineer,tanvi.bose@company.com,9140260561,2023-06-29,931000,Active
+EMP1075,Shreya,Sharma,Female,Finance,Financial Analyst,shreya.sharma@company.com,9652914281,2018-02-08,977000,Active
+EMP1076,Harsh,Gupta,Male,Marketing,Marketing Executive,harsh.gupta@company.com,9202641711,2016-09-30,487000,Resigned
+EMP1077,Isha,Agarwal,Female,Operations,Operations Executive,isha.agarwal@company.com,9857541912,2018-06-21,402000,Active
+EMP1078,Rohan,Sharma,Male,IT,System Administrator,rohan.sharma@company.com,9147759041,2017-01-28,838000,Active
+EMP1079,Amit,Joshi,Male,IT,System Administrator,amit.joshi@company.com,9441254793,2021-10-20,801000,Active
+EMP1080,Neha,Verma,Female,Operations,Logistics Coordinator,neha.verma@company.com,9243059249,2015-03-31,576000,Active
+EMP1081,Aishwarya,Gupta,Female,IT,System Administrator,aishwarya.gupta@company.com,9650071205,2024-06-11,760000,Active
+EMP1082,Pranav,Iyer,Male,Operations,Operations Manager,pranav.iyer@company.com,9793052744,2022-06-01,1634000,Active
+EMP1083,Tanvi,Agarwal,Female,Human Resources,Recruiter,tanvi.agarwal@company.com,9660968820,2021-09-06,465000,Active
+EMP1084,Divya,Patel,Female,Human Resources,Recruiter,divya.patel@company.com,9956770354,2016-12-15,579000,Active
+EMP1085,Sneha,Agarwal,Female,Finance,Accountant,sneha.agarwal@company.com,9598011586,2017-09-13,505000,Active
+EMP1086,Rajesh,Gupta,Male,IT,IT Manager,rajesh.gupta@company.com,9624612608,2016-07-13,2086000,Active
+EMP1087,Divya,Pillai,Female,Marketing,Marketing Manager,divya.pillai@company.com,9879699278,2021-01-17,1298000,Active
+EMP1088,Karan,Nair,Male,Operations,Operations Manager,karan.nair@company.com,9165581869,2023-12-29,1136000,Active
+EMP1089,Meera,Nair,Female,IT,IT Manager,meera.nair@company.com,9844049786,2018-12-31,1634000,Active
+EMP1090,Vihaan,Patel,Male,Operations,Operations Executive,vihaan.patel@company.com,9544440228,2022-03-11,543000,Active
+EMP1091,Varun,Rao,Male,Marketing,Content Strategist,varun.rao@company.com,9682768978,2016-01-12,794000,Active
+EMP1092,Kavya,Joshi,Female,Finance,Finance Manager,kavya.joshi@company.com,9645716386,2015-06-14,1694000,Active
+EMP1093,Suresh,Shetty,Male,Operations,Operations Manager,suresh.shetty@company.com,9973441721,2024-02-29,1370000,Active
+EMP1094,Rahul,Singh,Male,Finance,Accountant,rahul.singh@company.com,9554021160,2022-06-10,564000,Active
+EMP1095,Aditya,Rao,Male,Operations,Logistics Coordinator,aditya.rao@company.com,9328399566,2019-03-06,492000,Active
+EMP1096,Nandini,Chopra,Female,IT,IT Manager,nandini.chopra@company.com,9324606470,2025-11-10,1824000,Active
+EMP1097,Pallavi,Agarwal,Female,Sales,Sales Executive,pallavi.agarwal@company.com,9326616970,2023-04-16,482000,Active
+EMP1098,Suresh,Agarwal,Male,Operations,Operations Executive,suresh.agarwal@company.com,9223638170,2016-12-06,433000,Active
+EMP1099,Pranav,Sharma,Male,Marketing,Marketing Executive,pranav.sharma@company.com,9795991668,2025-01-17,640000,Active
+EMP1100,Riya,Mehta,Female,Sales,Sales Executive,riya.mehta@company.com,9611717932,2020-11-04,621000,On Leave

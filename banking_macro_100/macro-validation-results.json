@@ -1,0 +1,87 @@
+﻿[
+    {
+        "Test":  "Recorded macro fails after sheet rename",
+        "Result":  "PASS",
+        "Detail":  "ERROR 9: Subscript out of range"
+    },
+    {
+        "Test":  "Recorded macro produces wrong net, % amounts, overwrites Channel",
+        "Result":  "PASS",
+        "Detail":  "total=192,278.47"
+    },
+    {
+        "Test":  "Recorded macro corrupts changed layout",
+        "Result":  "PASS",
+        "Detail":  "H106 was \u002746340\u0027"
+    },
+    {
+        "Test":  "100-row report formatted and reconciled",
+        "Result":  "PASS",
+        "Detail":  "debit=66,727.91 credit=125,550.56 net=58,822.65"
+    },
+    {
+        "Test":  "Rerun does not duplicate columns or totals",
+        "Result":  "PASS",
+        "Detail":  ""
+    },
+    {
+        "Test":  "Changed layout (renamed, reordered, B8, 110 rows) handled",
+        "Result":  "PASS",
+        "Detail":  "net=53,400.94"
+    },
+    {
+        "Test":  "Added row picked up on rerun",
+        "Result":  "PASS",
+        "Detail":  ""
+    },
+    {
+        "Test":  "Deleted row handled on rerun",
+        "Result":  "PASS",
+        "Detail":  ""
+    },
+    {
+        "Test":  "Rejected: duplicate transaction ID",
+        "Result":  "PASS",
+        "Detail":  "Row 50"
+    },
+    {
+        "Test":  "Rejected: missing header",
+        "Result":  "PASS",
+        "Detail":  "Required headers were not found together in rows 1-20: Transaction ID, Transaction Date, Account ID, Description, Debit, Credit, Currency."
+    },
+    {
+        "Test":  "Rejected: text amount",
+        "Result":  "PASS",
+        "Detail":  "Row 20: Debit must be numeric or blank."
+    },
+    {
+        "Test":  "Rejected: negative amount",
+        "Result":  "PASS",
+        "Detail":  "Row 20: Debit must not be negative."
+    },
+    {
+        "Test":  "Rejected: debit and credit",
+        "Result":  "PASS",
+        "Detail":  "Row 21: Enter a positive Debit OR Credit, not both or neither."
+    },
+    {
+        "Test":  "Rejected: text date",
+        "Result":  "PASS",
+        "Detail":  "Row 22: Transaction Date must be an Excel date, not text."
+    },
+    {
+        "Test":  "Rejected: mixed currency",
+        "Result":  "PASS",
+        "Detail":  "Row 23: This demo supports USD only; do not combine currencies."
+    },
+    {
+        "Test":  "Rejected: missing account",
+        "Result":  "PASS",
+        "Detail":  "Row 24: Account ID is missing."
+    },
+    {
+        "Test":  "Rejected: empty report",
+        "Result":  "PASS",
+        "Detail":  "The report has no transactions."
+    }
+]

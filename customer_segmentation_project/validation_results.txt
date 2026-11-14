@@ -1,0 +1,21 @@
+﻿PASS  Duplicates count matches independent calculation [8]
+PASS  Incomplete count matches independent calculation [7]
+PASS  Clean count matches independent calculation [85]
+PASS  Senior count matches independent calculation [21]
+PASS  Home count matches independent calculation [33]
+PASS  Car count matches independent calculation [21]
+PASS  Every raw record accounted for (clean + duplicates + incomplete = 100)
+PASS  Summary sheet matches category sheets
+PASS  Summary chart present
+PASS  No duplicate Customer IDs in Clean Data
+PASS  Names trimmed and in Proper Case
+PASS  Phones standardized to 555-123-4567
+PASS  Emails lower case
+PASS  Loan types standardized [Car Loan, Home Loan, None, Personal Loan]
+PASS  Senior sheet only has age 60+
+PASS  Home Loan sheet only has home loans
+PASS  Car Loan sheet only has car loans
+PASS  Every incomplete/duplicate row has an Issue [Missing or invalid: Phone ...]
+PASS  Raw Data left unchanged
+PASS  Rerun gives the same result (no doubled rows)
+PASS  New raw record is cleaned and placed in Senior + Car Loan [CUST9001 | Mary Smith | 555-777-1234]

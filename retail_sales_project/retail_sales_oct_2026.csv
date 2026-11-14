@@ -1,0 +1,101 @@
+Order ID,Order Date,Product,Category,Region,Quantity,Unit Price,Sales Amount
+ORD-0001,2026-10-01,Running Shoes,Clothing,West,4,85.00,340.00
+ORD-0002,2026-10-01,Wireless Mouse,Electronics,North,10,25.00,250.00
+ORD-0003,2026-10-01,Bluetooth Headphones,Electronics,East,1,120.00,120.00
+ORD-0004,2026-10-03,Desk Lamp,Home & Kitchen,South,2,45.00,90.00
+ORD-0005,2026-10-03,Coffee Maker,Home & Kitchen,North,4,90.00,360.00
+ORD-0006,2026-10-03,Smart Watch,Electronics,South,1,250.00,250.00
+ORD-0007,2026-10-03,Air Fryer,Home & Kitchen,West,6,140.00,840.00
+ORD-0008,2026-10-04,Desk Lamp,Home & Kitchen,West,5,45.00,225.00
+ORD-0009,2026-10-04,Denim Jacket,Clothing,West,5,70.00,350.00
+ORD-0010,2026-10-04,Denim Jacket,Clothing,South,9,70.00,630.00
+ORD-0011,2026-10-04,Coffee Maker,Home & Kitchen,North,4,90.00,360.00
+ORD-0012,2026-10-04,Laptop Backpack,Accessories,North,1,60.00,60.00
+ORD-0013,2026-10-05,Denim Jacket,Clothing,East,10,70.00,700.00
+ORD-0014,2026-10-07,Desk Lamp,Home & Kitchen,West,8,45.00,360.00
+ORD-0015,2026-10-08,Smart Watch,Electronics,South,2,250.00,500.00
+ORD-0016,2026-10-08,Air Fryer,Home & Kitchen,South,5,140.00,700.00
+ORD-0017,2026-10-09,Air Fryer,Home & Kitchen,West,4,140.00,560.00
+ORD-0018,2026-10-09,Wireless Mouse,Electronics,West,5,25.00,125.00
+ORD-0019,2026-10-10,USB-C Charger,Electronics,South,8,30.00,240.00
+ORD-0020,2026-10-10,Desk Lamp,Home & Kitchen,West,5,45.00,225.00
+ORD-0021,2026-10-10,Bluetooth Headphones,Electronics,East,4,120.00,480.00
+ORD-0022,2026-10-10,Air Fryer,Home & Kitchen,South,1,140.00,140.00
+ORD-0023,2026-10-11,Air Fryer,Home & Kitchen,North,3,140.00,420.00
+ORD-0024,2026-10-11,Cotton T-Shirt,Clothing,North,7,20.00,140.00
+ORD-0025,2026-10-11,Wireless Mouse,Electronics,North,2,25.00,50.00
+ORD-0026,2026-10-12,Running Shoes,Clothing,East,5,85.00,425.00
+ORD-0027,2026-10-12,USB-C Charger,Electronics,South,10,30.00,300.00
+ORD-0028,2026-10-12,Smart Watch,Electronics,South,1,250.00,250.00
+ORD-0029,2026-10-12,Desk Lamp,Home & Kitchen,South,5,45.00,225.00
+ORD-0030,2026-10-13,Denim Jacket,Clothing,North,6,70.00,420.00
+ORD-0031,2026-10-13,Leather Wallet,Accessories,West,10,40.00,400.00
+ORD-0032,2026-10-13,Air Fryer,Home & Kitchen,South,6,140.00,840.00
+ORD-0033,2026-10-13,Bluetooth Headphones,Electronics,North,5,120.00,600.00
+ORD-0034,2026-10-14,Running Shoes,Clothing,East,2,85.00,170.00
+ORD-0035,2026-10-14,Cotton T-Shirt,Clothing,North,9,20.00,180.00
+ORD-0036,2026-10-14,Coffee Maker,Home & Kitchen,North,6,90.00,540.00
+ORD-0037,2026-10-14,Bluetooth Headphones,Electronics,West,5,120.00,600.00
+ORD-0038,2026-10-15,Coffee Maker,Home & Kitchen,East,4,90.00,360.00
+ORD-0039,2026-10-15,Desk Lamp,Home & Kitchen,West,4,45.00,180.00
+ORD-0040,2026-10-15,USB-C Charger,Electronics,East,7,30.00,210.00
+ORD-0041,2026-10-15,Wireless Mouse,Electronics,South,6,25.00,150.00
+ORD-0042,2026-10-16,Wireless Mouse,Electronics,West,1,25.00,25.00
+ORD-0043,2026-10-16,Leather Wallet,Accessories,West,5,40.00,200.00
+ORD-0044,2026-10-16,USB-C Charger,Electronics,East,8,30.00,240.00
+ORD-0045,2026-10-16,Running Shoes,Clothing,East,5,85.00,425.00
+ORD-0046,2026-10-17,Bluetooth Headphones,Electronics,West,5,120.00,600.00
+ORD-0047,2026-10-17,Coffee Maker,Home & Kitchen,West,5,90.00,450.00
+ORD-0048,2026-10-17,Running Shoes,Clothing,South,2,85.00,170.00
+ORD-0049,2026-10-17,USB-C Charger,Electronics,West,9,30.00,270.00
+ORD-0050,2026-10-17,Smart Watch,Electronics,East,3,250.00,750.00
+ORD-0051,2026-10-18,Wireless Mouse,Electronics,East,9,25.00,225.00
+ORD-0052,2026-10-18,Wireless Mouse,Electronics,East,8,25.00,200.00
+ORD-0053,2026-10-18,Denim Jacket,Clothing,West,4,70.00,280.00
+ORD-0054,2026-10-18,Denim Jacket,Clothing,North,1,70.00,70.00
+ORD-0055,2026-10-18,Desk Lamp,Home & Kitchen,South,4,45.00,180.00
+ORD-0056,2026-10-19,Desk Lamp,Home & Kitchen,North,3,45.00,135.00
+ORD-0057,2026-10-19,Bluetooth Headphones,Electronics,North,4,120.00,480.00
+ORD-0058,2026-10-19,Desk Lamp,Home & Kitchen,East,7,45.00,315.00
+ORD-0059,2026-10-19,Coffee Maker,Home & Kitchen,North,3,90.00,270.00
+ORD-0060,2026-10-20,Bluetooth Headphones,Electronics,West,3,120.00,360.00
+ORD-0061,2026-10-20,Coffee Maker,Home & Kitchen,West,3,90.00,270.00
+ORD-0062,2026-10-20,Leather Wallet,Accessories,West,9,40.00,360.00
+ORD-0063,2026-10-20,USB-C Charger,Electronics,South,9,30.00,270.00
+ORD-0064,2026-10-21,Laptop Backpack,Accessories,East,2,60.00,120.00
+ORD-0065,2026-10-21,Smart Watch,Electronics,East,1,250.00,250.00
+ORD-0066,2026-10-21,Air Fryer,Home & Kitchen,West,6,140.00,840.00
+ORD-0067,2026-10-22,Desk Lamp,Home & Kitchen,East,3,45.00,135.00
+ORD-0068,2026-10-22,Leather Wallet,Accessories,West,3,40.00,120.00
+ORD-0069,2026-10-23,Denim Jacket,Clothing,South,10,70.00,700.00
+ORD-0070,2026-10-23,Smart Watch,Electronics,South,1,250.00,250.00
+ORD-0071,2026-10-23,Laptop Backpack,Accessories,South,9,60.00,540.00
+ORD-0072,2026-10-24,Cotton T-Shirt,Clothing,West,4,20.00,80.00
+ORD-0073,2026-10-24,Running Shoes,Clothing,South,3,85.00,255.00
+ORD-0074,2026-10-24,Bluetooth Headphones,Electronics,South,1,120.00,120.00
+ORD-0075,2026-10-25,USB-C Charger,Electronics,North,7,30.00,210.00
+ORD-0076,2026-10-25,Denim Jacket,Clothing,South,1,70.00,70.00
+ORD-0077,2026-10-25,Cotton T-Shirt,Clothing,South,3,20.00,60.00
+ORD-0078,2026-10-25,USB-C Charger,Electronics,West,9,30.00,270.00
+ORD-0079,2026-10-25,Running Shoes,Clothing,North,1,85.00,85.00
+ORD-0080,2026-10-26,Leather Wallet,Accessories,North,3,40.00,120.00
+ORD-0081,2026-10-26,USB-C Charger,Electronics,West,1,30.00,30.00
+ORD-0082,2026-10-26,Laptop Backpack,Accessories,East,7,60.00,420.00
+ORD-0083,2026-10-27,Wireless Mouse,Electronics,North,2,25.00,50.00
+ORD-0084,2026-10-27,Laptop Backpack,Accessories,North,2,60.00,120.00
+ORD-0085,2026-10-27,Desk Lamp,Home & Kitchen,East,10,45.00,450.00
+ORD-0086,2026-10-28,Leather Wallet,Accessories,South,6,40.00,240.00
+ORD-0087,2026-10-28,Running Shoes,Clothing,South,6,85.00,510.00
+ORD-0088,2026-10-28,Running Shoes,Clothing,East,1,85.00,85.00
+ORD-0089,2026-10-28,Leather Wallet,Accessories,North,10,40.00,400.00
+ORD-0090,2026-10-28,Air Fryer,Home & Kitchen,East,4,140.00,560.00
+ORD-0091,2026-10-29,USB-C Charger,Electronics,East,6,30.00,180.00
+ORD-0092,2026-10-29,Denim Jacket,Clothing,West,5,70.00,350.00
+ORD-0093,2026-10-29,Leather Wallet,Accessories,South,1,40.00,40.00
+ORD-0094,2026-10-29,Coffee Maker,Home & Kitchen,North,1,90.00,90.00
+ORD-0095,2026-10-29,Leather Wallet,Accessories,South,5,40.00,200.00
+ORD-0096,2026-10-29,USB-C Charger,Electronics,South,5,30.00,150.00
+ORD-0097,2026-10-30,Leather Wallet,Accessories,East,10,40.00,400.00
+ORD-0098,2026-10-30,Desk Lamp,Home & Kitchen,North,6,45.00,270.00
+ORD-0099,2026-10-31,Wireless Mouse,Electronics,North,2,25.00,50.00
+ORD-0100,2026-10-31,USB-C Charger,Electronics,North,2,30.00,60.00

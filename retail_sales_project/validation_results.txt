@@ -1,0 +1,15 @@
+﻿PASS  Analysis runs
+PASS  Total Sales [29,790.00]
+PASS  Number of Transactions
+PASS  Average Sale [297.90]
+PASS  Total Units Sold [476]
+PASS  Highest / Lowest transaction
+PASS  High-value / low-value counts [high=17, low=16]
+PASS  Top 5 products by revenue (names, order, revenue) [1. Air Fryer 4900]
+PASS  Sales by region (order, counts, revenue, share) [West 8710, South 8070, East 7220, North 5790]
+PASS  High-value rows green, low-value rows red [green=17, red=16]
+PASS  Analytical summary written (title + 5 insights)
+PASS  Two charts created
+PASS  Rerun is safe (still 2 charts, same total)
+PASS  New record included and highlighted
+PASS  Invalid amount reported, report unchanged [ERROR: Row 50: Sales Amount is not a number.]

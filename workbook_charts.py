@@ -90,7 +90,7 @@ class WorkbookDashboard:
     content: bytes
     sheet: str
     source_sheet: str
-    tables_sheet: str | None = None
+    tables_sheet: str | None = None  # Summary tab: key figures and the tables the charts read from
 
 
 def _normalize(text: str) -> str:
@@ -994,58 +994,56 @@ def _add_dashboard_tabs(
     content: bytes, names: list[str], source_sheet: str, charts: list[tuple[str, pd.DataFrame, str]],
     kpis: list[tuple[str, str]], subtitle: str,
 ) -> tuple[bytes, str, str]:
-    """Add a presentation-style Dashboard tab (title, KPI cards, chart grid) and a Supporting tables tab."""
-    dashboard = _sheet_name(f"{source_sheet} Dashboard", names)
-    tables = _sheet_name(f"{source_sheet} Tables", [*names, dashboard])
+    """Add a charts-only tab and a Summary tab holding the key figures and the supporting tables."""
+    charts_tab = _sheet_name(f"{source_sheet} Charts", names)
+    summary_tab = _sheet_name(f"{source_sheet} Summary", [*names, charts_tab])
     scratch = Workbook()
-    dashboard_sheet = scratch.active
-    dashboard_sheet.title = dashboard
-    tables_sheet = scratch.create_sheet(tables)
-    table_rows: dict[int, list[tuple[int, Any, str | None]]] = {
-        1: [(1, "Supporting tables", "title")],
-        2: [(1, f"The data behind each chart on the '{dashboard}' tab.", "muted")],
+    charts_sheet = scratch.active
+    charts_sheet.title = charts_tab
+    summary_sheet = scratch.create_sheet(summary_tab)
+    summary_rows: dict[int, list[tuple[int, Any, str | None]]] = {
+        1: [(1, f"{source_sheet} Summary", "title")],
+        2: [(1, subtitle, "muted")],
+        4: [(1, "Key figures", "section")],
     }
-    row = 4
+    heights = {1: 28}
+    for offset, (label, value) in enumerate(kpis, 5):
+        summary_rows[offset] = [(1, label, "kpi_label"), (2, value, "kpi_value")]
+        heights[offset] = 22
+    row = 5 + len(kpis) + 1
+    summary_rows[row] = [(1, "Supporting tables", "section")]
+    summary_rows[row + 1] = [(1, f"The data behind each chart on the '{charts_tab}' tab.", "muted")]
+    row += 3
     widths = {1: 34.0, 2: 22.0, 3: 22.0}
     for index, (title, table, chart_type) in enumerate(charts):
-        table_rows[row] = [(1, title, "section")]
+        summary_rows[row] = [(1, title, "section")]
         header = row + 1
-        table_rows[header] = [(column, name, "header") for column, name in enumerate(table.columns, 1)]
+        summary_rows[header] = [(column, name, "header") for column, name in enumerate(table.columns, 1)]
         for offset, values in enumerate(table.itertuples(index=False, name=None), 1):
-            table_rows[header + offset] = [(column, value, None) for column, value in enumerate(values, 1)]
+            summary_rows[header + offset] = [(column, value, None) for column, value in enumerate(values, 1)]
         for column, name in enumerate(table.columns, 1):
             longest = max([len(str(name)), *(len(str(value)) for value in table.iloc[:, column - 1])])
             widths[column] = max(widths.get(column, 12.0), min(48.0, longest + 4))
-        anchor = f"{'B' if index % 2 == 0 else 'L'}{8 + (index // 2) * 20}"
+        anchor = f"{'B' if index % 2 == 0 else 'L'}{5 + (index // 2) * 20}"
         _native_chart(
-            dashboard_sheet, table, "column" if chart_type == "histogram" else chart_type, title, header, 1,
-            data_worksheet=tables_sheet, anchor=anchor, size=(17.5, 9.5), colors=EXCEL_PALETTE,
+            charts_sheet, table, "column" if chart_type == "histogram" else chart_type, title, header, 1,
+            data_worksheet=summary_sheet, anchor=anchor, size=(17.5, 9.5), colors=EXCEL_PALETTE,
         )
         row = header + len(table) + 3
     drawing, parts = _scratch_chart_parts(scratch, len(charts))
     styles_xml, styles = _dashboard_styles(content)
-    dashboard_rows: dict[int, list[tuple[int, Any, str | None]]] = {
-        2: [(2, f"{source_sheet} Dashboard", "title")],
-        3: [(2, subtitle, "muted")],
-        5: [(2 + position * 5, label, "kpi_label") for position, (label, _) in enumerate(kpis[:4])],
-        6: [(2 + position * 5, value, "kpi_value") for position, (_, value) in enumerate(kpis[:4])],
+    charts_rows: dict[int, list[tuple[int, Any, str | None]]] = {
+        2: [(2, f"{source_sheet} Charts", "title")],
+        3: [(2, f"Key figures and the data behind these charts are on the '{summary_tab}' tab.", "muted")],
     }
-    # Each KPI tile is a merged 4-column block so long labels and values are not cut off.
-    merges = []
-    for position in range(len(kpis[:4])):
-        first, last = get_column_letter(2 + position * 5), get_column_letter(5 + position * 5)
-        merges.extend([f"{first}5:{last}5", f"{first}6:{last}6"])
-        for column in range(3 + position * 5, 6 + position * 5):
-            dashboard_rows[5].append((column, "", "kpi_label"))
-            dashboard_rows[6].append((column, "", "kpi_value"))
-    dashboard_xml = _sheet_document(
-        dashboard_rows, styles, {1: 2.5, **{column: 10.5 for column in range(2, 22)}},
-        drawing=True, gridlines=False, heights={2: 30, 5: 20, 6: 30}, merges=merges,
+    charts_xml = _sheet_document(
+        charts_rows, styles, {1: 2.5, **{column: 10.5 for column in range(2, 22)}},
+        drawing=True, gridlines=False, heights={2: 30},
     )
-    tables_xml = _sheet_document(table_rows, styles, widths, drawing=False, gridlines=True, heights={1: 28})
-    updated = _add_chart_package(content, dashboard, dashboard_xml, drawing, parts, styles_xml=styles_xml)
-    updated = _add_chart_package(updated, tables, tables_xml, None, [])
-    return updated, dashboard, tables
+    summary_xml = _sheet_document(summary_rows, styles, widths, drawing=False, gridlines=True, heights=heights)
+    updated = _add_chart_package(content, charts_tab, charts_xml, drawing, parts, styles_xml=styles_xml)
+    updated = _add_chart_package(updated, summary_tab, summary_xml, None, [])
+    return updated, charts_tab, summary_tab
 
 
 def apply_excel_dashboard(

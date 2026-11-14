@@ -1,0 +1,7 @@
+Option Explicit
+
+' Protect the Employees sheet and start on the Dashboard every time the workbook opens
+Private Sub Workbook_Open()
+    LockEmployees
+    ThisWorkbook.Worksheets("Dashboard").Activate
+End Sub
