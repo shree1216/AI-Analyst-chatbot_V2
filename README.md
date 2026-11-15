@@ -290,6 +290,10 @@ runs the full analysis workflow (`predictive_analysis.py`):
 tab and a **Cleaned Data Summary** tab with key figures and supporting tables. Predictions
 show association, not cause, and should be validated before acting on individual records.
 
+**Download slides (PPTX)** gives an editable deck with the key figures, summary, every chart,
+the full Cleaning Log and the model results. **Email this analysis** sends the slides and the
+Excel file as attachments; it needs the `SMTP_*` settings (see the email report section).
+
 Compound prompts are supported: **open worksheet employees_messy and draw charts
 in the excel sheet** first selects `employees_messy`, then builds a dashboard.
 You can also ask **create a dashboard for employees_messy with supporting tables**.
