@@ -24,6 +24,7 @@ from excel_support import (
     MAX_UPLOAD_MB, generate_excel_download,
 )
 from code_export import chart_spec_code, chart_spec_excel, emit, emit_lazy, overview_code
+from report_themes import CORPORATE
 
 
 MISSING_TOKENS = {"", "na", "n/a", "nan", "null", "none", "nil", "-", "--", "?", "not available", "missing", "#n/a"}
@@ -35,7 +36,7 @@ DATE_FORMATS = (
 ID_NAME = re.compile(r"(?:^|[\s_-])(?:id|ids|no|number|code|phone|mobile|tel|zip|pin|postcode|postal)(?:$|[\s_-])|^(?:id|phone|email|e-mail)", re.I)
 TEXT_ONLY_NAME = re.compile(r"\b(?:name|email|e-mail|address|description|comment|notes?|url|link)\b", re.I)
 AVERAGE_FIRST = re.compile(r"salary|salaries|pay|wage|rating|score|price|rate|age|percent|grade|tenure|experience", re.I)
-COLORS = ["#5B2A86", "#9B7FBF", "#C9A227", "#E0C46C", "#6B6560", "#7D5BA6", "#3E1D5C", "#A3A3A3"]
+COLORS = list(CORPORATE.palette)
 MAX_CATEGORIES = 25
 MAX_AUTO_CHARTS = 4
 MAX_SCATTER_POINTS = 500

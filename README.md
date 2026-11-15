@@ -105,8 +105,9 @@ are not a replacement for database permissions or access controls.
   bar and select a worksheet to query. Tables found in text-based PDFs become worksheets.
 - Bricks-style workspace: a home screen with quick actions (**Create dashboard**,
   **Analyze data**, **Build report**, **Edit in grid**), dashboards with KPI cards and a
-  chart grid, and one professional plum palette (with gold chart accents on charcoal
-  neutrals) shared by the app, dashboards, PDF reports and slides.
+  chart grid, and a professional ocean-teal palette with midnight-navy and copper
+  accents on cool-white neutrals, shared by the app, dashboards, Excel exports,
+  PDF reports and slides.
 - Ask for **create a dashboard**, or a summary with charts (for example **generate summary
   and charts**), to get KPI cards, charts and a data summary from the attached file. With
   no file attached, Automatic mode builds the dashboard from the employee database and says
@@ -1616,6 +1617,16 @@ from `WORKFORCE_SQL_USERNAME` and `WORKFORCE_SQL_PASSWORD`; do not bake credenti
 into the image. Use a dedicated read-only database user with `SELECT` grants only
 on the tables approved for the chatbot. Schema discovery respects that user's
 table visibility.
+
+For **Email this analysis** and **Email PDF report**, also configure all five
+`SMTP_*` variables listed above on the application container, using Container Apps
+secret references for the SMTP credentials. A local `.env` does not configure the
+hosted app and is excluded from the Docker image. If the app says email is not
+enabled, check that `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`,
+`SMTP_APP_PASSWORD`, and `SMTP_FROM_EMAIL` are all nonempty in the active revision.
+Apply the settings to the existing `simple-hello-world-container`, wait for the
+new revision to become healthy, then refresh the app. Never put SMTP credentials
+in the Dockerfile or commit them to the repository.
 
 Before importing local data, compare the destination schema and rows. If matching
 copies already exist, connect to them without overwriting data. After deploying

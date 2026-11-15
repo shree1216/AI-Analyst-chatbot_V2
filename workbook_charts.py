@@ -28,12 +28,12 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from backend_diagnostics import BackendTrace
 from excel_support import SOURCE_RANGE_NAME, _worksheet_parts, excel_sheet_names, read_excel_sheet
+from report_themes import CORPORATE
 from workbook_operations import MAX_SHEETS
 
 
 CHART_TYPES = ("column", "bar", "line", "pie", "doughnut", "area", "scatter")
-# Corporate palette (no blue or green), matching report_themes.CORPORATE.
-EXCEL_PALETTE = ("5B2A86", "C9A227", "4A4542", "9B7FBF", "7D5BA6", "E0C46C", "3E1D5C", "A39C95")
+EXCEL_PALETTE = tuple(color.lstrip("#") for color in CORPORATE.palette)
 AGGREGATES = ("auto", "sum", "average", "count", "min", "max", "none")
 PLAN_KEYS = {"understood", "unhandled_conditions", "sheet", "chart_type", "category", "values", "aggregate",
              "title", "sort", "limit"}
@@ -686,16 +686,16 @@ def _write_package(source: ZipFile, replacements: dict[str, bytes], additions: d
 
 
 _STYLE_FONTS = {
-    "title": '<font><b/><sz val="18"/><color rgb="FF5B2A86"/><name val="Calibri"/><family val="2"/></font>',
+    "title": f'<font><b/><sz val="18"/><color rgb="FF{CORPORATE.primary[1:]}"/><name val="Calibri"/><family val="2"/></font>',
     "header": '<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/><family val="2"/></font>',
-    "muted": '<font><sz val="10"/><color rgb="FF6B6560"/><name val="Calibri"/><family val="2"/></font>',
-    "value": '<font><b/><sz val="16"/><color rgb="FF1F1D1B"/><name val="Calibri"/><family val="2"/></font>',
-    "section": '<font><b/><sz val="12"/><color rgb="FF5B2A86"/><name val="Calibri"/><family val="2"/></font>',
-    "body": '<font><sz val="11"/><color rgb="FF1F1D1B"/><name val="Calibri"/><family val="2"/></font>',
+    "muted": f'<font><sz val="10"/><color rgb="FF{CORPORATE.muted[1:]}"/><name val="Calibri"/><family val="2"/></font>',
+    "value": f'<font><b/><sz val="16"/><color rgb="FF{CORPORATE.ink[1:]}"/><name val="Calibri"/><family val="2"/></font>',
+    "section": f'<font><b/><sz val="12"/><color rgb="FF{CORPORATE.primary[1:]}"/><name val="Calibri"/><family val="2"/></font>',
+    "body": f'<font><sz val="11"/><color rgb="FF{CORPORATE.ink[1:]}"/><name val="Calibri"/><family val="2"/></font>',
 }
 _STYLE_FILLS = {
-    "primary": '<fill><patternFill patternType="solid"><fgColor rgb="FF5B2A86"/><bgColor indexed="64"/></patternFill></fill>',
-    "band": '<fill><patternFill patternType="solid"><fgColor rgb="FFF7F3EF"/><bgColor indexed="64"/></patternFill></fill>',
+    "primary": f'<fill><patternFill patternType="solid"><fgColor rgb="FF{CORPORATE.primary[1:]}"/><bgColor indexed="64"/></patternFill></fill>',
+    "band": f'<fill><patternFill patternType="solid"><fgColor rgb="FF{CORPORATE.band[1:]}"/><bgColor indexed="64"/></patternFill></fill>',
 }
 # style name -> (font, fill or None, number format id)
 _CELL_STYLES = {

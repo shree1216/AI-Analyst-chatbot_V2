@@ -1,10 +1,10 @@
 # Workforce Compass theme
 [theme]
 base = "light"
-primaryColor = "#5B2A86"
-backgroundColor = "#FAF8F6"
-secondaryBackgroundColor = "#F3EFEB"
-textColor = "#1F1D1B"
+primaryColor = "#126E75"
+backgroundColor = "#F5F8FA"
+secondaryBackgroundColor = "#EDF3F5"
+textColor = "#142D3B"
 font = "sans serif"
 
 [client]

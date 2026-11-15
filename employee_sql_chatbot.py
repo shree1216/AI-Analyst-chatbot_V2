@@ -261,11 +261,11 @@ copy_response_component = st.components.v2.component(
             display: inline-flex; align-items: center; gap: 5px;
             min-width: 76px; height: 32px; padding: 4px 8px;
             background: transparent; border: 1px solid transparent;
-            border-radius: 4px; color: #6B6558; cursor: pointer;
+            border-radius: 4px; color: #526877; cursor: pointer;
             font: inherit; font-size: 13px;
         }
-        button:hover { background: #F4EEF9; color: #5B2A86; }
-        button:focus-visible { outline: 2px solid #5B2A86; outline-offset: 2px; }
+        button:hover { background: #E8F2F4; color: #126E75; }
+        button:focus-visible { outline: 2px solid #126E75; outline-offset: 2px; }
         .copy-icon { font-family: "Material Symbols Rounded"; font-size: 16px; }
         .copy-status { font: inherit; font-size: 12px; }
         textarea { width: 100%; height: 100px; box-sizing: border-box; }
@@ -2333,7 +2333,7 @@ def create_query_chart(result: pd.DataFrame, title: str, value_label: str, chart
     figure.update_layout(
         height=max(360, len(result) * 28 + 100) if horizontal else 400,
         margin={"l": 24, "r": 48, "t": 70, "b": 40},
-        paper_bgcolor="#FAF8F6",
+        paper_bgcolor="#F5F8FA",
         plot_bgcolor="#FFFFFF",
         showlegend=False,
         title=title,
@@ -2393,8 +2393,8 @@ def report_pdf_table(
             [
                 ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(theme.primary)),
                 ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                ("LINEBELOW", (0, 1), (-1, -1), 0.25, colors.HexColor("#E7E2DD")),
-                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F7F3EF")]),
+                ("LINEBELOW", (0, 1), (-1, -1), 0.25, colors.HexColor(theme.line)),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor(theme.band)]),
                 ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
                 ("TOPPADDING", (0, 0), (-1, -1), 7),
@@ -2454,7 +2454,7 @@ def report_pdf_chart(report: BusinessReport, theme: ReportTheme | None = None) -
         chart.labels = [f"{label}: {value / sum(values):.1%}" for label, value in zip(labels, values)]
         chart.slices.fontSize = 9
         chart.slices.fontName = "Helvetica"
-        chart.slices.fontColor = colors.HexColor("#5E5852")
+        chart.slices.fontColor = colors.HexColor(theme.muted)
         chart.slices.strokeColor = colors.white
         chart.sideLabels = True
         if report.chart_type == "donut":
@@ -2492,14 +2492,14 @@ def report_pdf_chart(report: BusinessReport, theme: ReportTheme | None = None) -
     chart.categoryAxis.labels.boxAnchor = "e" if horizontal else "ne"
     chart.categoryAxis.labels.fontSize = 8
     chart.categoryAxis.labels.fontName = "Helvetica"
-    chart.categoryAxis.labels.fillColor = colors.HexColor("#5E5852")
-    chart.categoryAxis.strokeColor = colors.HexColor("#DDD6CF")
+    chart.categoryAxis.labels.fillColor = colors.HexColor(theme.muted)
+    chart.categoryAxis.strokeColor = colors.HexColor(theme.line)
     chart.valueAxis.valueMin = 0
     chart.valueAxis.valueMax = max(max(values) * 1.15, 1)
     chart.valueAxis.labels.fontSize = 8
     chart.valueAxis.labels.fontName = "Helvetica"
-    chart.valueAxis.labels.fillColor = colors.HexColor("#5E5852")
-    chart.valueAxis.strokeColor = colors.HexColor("#DDD6CF")
+    chart.valueAxis.labels.fillColor = colors.HexColor(theme.muted)
+    chart.valueAxis.strokeColor = colors.HexColor(theme.line)
     chart.valueAxis.labelTextFormat = lambda value: f"{value:,.0f}"
     if metric == "Headcount":
         chart.valueAxis.valueStep = max(1, math.ceil(max(values) / 5))
@@ -2527,7 +2527,7 @@ def generate_business_report_pdf(
     styles["Title"].fontSize = 25
     styles["Title"].leading = 29
     styles["Title"].alignment = 0
-    styles["Title"].textColor = colors.HexColor("#1F1D1B")
+    styles["Title"].textColor = colors.HexColor(theme.ink)
     styles["Heading2"].fontName = "Helvetica-Bold"
     styles["Heading2"].fontSize = 12
     styles["Heading2"].leading = 16
@@ -2535,10 +2535,10 @@ def generate_business_report_pdf(
     styles["Heading2"].textColor = colors.HexColor(theme.primary)
     styles["BodyText"].fontSize = 10
     styles["BodyText"].leading = 15
-    styles["BodyText"].textColor = colors.HexColor("#3A3532")
-    note_style = ParagraphStyle("ReportNote", parent=styles["BodyText"], fontSize=8, leading=11, textColor=colors.HexColor("#6B6560"))
+    styles["BodyText"].textColor = colors.HexColor(theme.ink)
+    note_style = ParagraphStyle("ReportNote", parent=styles["BodyText"], fontSize=8, leading=11, textColor=colors.HexColor(theme.muted))
     brand_style = ParagraphStyle("ReportBrand", parent=note_style, fontName="Helvetica-Bold", textColor=colors.HexColor(theme.primary), spaceAfter=10)
-    metric_style = ParagraphStyle("ReportMetric", fontName="Helvetica-Bold", fontSize=15, leading=20, textColor=colors.HexColor("#1F1D1B"))
+    metric_style = ParagraphStyle("ReportMetric", fontName="Helvetica-Bold", fontSize=15, leading=20, textColor=colors.HexColor(theme.ink))
     story = [Paragraph("WORKFORCE COMPASS / ANALYTICS REPORT", brand_style), Paragraph(escape(report.title), styles["Title"])]
     story.append(Paragraph(f"Generated {report.generated_at:%d %B %Y, %H:%M} | Source: {SOURCE_LABEL}", note_style))
     story.append(Paragraph(f"Scope: {escape(report.scope)}", note_style))
@@ -2546,8 +2546,8 @@ def generate_business_report_pdf(
         metric_cells = [[Paragraph(escape(label.upper()), note_style), Paragraph(escape(value), metric_style)] for label, value in report.metrics]
         metric_table = Table([metric_cells], colWidths=[document.width / len(metric_cells)] * len(metric_cells), hAlign="LEFT")
         metric_table.setStyle(TableStyle([
-            ("LINEABOVE", (0, 0), (-1, 0), 0.6, colors.HexColor("#DDD6CF")),
-            ("LINEBELOW", (0, 0), (-1, 0), 0.6, colors.HexColor("#DDD6CF")),
+            ("LINEABOVE", (0, 0), (-1, 0), 0.6, colors.HexColor(theme.line)),
+            ("LINEBELOW", (0, 0), (-1, 0), 0.6, colors.HexColor(theme.line)),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ("TOPPADDING", (0, 0), (-1, -1), 11), ("BOTTOMPADDING", (0, 0), (-1, -1), 11),
         ]))
@@ -2581,8 +2581,8 @@ def generate_business_report_pdf(
     def footer(canvas, document) -> None:
         canvas.saveState()
         canvas.setFont("Helvetica", 8)
-        canvas.setFillColor(colors.HexColor("#6B6560"))
-        canvas.setStrokeColor(colors.HexColor("#DDD6CF"))
+        canvas.setFillColor(colors.HexColor(theme.muted))
+        canvas.setStrokeColor(colors.HexColor(theme.line))
         canvas.line(document.leftMargin, 0.48 * inch, document.pagesize[0] - document.rightMargin, 0.48 * inch)
         canvas.drawString(document.leftMargin, 0.3 * inch, "Created by Vijayashree | All rights reserved 2026")
         canvas.drawRightString(document.pagesize[0] - document.rightMargin, 0.3 * inch, f"Page {document.page}")
@@ -5125,16 +5125,16 @@ def apply_theme() -> None:
         @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Newsreader:opsz,wght@6..72,500;6..72,600;6..72,700&display=swap');
 
         :root {
-            --ink: #1F1D1B;
-            --muted: #6B6560;
-            --line: #E7E2DD;
-            --canvas: #FAF8F6;
+            --ink: #142D3B;
+            --muted: #526877;
+            --line: #D8E3E8;
+            --canvas: #F5F8FA;
             --surface: #ffffff;
-            --evergreen: #5B2A86;
-            --evergreen-soft: #F1EAF8;
-            --coral: #5B2A86;
-            --coral-dark: #47206A;
-            --coral-soft: #F1EAF8;
+            --evergreen: #126E75;
+            --evergreen-soft: #E6F3F2;
+            --coral: #126E75;
+            --coral-dark: #0D555C;
+            --coral-soft: #E6F3F2;
         }
 
         .stApp {
@@ -5158,7 +5158,7 @@ def apply_theme() -> None:
             align-items: flex-start;
             justify-content: space-between;
             gap: 2rem;
-            background: rgba(250, 248, 246, 0.92);
+            background: rgba(245, 248, 250, 0.92);
             border-bottom: 1px solid var(--line);
             margin-bottom: 1.35rem;
             padding: 0.65rem 0 1rem;
@@ -5263,12 +5263,12 @@ def apply_theme() -> None:
             background: var(--surface);
             border-radius: 10px;
             border: 1px solid var(--line);
-            box-shadow: 0 10px 24px rgba(31, 29, 27, 0.06);
+            box-shadow: 0 10px 24px rgba(20, 45, 59, 0.06);
         }
 
         [data-testid="stChatInput"]:focus-within {
             border-color: var(--coral);
-            box-shadow: 0 0 0 3px var(--coral-soft), 0 12px 28px rgba(31, 29, 27, 0.09);
+            box-shadow: 0 0 0 3px var(--coral-soft), 0 12px 28px rgba(20, 45, 59, 0.09);
         }
 
         [data-testid="stChatInput"] > div {
@@ -5303,7 +5303,7 @@ def apply_theme() -> None:
         }
 
         [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {
-            background: #F3EEEA;
+            background: #E8F2F4;
             border-radius: 8px;
             margin-left: auto;
             margin-right: 0;
@@ -5421,23 +5421,24 @@ def apply_theme() -> None:
         unsafe_allow_html=True,
     )
 
-    # Warm, text-first assistant interface
+    # Text-first assistant interface
     st.markdown(
         """
         <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
             :root {
-                --wc-bg: #FAF8F6;
+                --wc-bg: #F5F8FA;
                 --wc-sidebar: #FFFFFF;
-                --wc-ink: #1F1D1B;
-                --wc-muted: #6B6560;
-                --wc-accent: #5B2A86;
-                --wc-accent-hover: #47206A;
-                --wc-accent-soft: #F1EAF8;
-                --wc-line: #E7E2DD;
-                --wc-user: #F4EEF9;
-                --wc-code: #F3EFEB;
+                --wc-ink: #142D3B;
+                --wc-muted: #526877;
+                --wc-accent: #126E75;
+                --wc-accent-hover: #0D555C;
+                --wc-accent-soft: #E6F3F2;
+                --wc-on-accent: #FFFFFF;
+                --wc-line: #D8E3E8;
+                --wc-user: #E8F2F4;
+                --wc-code: #EDF3F5;
                 --wc-font: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
             }
 
@@ -5458,7 +5459,7 @@ def apply_theme() -> None:
             }
 
             ::selection {
-                background: #D9C8EC;
+                background: #BBDDDC;
                 color: var(--wc-ink);
             }
 
@@ -5498,7 +5499,7 @@ def apply_theme() -> None:
             }
 
             .sidebar-brand .brand-logo {
-                background: linear-gradient(135deg, #5B2A86 0%, #7E4BB0 100%);
+                background: linear-gradient(135deg, #183E53 0%, #126E75 100%);
                 border-radius: 9px;
                 color: #FFFFFF;
                 display: grid;
@@ -5512,7 +5513,7 @@ def apply_theme() -> None:
             .active-file {
                 align-items: center;
                 background: var(--wc-accent-soft);
-                border: 1px solid #D9C8EC;
+                border: 1px solid var(--wc-line);
                 border-radius: 10px;
                 color: var(--wc-accent);
                 display: flex;
@@ -5640,7 +5641,7 @@ def apply_theme() -> None:
             }
 
             .empty-mark span {
-                background: linear-gradient(180deg, #C9A227 0%, #5B2A86 100%);
+                background: linear-gradient(180deg, #B57747 0%, #126E75 100%);
                 border-radius: 2px 2px 0 0;
                 display: block;
                 width: 6px;
@@ -5672,7 +5673,7 @@ def apply_theme() -> None:
                 background: #FFFFFF !important;
                 border: 1px solid var(--wc-line) !important;
                 border-radius: 14px !important;
-                box-shadow: 0 1px 2px rgba(31, 29, 27, 0.04) !important;
+                box-shadow: 0 1px 2px rgba(20, 45, 59, 0.04) !important;
                 color: var(--wc-ink) !important;
                 flex-direction: column !important;
                 font-weight: 600 !important;
@@ -5685,7 +5686,7 @@ def apply_theme() -> None:
 
             .st-key-home_actions .stButton > button:hover {
                 border-color: var(--wc-accent) !important;
-                box-shadow: 0 6px 18px rgba(91, 42, 134, 0.12) !important;
+                box-shadow: 0 6px 18px rgba(18, 110, 117, 0.12) !important;
                 color: var(--wc-accent) !important;
             }
 
@@ -5719,7 +5720,7 @@ def apply_theme() -> None:
                 background: #FFFFFF;
                 border: 1px solid var(--wc-line);
                 border-radius: 14px;
-                box-shadow: 0 1px 2px rgba(31, 29, 27, 0.04);
+                box-shadow: 0 1px 2px rgba(20, 45, 59, 0.04);
                 min-width: 0;
                 padding: 0.85rem 1rem;
             }
@@ -5807,7 +5808,7 @@ def apply_theme() -> None:
                 background: var(--wc-accent) !important;
                 border: 1px solid var(--wc-accent) !important;
                 border-radius: 10px !important;
-                color: #FFFFFF !important;
+                color: var(--wc-on-accent) !important;
                 font-weight: 600;
                 min-height: 40px;
             }
@@ -5863,6 +5864,7 @@ def apply_theme() -> None:
 
             [data-testid="stChatMessageAvatarAssistant"] {
                 background: var(--wc-accent) !important;
+                color: var(--wc-on-accent) !important;
                 border-radius: 50% !important;
             }
 
@@ -5916,7 +5918,7 @@ def apply_theme() -> None:
                 border: 1px solid var(--wc-line) !important;
                 border-radius: 18px !important;
                 bottom: 28px !important;
-                box-shadow: 0 8px 28px rgba(31, 29, 27, 0.08) !important;
+                box-shadow: 0 8px 28px rgba(20, 45, 59, 0.08) !important;
                 left: 50% !important;
                 max-width: 760px;
                 position: fixed !important;
@@ -5928,7 +5930,7 @@ def apply_theme() -> None:
 
             [data-testid="stChatInput"]:focus-within {
                 border-color: var(--wc-accent) !important;
-                box-shadow: 0 0 0 3px rgba(91, 42, 134, 0.14), 0 8px 22px rgba(31, 29, 27, 0.08) !important;
+                box-shadow: 0 0 0 3px rgba(18, 110, 117, 0.14), 0 8px 22px rgba(20, 45, 59, 0.08) !important;
             }
 
             [data-testid="stChatInput"] textarea {
@@ -5939,6 +5941,7 @@ def apply_theme() -> None:
 
             [data-testid="stChatInputSubmitButton"] {
                 background: var(--wc-accent) !important;
+                color: var(--wc-on-accent) !important;
                 border-radius: 50% !important;
                 height: 36px !important;
                 width: 36px !important;
@@ -5981,30 +5984,33 @@ def apply_theme() -> None:
             }
 
             * {
-                scrollbar-color: #D6CFC8 transparent;
+                scrollbar-color: #A7BDC7 transparent;
                 scrollbar-width: thin;
             }
 
             *::-webkit-scrollbar { width: 8px; }
-            *::-webkit-scrollbar-thumb { background: #D6CFC8; border-radius: 8px; }
+            *::-webkit-scrollbar-thumb { background: #A7BDC7; border-radius: 8px; }
             *::-webkit-scrollbar-track { background: transparent; }
 
             /* Dark mode */
             @media (prefers-color-scheme: dark) {
                 :root {
-                    --wc-bg: #1F1D1B;
-                    --wc-sidebar: #262321;
-                    --wc-ink: #E7E2DD;
-                    --wc-muted: #A39C95;
-                    --wc-line: #2E2A27;
-                    --wc-user: #2E2A27;
-                    --wc-code: #2E2A27;
-                    --wc-accent-soft: #2E2A27;
+                    --wc-bg: #10232F;
+                    --wc-sidebar: #142D3B;
+                    --wc-ink: #E4EDF2;
+                    --wc-muted: #A7BDC7;
+                    --wc-line: #304956;
+                    --wc-user: #1D3D49;
+                    --wc-code: #1C3442;
+                    --wc-accent: #60C6C3;
+                    --wc-accent-hover: #8AD8D4;
+                    --wc-accent-soft: #1D3D49;
+                    --wc-on-accent: #10232F;
                 }
 
-                .workspace-header { background: #1F1D1B !important; }
-                [data-testid="stChatInput"] { background: #262321 !important; }
-                .kpi-card, .st-key-home_actions .stButton > button { background: #262321 !important; }
+                .workspace-header { background: #10232F !important; }
+                [data-testid="stChatInput"] { background: #142D3B !important; }
+                .kpi-card, .st-key-home_actions .stButton > button { background: #142D3B !important; }
                 [data-testid="stMain"] .stButton > button[kind="secondary"] { color: var(--wc-ink) !important; }
             }
 
