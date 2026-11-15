@@ -72,7 +72,7 @@ from data_explorer import (
 )
 from backend_diagnostics import BackendTrace, diagnostic_log, execution_code_log, generated_code_log
 from spreadsheet_analytics import filter_rows, render_spreadsheet_analysis
-from predictive_analysis import is_full_analysis_request, run_full_analysis
+from predictive_analysis import analysis_deck, is_full_analysis_request, run_full_analysis
 from report_themes import ReportTheme, get_theme, style_figure
 from dashboard_builder import dashboard_kpis
 from slides_export import PPTX_MIME, Deck, SlideChart, build_pptx
@@ -2579,26 +2579,23 @@ def smtp_is_configured() -> bool:
     )
 
 
-def send_report_email(recipient: str, report: BusinessReport, pdf_report: bytes) -> tuple[bool, str]:
+def send_email(
+    recipient: str, subject: str, body: str, attachments: list[tuple[bytes, str, str]], *, what: str, disabled: str,
+) -> tuple[bool, str]:
+    """Send attachments (content, MIME type, file name) over STARTTLS SMTP; never reveals SMTP secrets."""
     if not re.fullmatch(EMAIL_PATTERN, recipient, flags=re.IGNORECASE):
         return False, "Enter a valid recipient email address."
     if not smtp_is_configured():
-        return False, "Report email is not enabled for this workspace. You can download the PDF instead."
+        return False, disabled
 
     message = EmailMessage()
-    message["Subject"] = report.title
+    message["Subject"] = subject
     message["From"] = os.environ["SMTP_FROM_EMAIL"]
     message["To"] = recipient
-    message.set_content(
-        "Your Workforce Compass business report is attached as a PDF. "
-        "It is based on the current employee data snapshot."
-    )
-    message.add_attachment(
-        pdf_report,
-        maintype="application",
-        subtype="pdf",
-        filename="workforce_business_report.pdf",
-    )
+    message.set_content(body)
+    for content, mime, file_name in attachments:
+        maintype, subtype = mime.split("/", 1)
+        message.add_attachment(content, maintype=maintype, subtype=subtype, filename=file_name)
 
     try:
         with smtplib.SMTP(
@@ -2610,8 +2607,31 @@ def send_report_email(recipient: str, report: BusinessReport, pdf_report: bytes)
             server.login(os.environ["SMTP_USERNAME"], os.environ["SMTP_APP_PASSWORD"])
             server.send_message(message)
     except (OSError, ValueError, smtplib.SMTPException):
-        return False, "The report could not be sent. Check the Gmail SMTP settings and try again."
-    return True, f"The PDF report was sent to {recipient}."
+        return False, f"The {what} could not be sent. Check the Gmail SMTP settings and try again."
+    return True, f"The {what} was sent to {recipient}."
+
+
+def send_report_email(recipient: str, report: BusinessReport, pdf_report: bytes) -> tuple[bool, str]:
+    return send_email(
+        recipient, report.title,
+        "Your Workforce Compass business report is attached as a PDF. "
+        "It is based on the current employee data snapshot.",
+        [(pdf_report, "application/pdf", "workforce_business_report.pdf")],
+        what="PDF report", disabled="Report email is not enabled for this workspace. You can download the PDF instead.",
+    )
+
+
+def send_analysis_email(
+    recipient: str, source_name: str, pptx: bytes, excel: bytes, stem: str,
+) -> tuple[bool, str]:
+    return send_email(
+        recipient, f"Workforce Compass analysis: {source_name}",
+        f"Your Workforce Compass analysis of {source_name} is attached: the slides (PowerPoint) and the full "
+        "analysis workbook (Excel) with the cleaned data, Cleaning Log, charts and any predictions.",
+        [(pptx, PPTX_MIME, f"{stem}.pptx"), (excel, EXCEL_MIME, f"{stem}.xlsx")],
+        what="analysis",
+        disabled="Analysis email is not enabled for this workspace. You can download the slides and Excel file instead.",
+    )
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -4001,10 +4021,29 @@ def display_full_analysis(message: dict[str, Any], render_key: str) -> str | Non
             st.dataframe(prediction.drivers, hide_index=True, width="stretch")
     for note in result.notes:
         st.caption(note)
-    st.download_button(
-        "Download full analysis (Excel)", data=result.excel, mime=EXCEL_MIME,
-        file_name=f"{Path(message['file_name']).stem}_full_analysis.xlsx", key=f"full_analysis_download_{render_key}",
+    stem = f"{Path(message['file_name']).stem}_full_analysis"
+    theme = selected_theme()
+    if message.get("analysis_pptx_theme") != theme.key:
+        message["analysis_pptx"] = build_pptx(analysis_deck(result, message["file_name"]), theme.key)
+        message["analysis_pptx_theme"] = theme.key
+    left, right, _ = st.columns([1, 1, 1.2])
+    left.download_button(
+        "Download slides (PPTX)", data=message["analysis_pptx"], file_name=f"{stem}.pptx", mime=PPTX_MIME,
+        key=f"full_analysis_pptx_{render_key}", icon=":material/slideshow:",
     )
+    right.download_button(
+        "Download full analysis (Excel)", data=result.excel, mime=EXCEL_MIME,
+        file_name=f"{stem}.xlsx", key=f"full_analysis_download_{render_key}", icon=":material/download:",
+    )
+    with st.expander("Email this analysis"):
+        recipient = st.text_input(
+            "Recipient email address", key=f"full_analysis_recipient_{render_key}", placeholder="manager@example.com",
+        ).strip()
+        if st.button("Send slides and Excel", key=f"full_analysis_send_{render_key}", icon=":material/mail:"):
+            sent, status = send_analysis_email(
+                recipient, message["file_name"], message["analysis_pptx"], result.excel, stem,
+            )
+            (st.success if sent else st.error)(status)
     return result.answer
 
 

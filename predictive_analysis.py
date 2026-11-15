@@ -18,6 +18,7 @@ from data_explorer import (
     missing_mask, numbers,
 )
 from excel_support import generate_excel_download
+from slides_export import MAX_TABLE_ROWS, Deck, SlideChart
 from workbook_charts import apply_excel_dashboard
 
 PREDICTIVE_WORDS = re.compile(
@@ -599,3 +600,42 @@ def run_full_analysis(question: str, frame: pd.DataFrame, source_name: str) -> F
                  + " tabs.")
     return FullAnalysis(clean, cleaning_log, charts, prediction, "\n\n".join(lines), exported.content,
                         exported.sheet, exported.tables_sheet or "", notes)
+
+
+def _plain(markdown: str) -> str:
+    return re.sub(r"\*\*(.+?)\*\*", r"\1", markdown).strip()
+
+
+def analysis_deck(result: FullAnalysis, source_name: str) -> Deck:
+    """Slides for a full analysis: key figures, summary, every chart, the full Cleaning Log and the model results."""
+    removed = int(result.cleaning_log.loc[result.cleaning_log["Step"].str.startswith("Removed"), "Rows affected"].sum())
+    kpis = [("Rows analysed", f"{len(result.clean):,}", f"{removed:,} removed" if removed else "No rows removed"),
+            ("Values fixed", f"{values_changed(result.cleaning_log):,}", "Standardised or converted"),
+            ("Blank cells", f"{int(result.clean.isna().sum().sum()):,}", "Kept as blank")]
+    prediction = result.prediction
+    if prediction is not None:
+        headline = prediction.metrics.iloc[0]
+        kpis.append((f"{headline['Metric']}", str(headline["Value"]), f"Predicting {prediction.target}"))
+    summary = [_plain(line) for line in result.answer.split("\n\n")
+               if line.strip() and not line.startswith("The Excel download") and line.strip() != "**Predictive analysis**"]
+    sections = [("Summary", [line for block in summary for line in block.split("\n- ") if line.strip()])]
+    log = result.cleaning_log
+    parts = max(1, -(-len(log) // MAX_TABLE_ROWS))
+    tables = [(f"Cleaning Log" + (f" ({part + 1} of {parts})" if parts > 1 else ""),
+               log.iloc[part * MAX_TABLE_ROWS:(part + 1) * MAX_TABLE_ROWS]) for part in range(parts)]
+    if prediction is not None:
+        records = prediction.predictions
+        identifier = next((column for column in records.columns if _is_identifier(column, records[column])), None)
+        added = [column for column in records.columns if column not in result.clean.columns]
+        shown = [column for column in [identifier, prediction.target, *added] if column is not None]
+        tables += [("Model performance (25% hold-out)", prediction.metrics),
+                   (f"Key drivers of {prediction.target}", prediction.drivers),
+                   ("Predictions (highest probability first)", records[shown])]
+    return Deck(
+        title=f"Full analysis: {source_name}",
+        subtitle=f"Based on {len(result.clean):,} cleaned rows",
+        kpis=kpis,
+        charts=[SlideChart(chart.title, chart.chart_type, chart.table, chart.explanation) for chart in result.charts],
+        sections=sections,
+        tables=tables,
+    )

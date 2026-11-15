@@ -1461,6 +1461,23 @@ class WorkforceTests(unittest.TestCase):
             self.assertNotIn(SMTP_SETTINGS["SMTP_APP_PASSWORD"], status)
             server.send_message.assert_not_called()
 
+    def test_analysis_email_attaches_slides_and_excel(self):
+        with patch.dict(os.environ, SMTP_SETTINGS), patch.object(self.chatbot.smtplib, "SMTP") as smtp:
+            sent, status = self.chatbot.send_analysis_email(
+                "manager@example.com", "telecom.csv", b"pptx-bytes", b"xlsx-bytes", "telecom_full_analysis")
+            self.assertTrue(sent, status)
+            message = smtp.return_value.__enter__.return_value.send_message.call_args.args[0]
+        self.assertEqual(
+            [(part.get_filename(), part.get_content_type(), part.get_payload(decode=True)) for part in message.iter_attachments()],
+            [("telecom_full_analysis.pptx", self.chatbot.PPTX_MIME, b"pptx-bytes"),
+             ("telecom_full_analysis.xlsx", self.chatbot.EXCEL_MIME, b"xlsx-bytes")],
+        )
+        with patch.object(self.chatbot.smtplib, "SMTP") as smtp:
+            sent, status = self.chatbot.send_analysis_email("manager@example.com", "telecom.csv", b"p", b"x", "t")
+            self.assertFalse(sent)
+            self.assertIn("download the slides", status)
+            smtp.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

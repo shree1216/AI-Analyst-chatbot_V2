@@ -7,11 +7,15 @@ from unittest.mock import patch
 import numpy as np
 import pandas as pd
 from openpyxl import load_workbook
+from pptx import Presentation
 from streamlit.testing.v1 import AppTest
 
 from chat_upload import patch_chat_upload
 from excel_support import excel_sheet_names
-from predictive_analysis import clean_table, find_target, is_full_analysis_request, predict_target, run_full_analysis
+from predictive_analysis import (
+    analysis_deck, clean_table, find_target, is_full_analysis_request, predict_target, run_full_analysis,
+)
+from slides_export import build_pptx
 
 ROOT = Path(__file__).resolve().parents[1]
 TEST_ENVIRONMENT = {
@@ -121,6 +125,23 @@ class PredictiveAnalysisTests(unittest.TestCase):
         self.assertIn("Key drivers of Churn", [chart.title for chart in result.charts])
         self.assertIn("Predictive analysis", result.answer)
 
+    def test_slides_hold_every_chart_cleaning_log_row_and_model_results(self):
+        frame = telecom_frame()
+        frame["Plan_Type"] = [f" {value.lower()}" if index % 3 else value for index, value in enumerate(frame["Plan_Type"])]
+        frame.loc[[2, 5, 8], "Monthly_Charge_USD"] = None
+        result = run_full_analysis(USER_PROMPT, frame, "telecom.csv")
+        deck = analysis_deck(result, "telecom.csv")
+        self.assertEqual([chart.title for chart in deck.charts], [chart.title for chart in result.charts])
+        logs = [table for heading, table in deck.tables if heading.startswith("Cleaning Log")]
+        pd.testing.assert_frame_equal(pd.concat(logs), result.cleaning_log)
+        headings = [heading for heading, _ in deck.tables]
+        self.assertIn("Key drivers of Churn", headings)
+        predictions = dict(deck.tables)["Predictions (highest probability first)"]
+        self.assertEqual(list(predictions.columns),
+                         ["Customer_ID", "Churn", "Predicted Churn", "Probability Churn = Yes", "Risk band"])
+        slides = Presentation(BytesIO(build_pptx(deck))).slides
+        self.assertEqual(len(slides), 2 + len(deck.charts) + len(deck.sections) + len(deck.tables))
+
 
 class FullAnalysisUITests(unittest.TestCase):
     def setUp(self):
@@ -142,7 +163,11 @@ class FullAnalysisUITests(unittest.TestCase):
         self.assertEqual([tab.label for tab in response.tabs],
                          ["Charts", "Supporting tables", "Cleaning", "Predictions", "Model"])
         self.assertIn("Download full analysis (Excel)", [button.label for button in response.get("download_button")])
+        self.assertIn("Download slides (PPTX)", [button.label for button in response.get("download_button")])
+        self.assertIn("Email this analysis", [expander.label for expander in response.expander])
         self.assertIn("Predictions", excel_sheet_names(message["analysis"].excel))
+        slides = Presentation(BytesIO(message["analysis_pptx"])).slides
+        self.assertEqual(slides[0].shapes[1].text_frame.text, "Full analysis: telecom_dataset.csv")
 
 
 if __name__ == "__main__":
