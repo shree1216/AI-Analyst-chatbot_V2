@@ -259,18 +259,31 @@ supporting tables and perform predictive analysis** (or simply **predict Churn**
 request that mentions prediction, or cleaning together with charts or supporting tables,
 runs the full analysis workflow (`predictive_analysis.py`):
 
-1. **Clean**: removes empty and duplicate rows and duplicate IDs, converts text numbers
-   (`$1,200`), unifies spelling/capitalisation of categories, and fills missing values
-   (numbers with the median, text with `Unknown`). Every step is listed on the **Cleaning** tab.
+1. **Clean** (on a copy; the uploaded data is never changed):
+   - Removes only rows that are completely empty or exact duplicates. Rows with some
+     blank cells are kept, and repeated IDs are flagged rather than removed.
+   - Standardises text: trims spaces and unifies capitalisation (`it`, `IT `, `It` -> `IT`).
+     `""`, `NA`, `N/A`, `null` and `-` are treated as blank.
+   - Converts number-like text (`82,000`, `$82000`) to numbers and date-like text to dates.
+     A value that can't be converted is set to blank; its row is kept.
+   - Flags extreme outliers (outside 3x the interquartile range) but does not remove them.
+
+   The **Cleaning** tab and **Cleaning Log** sheet list every change: rows removed and why
+   (by sheet row number), values standardised and converted with examples, flagged outliers,
+   and blanks per column.
 2. **Charts and supporting tables**: automatic charts of the cleaned data, each with the
-   exact table behind it.
+   exact table behind it. Each chart skips blanks only in the columns it uses and states
+   its row basis (for example "Based on 33 of 35 rows"). Data summaries state their row
+   count the same way.
 3. **Predictive analysis**: the target is the column you name (**predict Monthly_Charge_USD**)
    or an outcome column such as `Churn`, `Attrition` or `Status`; otherwise the chatbot asks
    which column to predict. Yes/no or category targets use logistic regression with
    accuracy, baseline, precision, recall, F1 and ROC AUC on a 25% hold-out sample;
    numeric targets use linear regression with R squared, MAE and RMSE. Key drivers are
    ranked by permutation importance with the direction of each effect, and every record
-   gets a predicted value, probability and **High / Medium / Low** risk band.
+   gets a predicted value, probability and **High / Medium / Low** risk band. The model
+   alone fills blanks (median for numbers, `Unknown` for text) on its own copy; the
+   cleaned data keeps them blank.
 
 **Download full analysis (Excel)** contains **Cleaned Data**, **Cleaning Log**,
 **Predictions**, **Model Performance**, **Key Drivers**, a charts-only **Cleaned Data Charts**

@@ -466,7 +466,9 @@ class DataExplorerTests(unittest.TestCase):
         charts, problems = build_charts(frame, plan_charts("show average salary by department", frame))
         self.assertEqual(problems, [])
         self.assertEqual(charts[0].table.to_dict("list"), {"Department": ["IT"], "Average Salary": [200.0]})
-        self.assertIn("2 of 4 rows were left out", charts[0].explanation)
+        self.assertIn("Based on 2 of 4 rows; 2 of 4 rows were left out", charts[0].explanation)
+        counts, _ = build_charts(frame, [ChartSpec("count", "column", dimension="Department")])
+        self.assertIn("Based on 3 of 4 rows", counts[0].explanation)
 
 
 class UploadedDataUITests(unittest.TestCase):

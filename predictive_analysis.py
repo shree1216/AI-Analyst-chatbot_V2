@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 
 from data_explorer import (
-    ChartResult, ChartSpec, _chart_figure, _find_column, auto_charts, build_charts, categories, column_kind,
+    ChartResult, ChartSpec, _chart_figure, _find_column, auto_charts, build_charts, categories, column_kind, dates,
     missing_mask, numbers,
 )
 from excel_support import generate_excel_download
@@ -45,78 +45,187 @@ def wants_prediction(question: str) -> bool:
 
 # --------------------------------------------------------------------------- cleaning
 
-def _is_identifier(name: str, series: pd.Series) -> bool:
+def _is_identifier(name: str, series: pd.Series, share: float = 0.95) -> bool:
     present = series[~missing_mask(series)]
     named = bool(re.search(r"(?:^|[\s_])id$|^id(?:[\s_]|$)|identifier|(?:^|[\s_])(?:code|number|no)$", name, re.I))
-    unique = len(present) > 0 and present.astype(str).nunique() >= 0.95 * len(present)
+    unique = len(present) > 0 and present.astype(str).nunique() >= share * len(present)
     return named and unique
 
 
+LOG_COLUMNS = ["Step", "Column", "Rows affected", "Detail"]
+CHANGE_STEPS = {"Treated placeholders as blank", "Converted text to numbers", "Converted text to dates",
+                "Set unreadable values to blank", "Standardised text", "Trimmed text"}
+OUTLIER_IQR_MULTIPLIER = 3.0
+CONVERT_SHARE = 0.8
+MAX_EXAMPLES = 5
+
+
+def _examples(items: list[str]) -> str:
+    shown = ", ".join(items[:MAX_EXAMPLES])
+    return shown + (f" (+{len(items) - MAX_EXAMPLES:,} more)" if len(items) > MAX_EXAMPLES else "")
+
+
+def _row_list(rows: list[int]) -> str:
+    return "row" + ("s " if len(rows) > 1 else " ") + _examples([str(row) for row in rows])
+
+
+def _changes(before: pd.Series, after: pd.Series, mask: pd.Series) -> str:
+    pairs = pd.DataFrame({"before": before[mask].map(repr), "after": after[mask].map(_shown)})
+    counts = pairs.value_counts(sort=False)
+    return _examples([f"{old} -> {new}" + (f" ({count:,}x)" if count > 1 else "") for (old, new), count in counts.items()])
+
+
+def _shown(value: object) -> str:
+    if isinstance(value, pd.Timestamp):
+        return value.date().isoformat() if value == value.normalize() else str(value)
+    if isinstance(value, float) and value.is_integer():
+        return f"{int(value)}"
+    return repr(value) if isinstance(value, str) else f"{value}"
+
+
 def clean_table(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Return the cleaned table and a log of every cleaning step (step, column, rows affected, detail)."""
-    clean = frame.copy().reset_index(drop=True)
+    """Clean a copy of an uploaded table and log every change (step, column, rows affected, detail).
+
+    Rows are removed only when completely empty or exact duplicates. Blank and unreadable cells stay
+    blank so each chart or calculation can skip them only for the columns it uses. Extreme outliers
+    are flagged, never removed. The uploaded frame is not modified.
+    """
+    clean = frame.copy(deep=True).reset_index(drop=True)
+    clean.attrs = {}
     clean.columns = [re.sub(r"\s+", " ", str(column)).strip() for column in clean.columns]
+    source_rows = list(frame.attrs.get("excel_row_numbers") or [])
+    if len(source_rows) != len(frame):
+        source_rows = list(range(2, len(frame) + 2))
+    rows = pd.Series(source_rows, dtype="int64")
     log: list[dict[str, object]] = []
 
-    def note(step: str, column: str, rows: int, detail: str) -> None:
-        if rows:
-            log.append({"Step": step, "Column": column, "Rows affected": int(rows), "Detail": detail})
+    def note(step: str, column: str, count: int, detail: str, *, always: bool = False) -> None:
+        if count or always:
+            log.append({"Step": step, "Column": column, "Rows affected": int(count), "Detail": detail})
 
-    blank = clean.apply(missing_mask).all(axis=1)
-    note("Removed empty rows", "(all)", int(blank.sum()), "Rows with no values at all")
-    clean = clean[~blank].reset_index(drop=True)
+    missing = clean.apply(missing_mask) if len(clean.columns) else pd.DataFrame(index=clean.index)
+    empty = missing.all(axis=1) if len(clean.columns) else pd.Series(True, index=clean.index)
+    note("Removed empty rows", "(all)", int(empty.sum()),
+         f"Every cell was blank: {_row_list(rows[empty].tolist())}" if empty.any() else "")
+    # Exact duplicates are judged on the values as uploaded; blanks and placeholders count as equal.
+    exact = clean.astype(object).where(~missing, "").astype(str)
+    duplicate = exact.duplicated() & ~empty
+    if duplicate.any():
+        first: dict[tuple, int] = {}
+        pairs = []
+        for index, key in zip(exact.index, exact.itertuples(index=False, name=None)):
+            if duplicate[index]:
+                pairs.append(f"row {rows[index]} = row {first[key]}")
+            elif not empty[index]:
+                first.setdefault(key, rows[index])
+        note("Removed duplicate rows", "(all)", int(duplicate.sum()), f"Exact repeats of an earlier row: {_examples(pairs)}")
+    keep = ~(empty | duplicate)
+    clean, rows = clean[keep].reset_index(drop=True), rows[keep].reset_index(drop=True)
 
+    # A lower uniqueness bar here so repeated IDs are still recognised (and flagged) in small tables.
+    identifiers = [column for column in clean.columns if _is_identifier(column, clean[column], share=0.8)]
     for column in clean.columns:
         series = clean[column]
+        blank = missing_mask(series)
+        placeholder = blank & series.map(lambda value: isinstance(value, str))
+        if placeholder.any():
+            tokens = series[placeholder].map(lambda value: repr(value.strip()) if value.strip() else "''").value_counts()
+            note("Treated placeholders as blank", column, int(placeholder.sum()),
+                 _examples([f"{token} ({count:,}x)" for token, count in tokens.items()]))
         kind = column_kind(series)
-        if kind in {"whole number", "decimal number"}:
-            converted = numbers(series)
-            changed = int((~missing_mask(series) & series.map(lambda value: isinstance(value, str))).sum())
-            note("Converted text to numbers", column, changed, "Removed currency symbols, commas and spaces")
+        if kind == "text" and column not in identifiers and (~blank).any():
+            # A mostly numeric or date column is converted, and its few unreadable values become blank (rows kept).
+            if numbers(series[~blank]).notna().mean() >= CONVERT_SHARE:
+                kind = "decimal number"
+            elif dates(series[~blank]).notna().mean() >= CONVERT_SHARE:
+                kind = "date"
+        is_text = series.map(lambda value: isinstance(value, str)) & ~blank
+        if kind in {"whole number", "decimal number", "date"}:
+            converted = dates(series) if kind == "date" else numbers(series)
+            changed = is_text & converted.notna()
+            what = "dates" if kind == "date" else "numbers"
+            note(f"Converted text to {what}", column, int(changed.sum()), _changes(series, converted, changed))
+            unreadable = ~blank & converted.isna()
+            note("Set unreadable values to blank", column, int(unreadable.sum()),
+                 f"Not a valid {'date' if kind == 'date' else 'number'} at {_row_list(rows[unreadable].tolist())}: "
+                 + _examples(series[unreadable].map(repr).tolist()) + "; the rows were kept")
             clean[column] = converted
-        elif kind in {"text", "true/false"} and not _is_identifier(column, series):
+        elif kind in {"text", "true/false"} and column not in identifiers:
             standard = categories(series)
-            present = ~missing_mask(series)
-            changed = int((standard[present].astype(str) != series[present].astype(str)).sum())
-            note("Standardised text", column, changed, "Trimmed spaces and unified capitalisation/spelling")
-            clean[column] = standard
-        elif kind == "text":
-            trimmed = series.map(lambda value: re.sub(r"\s+", " ", value).strip() if isinstance(value, str) else value)
-            changed = series.map(lambda value: isinstance(value, str)) & (trimmed.astype(str) != series.astype(str))
-            note("Trimmed text", column, int(changed.sum()), "Removed extra spaces")
-            clean[column] = trimmed
-
-    duplicates = clean.astype(str).duplicated()
-    note("Removed duplicate rows", "(all)", int(duplicates.sum()), "Exact repeats of an earlier row")
-    clean = clean[~duplicates].reset_index(drop=True)
-    identifier = next((column for column in clean.columns if _is_identifier(column, clean[column])), None)
-    if identifier is not None:
-        repeated = clean[identifier].notna() & clean[identifier].astype(str).str.strip().str.upper().duplicated()
-        note("Removed duplicate IDs", identifier, int(repeated.sum()), "Kept the first record for each ID")
-        clean = clean[~repeated].reset_index(drop=True)
-
-    for column in clean.columns:
-        missing = missing_mask(clean[column])
-        if not missing.any() or (identifier is not None and column == identifier):
-            continue
-        if pd.api.types.is_numeric_dtype(clean[column]):
-            median = float(clean.loc[~missing, column].median()) if (~missing).any() else 0.0
-            clean.loc[missing, column] = median
-            note("Filled missing values", column, int(missing.sum()), f"Used the median ({median:,.2f})")
+            changed = ~blank & (standard.astype(str) != series.astype(str))
+            note("Standardised text", column, int(changed.sum()),
+                 "Trimmed spaces / unified capitalisation: " + _changes(series, standard, changed))
+            clean[column] = standard.where(~blank, None)
         else:
-            clean[column] = clean[column].astype(object)
-            clean.loc[missing, column] = "Unknown"
-            note("Filled missing values", column, int(missing.sum()), "Marked as 'Unknown'")
+            trimmed = series.map(lambda value: re.sub(r"\s+", " ", value).strip() if isinstance(value, str) else value)
+            changed = is_text & (trimmed.astype(str) != series.astype(str))
+            note("Trimmed text", column, int(changed.sum()), "Removed extra spaces: " + _changes(series, trimmed, changed))
+            clean[column] = trimmed.where(~blank, None)
+        values = clean[column]
+        if pd.api.types.is_float_dtype(values) and len(values) and values.notna().all() and (values % 1 == 0).all():
+            clean[column] = values.astype("int64")
+
+    for identifier in identifiers:
+        keys = clean[identifier].astype(str).str.strip().str.upper().where(clean[identifier].notna())
+        repeated = keys.notna() & keys.duplicated(keep=False)
+        if repeated.any():
+            note("Flagged repeated IDs (kept)", identifier, int(repeated.sum()),
+                 f"Same {identifier} on {_row_list(rows[repeated].tolist())} but other values differ; review them")
 
     for column in clean.columns:
         values = clean[column]
-        if pd.api.types.is_float_dtype(values) and values.notna().all() and (values % 1 == 0).all():
-            clean[column] = values.astype("int64")
+        if column in identifiers or not pd.api.types.is_numeric_dtype(values) or pd.api.types.is_bool_dtype(values):
+            continue
+        present = values.dropna().astype(float)
+        if len(present) < 5:
+            continue
+        low_quartile, high_quartile = present.quantile(0.25), present.quantile(0.75)
+        spread = high_quartile - low_quartile
+        if not spread:
+            continue
+        low, high = low_quartile - OUTLIER_IQR_MULTIPLIER * spread, high_quartile + OUTLIER_IQR_MULTIPLIER * spread
+        outlier = values.notna() & ((values < low) | (values > high))
+        if outlier.any():
+            found = [f"row {row}: {_shown(float(value))}" for row, value in zip(rows[outlier], values[outlier])]
+            note("Flagged extreme outliers (kept)", column, int(outlier.sum()),
+                 f"Outside the expected range {_shown(round(float(low), 2))} to {_shown(round(float(high), 2))} "
+                 f"(3x interquartile range): {_examples(found)}. Not removed; check them")
 
-    if not log:
-        log.append({"Step": "No changes needed", "Column": "(all)", "Rows affected": 0,
-                    "Detail": "No blanks, duplicates or inconsistent values were found"})
-    return clean, pd.DataFrame(log, columns=["Step", "Column", "Rows affected", "Detail"])
+    for column in clean.columns:
+        blanks = int(clean[column].isna().sum())
+        note("Blanks per column", column, blanks,
+             f"{blanks:,} of {len(clean):,} rows blank; kept, and skipped only by charts/calculations that use {column}"
+             if blanks else "No blanks", always=True)
+
+    if not any(entry["Step"] in CHANGE_STEPS or entry["Step"].startswith("Removed") for entry in log):
+        log.insert(0, {"Step": "No changes needed", "Column": "(all)", "Rows affected": 0,
+                       "Detail": "No empty or duplicate rows and no inconsistent values were found"})
+    clean.attrs["excel_row_numbers"] = rows.tolist()
+    return clean, pd.DataFrame(log, columns=LOG_COLUMNS)
+
+
+def values_changed(cleaning_log: pd.DataFrame) -> int:
+    return int(cleaning_log.loc[cleaning_log["Step"].isin(CHANGE_STEPS), "Rows affected"].sum())
+
+
+def model_input(clean: pd.DataFrame) -> pd.DataFrame:
+    """Fill blanks on a separate copy for the prediction model only (median for numbers, 'Unknown' otherwise)."""
+    data = clean.copy()
+    identifier = next((column for column in data.columns if _is_identifier(column, data[column])), None)
+    for column in data.columns:
+        blank = missing_mask(data[column])
+        if not blank.any() or column == identifier:
+            continue
+        if pd.api.types.is_numeric_dtype(data[column]):
+            data.loc[blank, column] = float(data.loc[~blank, column].median()) if (~blank).any() else 0.0
+        else:
+            data[column] = data[column].astype(object)
+            data.loc[blank, column] = "Unknown"
+    for column in data.columns:
+        values = data[column]
+        if pd.api.types.is_float_dtype(values) and values.notna().all() and (values % 1 == 0).all():
+            data[column] = values.astype("int64")
+    return data
 
 
 # --------------------------------------------------------------------------- target and features
@@ -410,19 +519,21 @@ class FullAnalysis:
     notes: list[str] = field(default_factory=list)
 
 
-def _prediction_charts(result: PredictionResult) -> list[ChartResult]:
+def _prediction_charts(result: PredictionResult, total: int) -> list[ChartResult]:
     charts = []
+    used = len(result.predictions)
+    basis = f" Based on {used:,} of {total:,} rows (rows with a known {result.target})."
     drivers = result.drivers.head(8)[["Driver", "Importance %"]]
     if not drivers.empty and drivers["Importance %"].sum() > 0:
         charts.append(ChartResult(
             f"Key drivers of {result.target}", "bar", drivers,
-            f"How much each column helps predict {result.target} (share of total importance).",
+            f"How much each column helps predict {result.target} (share of total importance)." + basis,
             figure=_chart_figure(drivers, "bar"),
         ))
     if result.risk_bands is not None and result.risk_bands["Records"].sum() > 0:
         charts.append(ChartResult(
             f"{result.target} risk bands", "column", result.risk_bands,
-            "Records grouped by predicted probability: High 60%+, Medium 30-60%, Low under 30%.",
+            "Records grouped by predicted probability: High 60%+, Medium 30-60%, Low under 30%." + basis,
             figure=_chart_figure(result.risk_bands, "column"),
         ))
     return charts
@@ -444,15 +555,24 @@ def run_full_analysis(question: str, frame: pd.DataFrame, source_name: str) -> F
                 "Which column should I predict? Say for example 'predict Churn' using one of these columns: "
                 + ", ".join(map(str, clean.columns)) + "."
             )
-        prediction = predict_target(clean, target)
-    prediction_charts = _prediction_charts(prediction) if prediction else []
+        # The model needs complete inputs, so blanks are filled on a separate copy; the cleaned data keeps them.
+        prediction = predict_target(model_input(clean), target)
+    prediction_charts = _prediction_charts(prediction, len(clean)) if prediction else []
     charts = data_charts + prediction_charts
 
-    removed = len(frame) - len(clean)
-    lines = [f"Cleaned **{source_name}**: {len(frame):,} rows in, {len(clean):,} clean rows out"
-             + (f" ({removed:,} removed)" if removed else "") + f", {int(cleaning_log['Rows affected'].sum()):,} "
-             "values fixed. See the Cleaning tab for every step."]
-    lines.append(f"Built {len(charts)} charts with their supporting tables.")
+    steps = cleaning_log.groupby("Step")["Rows affected"].sum()
+    removed = {reason: int(steps.get(step, 0)) for reason, step in
+               (("completely empty", "Removed empty rows"), ("exact duplicates", "Removed duplicate rows"))}
+    reasons = ", ".join(f"{count:,} {reason}" for reason, count in removed.items() if count)
+    blanks = int(clean.isna().sum().sum())
+    lines = [f"Cleaned a copy of **{source_name}** (the upload is unchanged): kept {len(clean):,} of {len(frame):,} rows"
+             + (f"; removed {reasons}" if reasons else "; no rows removed")
+             + f". {values_changed(cleaning_log):,} values were standardised or converted; {blanks:,} blank cells were kept "
+             "as blank and each chart skips them only for the columns it uses."
+             + (f" {int(steps['Flagged extreme outliers (kept)']):,} extreme outliers were flagged, not removed."
+                if "Flagged extreme outliers (kept)" in steps else "")
+             + " See the Cleaning tab for every change."]
+    lines.append(f"Built {len(charts)} charts with their supporting tables; each states the rows it is based on.")
     if prediction:
         lines.append("**Predictive analysis**")
         lines.extend(f"- {insight}" for insight in prediction.insights)
@@ -464,9 +584,9 @@ def run_full_analysis(question: str, frame: pd.DataFrame, source_name: str) -> F
     workbook = generate_excel_download(tables)
     excel_charts = [chart for chart in data_charts[: 4 - len(prediction_charts)] + prediction_charts
                     if 0 < len(chart.table) <= 500][:4]
-    missing = int(sum(missing_mask(frame[column]).sum() for column in frame.columns))
-    kpis = [("Rows analysed", f"{len(clean):,}"), ("Values fixed", f"{int(cleaning_log['Rows affected'].sum()):,}"),
-            ("Missing values found", f"{missing:,}")]
+    missing = blanks
+    kpis = [("Rows analysed", f"{len(clean):,} of {len(frame):,}"), ("Values fixed", f"{values_changed(cleaning_log):,}"),
+            ("Blank cells (kept)", f"{missing:,}")]
     if prediction:
         headline = prediction.metrics.iloc[0]
         kpis.append((f"{headline['Metric']} ({prediction.target})", headline["Value"]))

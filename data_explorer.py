@@ -243,13 +243,18 @@ def _category_key(value: Any) -> str:
     return re.sub(r"[^\w]+", " ", str(value)).strip().casefold()
 
 
+_NOT_ACRONYMS = {"yes", "no", "true", "false", "y", "n"}
+
+
 def categories(series: pd.Series) -> pd.Series:
     """Group spellings that differ only by capital letters, spaces or punctuation, labelled by the most common form."""
     present = series[~missing_mask(series)]
     labels: dict[str, str] = {}
     for key, group in present.map(lambda value: re.sub(r"\s+", " ", str(value)).strip()).groupby(present.map(_category_key)):
-        label = group.value_counts().index[0]
-        if label.islower() or (label.isupper() and len(label) > 3):
+        counts = group.value_counts()
+        acronyms = [form for form in counts.index if form.isupper() and len(form) <= 3 and key not in _NOT_ACRONYMS]
+        label = acronyms[0] if acronyms else counts.index[0]
+        if not acronyms and (label.islower() or (label.isupper() and len(label) > 3)):
             label = label.title()
         labels[key] = label
     return series.map(lambda value: None if _is_missing(value) or not _category_key(value) else labels[_category_key(value)])
@@ -452,6 +457,7 @@ def overview_answer(frame: pd.DataFrame, summary: pd.DataFrame, source: str) -> 
     missing = summary[summary["Missing values"] > 0]
     worst = missing.sort_values("Missing values", ascending=False).head(3)
     text = (
+        f"Based on {len(frame):,} of {len(frame):,} rows. "
         f"{source} has {len(frame):,} rows and {len(frame.columns):,} columns: "
         f"{', '.join(summary['Column'])}. "
     )
@@ -854,8 +860,11 @@ _AGGREGATE_LABEL = {"sum": "Total", "average": "Average", "median": "Median", "m
 
 
 def _left_out(total: int, used: int, what: str) -> str:
+    """State the rows a chart is based on; blanks are skipped only for the columns the chart uses."""
     skipped = total - used
-    return f" {skipped:,} of {total:,} rows were left out because {what} was missing or unreadable." if skipped else ""
+    return f" Based on {used:,} of {total:,} rows" + (
+        f"; {skipped:,} of {total:,} rows were left out because {what} was missing or unreadable." if skipped else "."
+    )
 
 
 def _chart_figure(table: pd.DataFrame, chart_type: str):
@@ -961,8 +970,7 @@ def build_chart(frame: pd.DataFrame, spec: ChartSpec) -> ChartResult:
             f"The most common range is {busiest.iloc[0]}, with {int(busiest.iloc[1]):,} {noun}. "
             f"The average {spec.measure} is {_fmt(values.mean())} and the median is {_fmt(values.median())}."
         )
-        if len(values) < total:
-            explanation += f" {total - len(values):,} rows without a usable {spec.measure} were left out."
+        explanation += _left_out(total, len(values), f"the {spec.measure}")
         figure = px.bar(table, x=table.columns[0], y=table.columns[1], color_discrete_sequence=COLORS)
         figure.update_traces(marker_line_width=0)
         figure.update_layout(bargap=0.05)

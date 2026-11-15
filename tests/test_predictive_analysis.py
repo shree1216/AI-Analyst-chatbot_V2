@@ -45,19 +45,43 @@ class PredictiveAnalysisTests(unittest.TestCase):
             with self.subTest(question=question):
                 self.assertFalse(is_full_analysis_request(question))
 
-    def test_cleaning_fixes_text_numbers_spelling_duplicates_and_missing_values(self):
+    def test_cleaning_keeps_partial_rows_and_logs_every_change(self):
         frame = pd.DataFrame({
-            "Customer_ID": ["C1", "C2", "C2", "C3", "C4"],
-            "Plan": ["basic ", "BASIC", "BASIC", "Premium", None],
-            "Charge": ["$1,200", "30", "30", "", "45.5"],
+            "Customer_ID": ["C1", "C2", "C2", "C3", "C4", None, "C4", "C5", "C6", "C7"],
+            "Dept": ["it", "IT ", "IT ", "It", "N/A", None, "Sales", "sales", "-", "Sales"],
+            "Charge": ["$1,200", "82,000", "82,000", "", "45.5", None, "abc", "50", "55", "9000000"],
+            "Joined": ["2020-01-05", "2021-02-01", "2021-02-01", "null", "bad date", None, "2022-03-01",
+                       "2019-01-01", "2018-02-02", "2017-03-03"],
         })
+        original = frame.copy(deep=True)
         clean, log = clean_table(frame)
-        self.assertEqual(clean["Customer_ID"].tolist(), ["C1", "C2", "C3", "C4"])
-        self.assertEqual(clean["Plan"].tolist(), ["Basic", "Basic", "Premium", "Unknown"])
-        self.assertEqual(clean["Charge"].tolist(), [1200.0, 30.0, 45.5, 45.5])
-        steps = set(log["Step"])
-        self.assertTrue({"Converted text to numbers", "Standardised text", "Removed duplicate rows",
-                         "Filled missing values"} <= steps, steps)
+        pd.testing.assert_frame_equal(frame, original)
+        # Only the empty row (sheet row 7) and the exact duplicate (row 4) go; repeated ID C4 is flagged, not removed.
+        self.assertEqual(clean["Customer_ID"].tolist(), ["C1", "C2", "C3", "C4", "C4", "C5", "C6", "C7"])
+        self.assertEqual(clean["Dept"].fillna("").tolist(), ["IT", "IT", "IT", "", "Sales", "Sales", "", "Sales"])
+        self.assertEqual(clean["Charge"].fillna(-1).tolist(), [1200.0, 82000.0, -1, 45.5, -1, 50.0, 55.0, 9000000.0])
+        self.assertEqual(clean["Joined"].isna().tolist(), [False, False, True, True, False, False, False, False])
+        self.assertTrue(pd.api.types.is_datetime64_any_dtype(clean["Joined"]))
+        steps = dict(zip(zip(log["Step"], log["Column"]), log["Rows affected"]))
+        self.assertEqual(steps[("Removed empty rows", "(all)")], 1)
+        self.assertEqual(steps[("Removed duplicate rows", "(all)")], 1)
+        self.assertEqual(steps[("Flagged repeated IDs (kept)", "Customer_ID")], 2)
+        self.assertEqual(steps[("Set unreadable values to blank", "Charge")], 1)
+        self.assertEqual(steps[("Set unreadable values to blank", "Joined")], 1)
+        self.assertEqual(steps[("Treated placeholders as blank", "Dept")], 2)
+        self.assertEqual(steps[("Flagged extreme outliers (kept)", "Charge")], 1)
+        self.assertEqual(steps[("Blanks per column", "Charge")], 2)
+        self.assertIn("'it' -> 'IT'", log.set_index(["Step", "Column"]).loc[("Standardised text", "Dept"), "Detail"])
+        self.assertIn("row 4 = row 3", log.set_index("Step").loc["Removed duplicate rows", "Detail"])
+
+    def test_prediction_fills_blanks_only_on_its_own_copy(self):
+        frame = telecom_frame()
+        frame.loc[[3, 9], "Monthly_Charge_USD"] = None
+        result = run_full_analysis(USER_PROMPT, frame, "telecom.csv")
+        self.assertEqual(int(result.clean["Monthly_Charge_USD"].isna().sum()), 2)
+        self.assertEqual(len(result.prediction.predictions), len(frame))
+        self.assertIn(f"kept {len(frame)} of {len(frame)} rows", result.answer)
+        self.assertTrue(all("Based on" in chart.explanation for chart in result.charts))
 
     def test_churn_prediction_beats_baseline_and_finds_the_real_driver(self):
         frame = telecom_frame()
