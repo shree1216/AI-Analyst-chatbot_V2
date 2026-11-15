@@ -16,8 +16,8 @@ from hashlib import sha256
 from html import escape
 from pathlib import Path
 from threading import Lock
-from time import perf_counter
-from typing import Any
+from time import perf_counter, sleep
+from typing import Any, Callable, TypeVar
 import wave
 
 import azure.cognitiveservices.speech as speechsdk
@@ -428,6 +428,32 @@ class EngineProvider:
 
 
 get_engine = EngineProvider()
+
+# Waits before each reconnect. A paused serverless Azure SQL database refuses or times out the
+# first connections while it resumes, which can take tens of seconds.
+SQL_RETRY_DELAYS = (0, 5, 20)
+SQL_WAKE_MESSAGE = (
+    "SQL Server could not be reached after several attempts. If the database was idle it may still "
+    "be resuming; wait a minute and select Retry question."
+)
+_T = TypeVar("_T")
+
+
+def with_sql_retry(action: Callable[[], _T], trace: BackendTrace | None, event: str) -> _T:
+    """Run a SQL Server action, reconnecting with back-off on connection errors (no retry in demo mode)."""
+    delays = () if DATA_MODE == "demo" else SQL_RETRY_DELAYS
+    for attempt in range(1, len(delays) + 2):
+        try:
+            return action()
+        except SQLAlchemyError as error:
+            if attempt > len(delays):
+                raise
+            if trace:
+                trace.record(event, error_type=type(error).__name__, status="reconnecting", attempt=attempt + 1)
+            get_engine.clear()
+            if delays[attempt - 1]:
+                sleep(delays[attempt - 1])
+    raise AssertionError("unreachable")
 
 
 def limit_query(sql: str, limit: int) -> str:
@@ -1258,15 +1284,11 @@ def run_query(sql: str, parameters: dict[str, Any] | None = None) -> pd.DataFram
                 with get_engine().connect() as connection:
                     result = pd.read_sql(text(sql), connection, params=parameters or {})
         else:
-            try:
+            def read() -> pd.DataFrame:
                 with get_engine().connect() as connection:
-                    result = pd.read_sql(text(sql), connection, params=parameters or {})
-            except SQLAlchemyError as error:
-                if trace:
-                    trace.record("query_retry", error_type=type(error).__name__, status="reconnecting", attempt=2)
-                get_engine.clear()
-                with get_engine().connect() as connection:
-                    result = pd.read_sql(text(sql), connection, params=parameters or {})
+                    return pd.read_sql(text(sql), connection, params=parameters or {})
+
+            result = with_sql_retry(read, trace, "query_retry")
     except SQLAlchemyError as error:
         if trace:
             trace.record("query_failed", error_type=type(error).__name__, status="failed",
@@ -4848,12 +4870,17 @@ def display_automatic_message(
             if requested_kinds != {"excel"}:
                 try:
                     with get_demo_query_lock() if DATA_MODE == "demo" else nullcontext():
-                        sql_sources, sql_unavailable = discover_sql_sources(get_engine(), trace)
+                        sql_sources, sql_unavailable = with_sql_retry(
+                            lambda: discover_sql_sources(get_engine(), trace), trace, "schema_discovery_retry",
+                        )
                     sources.update(sql_sources)
                     unavailable.extend(sql_unavailable)
                 except SQLAlchemyError as error:
                     trace.record("schema_discovery_failed", route="sql", error_type=type(error).__name__, status="unavailable")
-                    unavailable.append("SQL is unavailable. SQL actual values cannot be queried or compared.")
+                    unavailable.append(
+                        "SQL is unavailable. SQL actual values cannot be queried or compared."
+                        + ("" if DATA_MODE == "demo" else " " + SQL_WAKE_MESSAGE)
+                    )
             if content is not None and not sql_only and requested_kinds != {"sql"}:
                 excel_sources, excel_unavailable = discover_excel_sources(content, trace)
                 if not excel_sources:

@@ -1660,6 +1660,37 @@ class SourceQueryTests(unittest.TestCase):
         self.assertEqual(message["backend_log"][-1]["event"], "request_failed")
         self.assertIsNone(self.chatbot.SQL_TRACE.get())
 
+    def test_sql_server_discovery_reconnects_while_the_database_resumes(self):
+        clarification = {"mode": "clarification", "message": "Which period?", "sql": [], "excel": [], "calculation": None}
+        real_discovery = self.chatbot.discover_sql_sources
+        for failures, expect_sql in ((1, True), (4, False)):
+            client = Mock()
+            client.chat.completions.create.return_value = SimpleNamespace(choices=[
+                SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=json.dumps(clarification))),
+            ])
+            outcomes = [SQLAlchemyError("PRIVATE_CONNECTION")] * failures
+            discover = Mock(side_effect=lambda engine, trace: (
+                (_ for _ in ()).throw(outcomes.pop()) if outcomes else real_discovery(engine, trace)
+            ))
+            with self.subTest(failures=failures), patch.dict(os.environ, {"AZURE_OPENAI_DEPLOYMENT_MINI": "test"}), \
+                    patch.object(self.chatbot, "DATA_MODE", "sqlserver"), \
+                    patch.object(self.chatbot, "get_azure_openai_client", return_value=client), \
+                    patch.object(self.chatbot, "get_engine", return_value=self.engine) as get_engine, \
+                    patch.object(self.chatbot, "discover_sql_sources", discover), \
+                    patch.object(self.chatbot, "sleep") as sleep:
+                message = {"question": "Compare actuals with targets", "workbook_content": workbook_bytes()}
+                self.chatbot.display_automatic_message(message, f"resume_{failures}")
+                retries = [event for event in message["backend_log"] if event["event"] == "schema_discovery_retry"]
+                self.assertEqual(len(retries), min(failures, 3))
+                self.assertEqual(get_engine.clear.call_count, min(failures, 3))
+                self.assertEqual([call.args[0] for call in sleep.call_args_list], [5, 20][:max(0, min(failures, 3) - 1)])
+                unavailable = [warning for warning in message["source_warnings"] if "SQL is unavailable" in warning]
+                if expect_sql:
+                    self.assertEqual(unavailable, [])
+                else:
+                    self.assertIn("may still be resuming", unavailable[0])
+                self.assertNotIn("PRIVATE_CONNECTION", diagnostic_log(message["backend_log"]))
+
 
 if __name__ == "__main__":
     unittest.main()
