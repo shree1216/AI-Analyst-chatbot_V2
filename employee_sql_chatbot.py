@@ -82,7 +82,8 @@ from data_grid import MAX_GRID_ROWS, apply_grid_changes, grid_change_count
 from code_export import capture as capture_code, emit as emit_code, load_code, sql_code
 from demo_tables import demo_data_version, load_demo_tables
 from source_queries import (
-    SALES_PLANNING_RULES, SourceMatchError, allows_unmatched_sources, discover_excel_sources, discover_sql_sources, execute_source_plan,
+    SALES_PLANNING_RULES, SourceMatchError, allows_unmatched_sources, combine_sources_instruction, common_columns,
+    discover_excel_sources, discover_sql_sources, execute_source_plan,
     local_source_plan, product_units_plan, requested_source_kinds, source_mode_for_question, source_planner_prompt,
     source_planning_questions,
 )
@@ -263,8 +264,8 @@ copy_response_component = st.components.v2.component(
             border-radius: 4px; color: #6B6558; cursor: pointer;
             font: inherit; font-size: 13px;
         }
-        button:hover { background: #F7EEF0; color: #7B2D43; }
-        button:focus-visible { outline: 2px solid #7B2D43; outline-offset: 2px; }
+        button:hover { background: #F4EEF9; color: #5B2A86; }
+        button:focus-visible { outline: 2px solid #5B2A86; outline-offset: 2px; }
         .copy-icon { font-family: "Material Symbols Rounded"; font-size: 16px; }
         .copy-status { font: inherit; font-size: 12px; }
         textarea { width: 100%; height: 100px; box-sizing: border-box; }
@@ -4867,6 +4868,7 @@ def display_automatic_message(
             message["source_warnings"] = [
                 item for item in unavailable if not item.startswith("No Excel workbook")
             ]
+            shared = common_columns(sources) if not sql_only and not requested_kinds else []
             system_prompt = (
                 source_planner_prompt(sources, unavailable)
                 + (f" The user explicitly requested these source kinds: {sorted(requested_kinds)}."
@@ -4875,8 +4877,17 @@ def display_automatic_message(
                    "Use a data plan for questions about these tables or their columns; "
                    "do not substitute SQL instructions or a general conversation answer."
                    if sql_only else "")
+                + (" COMMON COLUMNS between SQL and Excel: " + "; ".join(
+                    f"SQL {sources[sql_id].label}.{sql_column} = Excel {sources[excel_id].label}.{excel_column}"
+                    for sql_id, sql_column, excel_id, excel_column in shared
+                ) + ". When the question's data is in a source that shares one of these columns with a source of "
+                   "the other kind, use BOTH sources combined on that common column."
+                   if shared else "")
             )
-            plan = local_source_plan(message["question"], sources, requested_kinds)
+            plan = local_source_plan(message["question"], sources, {"sql", "excel"}) if shared else None
+            if plan is None:
+                plan = local_source_plan(message["question"], sources, requested_kinds)
+            local_plan = plan is not None
             if plan is not None:
                 trace.record_code("planner_received", local_source_plan, regional_sales_plan, product_units_plan,
                                   route="local_source_summary", status="validating", plan=plan)
@@ -4948,21 +4959,46 @@ def display_automatic_message(
                         allow_unmatched=allow_unmatched,
                     )
 
-                try:
-                    result, labels = execute_plan(plan)
-                except ValueError as error:
-                    if planning_repaired or isinstance(error, SourceMatchError):
-                        raise
-                    trace.record("planner_repair_requested", route="automatic",
-                                 error_type=type(error).__name__, status="retrying")
-                    repaired = generate_source_plan(
-                        client, deployment, system_prompt, message["question"], trace,
-                        previous_plan=plan, validation_error=str(error),
-                        prior_turns=prior_turns,
-                    )
-                    if repaired["mode"] == "clarification" and isinstance(repaired["message"], str) and repaired["message"].strip():
-                        raise ValueError(repaired["message"][:1500]) from error
-                    result, labels = execute_plan(repaired)
+                result = None
+                combine = combine_sources_instruction(plan, sources, shared) if shared and not local_plan else None
+                if combine is not None:
+                    trace.record("planner_combine_requested", route="automatic", status="retrying")
+                    try:
+                        combined = generate_source_plan(
+                            client, deployment, system_prompt, message["question"], trace,
+                            previous_plan=plan, validation_error=combine, prior_turns=prior_turns,
+                        )
+                        result, labels = execute_source_plan(
+                            combined, sources,
+                            lambda query, schema, table: compile_data_plan(
+                                query, schema, table, DATA_MODE == "demo", max_rows=50_001,
+                            ),
+                            run_query, trace, required_kinds={"sql", "excel"}, allow_unmatched=allow_unmatched,
+                        )
+                    except ValueError as error:
+                        trace.record("planner_combine_failed", route="automatic",
+                                     error_type=type(error).__name__, status="fallback")
+                        result = None
+                        message["source_warnings"].append(
+                            "SQL and Excel share a common column, but they could not be combined for this "
+                            f"question ({str(error)[:300]}). Showing the single-source answer instead."
+                        )
+                if result is None:
+                    try:
+                        result, labels = execute_plan(plan)
+                    except ValueError as error:
+                        if planning_repaired or isinstance(error, SourceMatchError):
+                            raise
+                        trace.record("planner_repair_requested", route="automatic",
+                                     error_type=type(error).__name__, status="retrying")
+                        repaired = generate_source_plan(
+                            client, deployment, system_prompt, message["question"], trace,
+                            previous_plan=plan, validation_error=str(error),
+                            prior_turns=prior_turns,
+                        )
+                        if repaired["mode"] == "clarification" and isinstance(repaired["message"], str) and repaired["message"].strip():
+                            raise ValueError(repaired["message"][:1500]) from error
+                        result, labels = execute_plan(repaired)
                 message["result"] = result
                 for match in result.attrs.get("source_matches", []):
                     if match["unmatched_rows"] and not allow_unmatched:
@@ -5067,11 +5103,11 @@ def apply_theme() -> None:
             --line: #E7E2DD;
             --canvas: #FAF8F6;
             --surface: #ffffff;
-            --evergreen: #7B2D43;
-            --evergreen-soft: #F6E9ED;
-            --coral: #7B2D43;
-            --coral-dark: #64233A;
-            --coral-soft: #F6E9ED;
+            --evergreen: #5B2A86;
+            --evergreen-soft: #F1EAF8;
+            --coral: #5B2A86;
+            --coral-dark: #47206A;
+            --coral-soft: #F1EAF8;
         }
 
         .stApp {
@@ -5369,11 +5405,11 @@ def apply_theme() -> None:
                 --wc-sidebar: #FFFFFF;
                 --wc-ink: #1F1D1B;
                 --wc-muted: #6B6560;
-                --wc-accent: #7B2D43;
-                --wc-accent-hover: #64233A;
-                --wc-accent-soft: #F6E9ED;
+                --wc-accent: #5B2A86;
+                --wc-accent-hover: #47206A;
+                --wc-accent-soft: #F1EAF8;
                 --wc-line: #E7E2DD;
-                --wc-user: #F7EEF0;
+                --wc-user: #F4EEF9;
                 --wc-code: #F3EFEB;
                 --wc-font: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
             }
@@ -5395,7 +5431,7 @@ def apply_theme() -> None:
             }
 
             ::selection {
-                background: #E7C9D1;
+                background: #D9C8EC;
                 color: var(--wc-ink);
             }
 
@@ -5435,7 +5471,7 @@ def apply_theme() -> None:
             }
 
             .sidebar-brand .brand-logo {
-                background: linear-gradient(135deg, #7B2D43 0%, #A04460 100%);
+                background: linear-gradient(135deg, #5B2A86 0%, #7E4BB0 100%);
                 border-radius: 9px;
                 color: #FFFFFF;
                 display: grid;
@@ -5449,7 +5485,7 @@ def apply_theme() -> None:
             .active-file {
                 align-items: center;
                 background: var(--wc-accent-soft);
-                border: 1px solid #E7C9D1;
+                border: 1px solid #D9C8EC;
                 border-radius: 10px;
                 color: var(--wc-accent);
                 display: flex;
@@ -5577,7 +5613,7 @@ def apply_theme() -> None:
             }
 
             .empty-mark span {
-                background: linear-gradient(180deg, #C08A3E 0%, #7B2D43 100%);
+                background: linear-gradient(180deg, #C9A227 0%, #5B2A86 100%);
                 border-radius: 2px 2px 0 0;
                 display: block;
                 width: 6px;
@@ -5622,7 +5658,7 @@ def apply_theme() -> None:
 
             .st-key-home_actions .stButton > button:hover {
                 border-color: var(--wc-accent) !important;
-                box-shadow: 0 6px 18px rgba(123, 45, 67, 0.12) !important;
+                box-shadow: 0 6px 18px rgba(91, 42, 134, 0.12) !important;
                 color: var(--wc-accent) !important;
             }
 
@@ -5865,7 +5901,7 @@ def apply_theme() -> None:
 
             [data-testid="stChatInput"]:focus-within {
                 border-color: var(--wc-accent) !important;
-                box-shadow: 0 0 0 3px rgba(123, 45, 67, 0.14), 0 8px 22px rgba(31, 29, 27, 0.08) !important;
+                box-shadow: 0 0 0 3px rgba(91, 42, 134, 0.14), 0 8px 22px rgba(31, 29, 27, 0.08) !important;
             }
 
             [data-testid="stChatInput"] textarea {

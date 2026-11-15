@@ -1,7 +1,7 @@
 # Workforce Compass theme
 [theme]
 base = "light"
-primaryColor = "#7B2D43"
+primaryColor = "#5B2A86"
 backgroundColor = "#FAF8F6"
 secondaryBackgroundColor = "#F3EFEB"
 textColor = "#1F1D1B"

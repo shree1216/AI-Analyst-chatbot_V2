@@ -137,6 +137,60 @@ def source_mode_for_question(
     return "automatic" if selected_mode == "automatic" or requested and requested != {selected_mode} else selected_mode
 
 
+IDENTITY_COLUMN = re.compile(
+    r"(?:^|[\s_-])(?:id|code|sku|key|no|number|name|email)$|^(?:id|code|sku|key|name|email)$", re.IGNORECASE,
+)
+
+
+def _column_key(name: str) -> str:
+    return re.sub(r"[^0-9a-z]+", "", name.casefold())
+
+
+def common_columns(sources: dict[str, "DataSource"]) -> list[tuple[str, str, str, str]]:
+    """(SQL source id, SQL column, Excel source id, Excel column) for identity columns both sides share.
+
+    Only text ID/code/name-style columns with the same normalized header count; the runtime still
+    verifies that values actually match before any join is accepted.
+    """
+    pairs = []
+    for left in (source for source in sources.values() if source.kind == "sql"):
+        for right in (source for source in sources.values() if source.kind == "excel"):
+            columns = {_column_key(name): name for name, kind in right.schema.items() if kind == "text"}
+            for name, kind in left.schema.items():
+                match = columns.get(_column_key(name))
+                if kind == "text" and match is not None and IDENTITY_COLUMN.search(name.strip()):
+                    pairs.append((left.id, name, right.id, match))
+    return pairs
+
+
+def combine_sources_instruction(
+    plan: Any, sources: dict[str, "DataSource"], pairs: list[tuple[str, str, str, str]],
+) -> str | None:
+    """In automatic mode, ask for a SQL + Excel plan when a single-kind plan's source shares a common column."""
+    if not isinstance(plan, dict) or plan.get("mode") != "data":
+        return None
+    chosen = {entry.get("source") for entry in plan.get("sql") or [] if isinstance(entry, dict)}
+    chosen |= {source_id for source_id in plan.get("excel") or [] if isinstance(source_id, str)}
+    if {sources[key].kind for key in chosen if key in sources} not in ({"sql"}, {"excel"}):
+        return None
+    links = [(sql_id, sql_column, excel_id, excel_column) for sql_id, sql_column, excel_id, excel_column in pairs
+             if sql_id in chosen or excel_id in chosen]
+    if not links:
+        return None
+    described = "; ".join(
+        f"SQL {sources[sql_id].label}.{sql_column} = Excel {sources[excel_id].label}.{excel_column}"
+        for sql_id, sql_column, excel_id, excel_column in links
+    )
+    return (
+        "Automatic mode must return data from BOTH SQL and Excel when they share a common column. "
+        f"Common columns: {described}. Rebuild the plan to select both sources and combine them on the "
+        "common column: for counts or lists of entities, append the common-column values from each source, "
+        "normalize them (trim, upper) and count/list distinct values, also returning separately labeled "
+        "per-source counts; for row details, LEFT join the other source on the common column. "
+        "Never inner-join away records that exist in only one source"
+    )
+
+
 @dataclass
 class DataSource:
     id: str

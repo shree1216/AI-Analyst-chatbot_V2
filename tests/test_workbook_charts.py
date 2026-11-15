@@ -262,7 +262,7 @@ class ApplyChartTests(unittest.TestCase):
         self.assertEqual((summary["A6"].value, summary["B6"].value), ("Columns", f"{len(frame.columns):,}"))
         self.assertEqual((summary["A8"].value, summary["B8"].value), ("Charts", "4"))
         self.assertEqual(summary["A10"].value, "Supporting tables")
-        self.assertEqual(summary["A14"].fill.fgColor.rgb, "FF7B2D43")
+        self.assertEqual(summary["A14"].fill.fgColor.rgb, "FF5B2A86")
         start = 13
         for chart, table in zip(charts_tab._charts, charts):
             self.assertEqual(summary.cell(start, 1).value, table.title)

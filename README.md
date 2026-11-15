@@ -105,8 +105,8 @@ are not a replacement for database permissions or access controls.
   bar and select a worksheet to query. Tables found in text-based PDFs become worksheets.
 - Bricks-style workspace: a home screen with quick actions (**Create dashboard**,
   **Analyze data**, **Build report**, **Edit in grid**), dashboards with KPI cards and a
-  chart grid, and one professional charcoal-and-wine palette (with ochre and bronze chart
-  accents) shared by the app, dashboards, PDF reports and slides.
+  chart grid, and one professional plum palette (with gold chart accents on charcoal
+  neutrals) shared by the app, dashboards, PDF reports and slides.
 - Ask for **create a dashboard**, or a summary with charts (for example **generate summary
   and charts**), to get KPI cards, charts and a data summary from the attached file. With
   no file attached, Automatic mode builds the dashboard from the employee database and says
@@ -367,6 +367,16 @@ For each question the planner chooses the smallest necessary source set:
 | `Compare SQL actual amounts against the Excel department budgets and show the variance.` | SQL actuals and Excel budgets, joined by the specified matching keys |
 | `Use the Excel lookup to label the SQL results.` | Relevant SQL table and Excel lookup |
 | `How many distinct products are in EmployeeDB and Excel?` | SQL product table and Excel product catalog, with one deduplicated combined count |
+
+**Common columns.** When a SQL table and an uploaded worksheet share an ID/code/name-style
+text column with the same name (for example SQL `sql_products.code` and Excel `Sheet1.Code`),
+automatic mode returns data from **both**, combined on that column, even if one source alone
+could answer. For example, **give total number of products** counts the distinct codes across
+the SQL catalog and the workbook, with a count per source. Counts and lists append the
+common-column values; row details LEFT join the other source, so records that exist in only
+one source are kept. If the sources can't be combined (for example, no values match for a
+join), the single-source answer is shown with a warning. Naming one source (**from SQL only**)
+or choosing **Employee database** / **Excel workbook** mode turns this off.
 
 Only selected SQL queries execute, and only selected Excel worksheets are loaded
 in full. SQL plans are validated against the discovered columns and compiled to

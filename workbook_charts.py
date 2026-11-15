@@ -33,7 +33,7 @@ from workbook_operations import MAX_SHEETS
 
 CHART_TYPES = ("column", "bar", "line", "pie", "doughnut", "area", "scatter")
 # Corporate palette (no blue or green), matching report_themes.CORPORATE.
-EXCEL_PALETTE = ("7B2D43", "C08A3E", "4A4542", "B5838D", "8C6D4F", "D4A373", "5E3A48", "A39C95")
+EXCEL_PALETTE = ("5B2A86", "C9A227", "4A4542", "9B7FBF", "7D5BA6", "E0C46C", "3E1D5C", "A39C95")
 AGGREGATES = ("auto", "sum", "average", "count", "min", "max", "none")
 PLAN_KEYS = {"understood", "unhandled_conditions", "sheet", "chart_type", "category", "values", "aggregate",
              "title", "sort", "limit"}
@@ -686,21 +686,21 @@ def _write_package(source: ZipFile, replacements: dict[str, bytes], additions: d
 
 
 _STYLE_FONTS = {
-    "title": '<font><b/><sz val="18"/><color rgb="FF7B2D43"/><name val="Calibri"/><family val="2"/></font>',
+    "title": '<font><b/><sz val="18"/><color rgb="FF5B2A86"/><name val="Calibri"/><family val="2"/></font>',
     "header": '<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/><family val="2"/></font>',
     "muted": '<font><sz val="10"/><color rgb="FF6B6560"/><name val="Calibri"/><family val="2"/></font>',
     "value": '<font><b/><sz val="16"/><color rgb="FF1F1D1B"/><name val="Calibri"/><family val="2"/></font>',
-    "section": '<font><b/><sz val="12"/><color rgb="FF7B2D43"/><name val="Calibri"/><family val="2"/></font>',
+    "section": '<font><b/><sz val="12"/><color rgb="FF5B2A86"/><name val="Calibri"/><family val="2"/></font>',
     "body": '<font><sz val="11"/><color rgb="FF1F1D1B"/><name val="Calibri"/><family val="2"/></font>',
 }
 _STYLE_FILLS = {
-    "wine": '<fill><patternFill patternType="solid"><fgColor rgb="FF7B2D43"/><bgColor indexed="64"/></patternFill></fill>',
+    "primary": '<fill><patternFill patternType="solid"><fgColor rgb="FF5B2A86"/><bgColor indexed="64"/></patternFill></fill>',
     "band": '<fill><patternFill patternType="solid"><fgColor rgb="FFF7F3EF"/><bgColor indexed="64"/></patternFill></fill>',
 }
 # style name -> (font, fill or None, number format id)
 _CELL_STYLES = {
     "title": ("title", None, 0), "muted": ("muted", None, 0), "section": ("section", None, 0),
-    "header": ("header", "wine", 0), "kpi_label": ("muted", "band", 0), "kpi_value": ("value", "band", 0),
+    "header": ("header", "primary", 0), "kpi_label": ("muted", "band", 0), "kpi_value": ("value", "band", 0),
     "text": ("body", None, 0), "integer": ("body", None, 3), "decimal": ("body", None, 4),
 }
 

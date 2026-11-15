@@ -19,10 +19,10 @@ class ReportTheme:
     palette: tuple[str, ...]
 
 
-# Charcoal and wine with ochre/bronze accents; deliberately free of blue and green.
+# Plum with gold accents on charcoal neutrals.
 CORPORATE = ReportTheme(
-    "corporate", "Corporate", "#7B2D43", "#C08A3E", "#1F1D1B", "#6B6560", "#E7E2DD", "#FFFFFF", "#F7F3EF",
-    ("#7B2D43", "#C08A3E", "#4A4542", "#B5838D", "#8C6D4F", "#D4A373", "#5E3A48", "#A39C95"),
+    "corporate", "Corporate", "#5B2A86", "#C9A227", "#1F1D1B", "#6B6560", "#E7E2DD", "#FFFFFF", "#F7F3EF",
+    ("#5B2A86", "#C9A227", "#4A4542", "#9B7FBF", "#7D5BA6", "#E0C46C", "#3E1D5C", "#A39C95"),
 )
 THEMES: dict[str, ReportTheme] = {CORPORATE.key: CORPORATE}
 DEFAULT_THEME = CORPORATE.key

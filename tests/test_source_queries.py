@@ -291,6 +291,81 @@ class SourceQueryTests(unittest.TestCase):
         self.assertEqual(message["result"]["Variance"].tolist(), [-50, 5])
         self.assertTrue(any(event["event"] == "planner_repair_requested" for event in message["backend_log"]))
 
+    def products_and_sales(self):
+        engine = create_engine("sqlite://")
+        self.addCleanup(engine.dispose)
+        with engine.begin() as connection:
+            pd.DataFrame({"code": ["P05", "P06", "P07", "P08"], "product": ["Pencil", "Marker", "Folder", "Eraser"],
+                          "price": [10, 35, 45, 5]}).to_sql("sql_products", connection, index=False)
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            pd.DataFrame({"Region": ["North", "South", "East", "North"], "Code": ["P01", "p03 ", "P02", "P04"],
+                          "Qty": [50, 4, 30, 10]}).to_excel(writer, sheet_name="Sheet1", index=False)
+        return engine, output.getvalue()
+
+    def run_automatic(self, engine, content, plans, question="give total number of products"):
+        client = Mock()
+        client.chat.completions.create.side_effect = [
+            SimpleNamespace(choices=[
+                SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=json.dumps(plan))),
+            ]) for plan in plans
+        ]
+        with patch.dict(os.environ, {"AZURE_OPENAI_DEPLOYMENT_MINI": "test"}), patch.object(
+            self.chatbot, "get_azure_openai_client", return_value=client,
+        ), patch.object(self.chatbot, "get_engine", return_value=engine):
+            message = {"question": question, "workbook_content": content}
+            self.chatbot.display_automatic_message(message, "common_column")
+        return message, client
+
+    def test_automatic_mode_combines_sql_and_excel_on_a_common_column(self):
+        engine, content = self.products_and_sales()
+        sql_only = data_plan(sql=[{"source": "sql_0", "query": query(
+            columns=[], metrics=[{"function": "count", "column": "*"}],
+        )}])
+        combined = data_plan(
+            sql=[{"source": "sql_0", "query": query(columns=["code"])}], excel=["excel_0"],
+            calculation={"understood": True, "unhandled_conditions": [], "sheet": "excel_0", "steps": [
+                {"op": "calculate", "columns": [{"name": "Product Code", "expression": {"column": "Code"}}]},
+                {"op": "select", "columns": ["Product Code"]},
+                {"op": "append", "sheet": "sql_0", "columns": [{"column": "code", "name": "Product Code"}]},
+                {"op": "calculate", "columns": [{"name": "Product Code", "expression": {
+                    "function": "upper", "args": [{"function": "trim", "args": [{"column": "Product Code"}]}],
+                }}]},
+                {"op": "aggregate", "group_by": [], "metrics": [
+                    {"name": "Total Products", "function": "count_distinct", "column": "Product Code"},
+                ]},
+            ]},
+        )
+        message, client = self.run_automatic(engine, content, [sql_only, combined])
+        self.assertNotIn("error", message)
+        self.assertEqual(client.chat.completions.create.call_count, 2)
+        self.assertIn("COMMON COLUMNS between SQL and Excel: SQL main.sql_products.code = Excel Sheet1.Code",
+                      client.chat.completions.create.call_args_list[0].kwargs["messages"][0]["content"])
+        self.assertEqual(message["result"]["Total Products"].tolist(), [8])
+        self.assertEqual(message["source_labels"], ["SQL: main.sql_products", "EXCEL: Sheet1"])
+        self.assertEqual(message["source_warnings"], [])
+
+    def test_failed_combination_keeps_the_single_source_answer_with_a_warning(self):
+        engine, content = self.products_and_sales()
+        sql_only = data_plan(sql=[{"source": "sql_0", "query": query(
+            columns=[], metrics=[{"function": "count", "column": "*"}],
+        )}])
+        message, client = self.run_automatic(engine, content, [sql_only, sql_only])
+        self.assertNotIn("error", message)
+        self.assertEqual(client.chat.completions.create.call_count, 2)
+        self.assertEqual(message["result"].iloc[0, 0], 4)
+        self.assertEqual(message["source_labels"], ["SQL: main.sql_products"])
+        self.assertIn("could not be combined", message["source_warnings"][0])
+
+    def test_explicit_single_source_does_not_force_a_combination(self):
+        engine, content = self.products_and_sales()
+        sql_only = data_plan(sql=[{"source": "sql_0", "query": query(
+            columns=[], metrics=[{"function": "count", "column": "*"}],
+        )}])
+        message, client = self.run_automatic(engine, content, [sql_only], "give total number of products from SQL only")
+        self.assertEqual(client.chat.completions.create.call_count, 1)
+        self.assertEqual(message["result"].iloc[0, 0], 4)
+
     def test_unmatched_sources_do_not_offer_to_ignore_a_both_sources_requirement(self):
         with self.engine.begin() as connection:
             connection.execute(text("UPDATE Actuals SET Department = 'No overlap'"))
