@@ -19,7 +19,7 @@ from streamlit.testing.v1 import AppTest
 
 from excel_support import append_result_sheet, preserve_formula_values, read_excel_sheet, spreadsheet_answer
 from workbook_edits import apply_safe_workbook_clean, apply_workbook_edit, excel_edit_prompt, is_excel_edit_request, local_excel_edit_plan, result_sheet_request, workbook_clean_request
-from data_grid import apply_grid_changes
+from data_grid import apply_grid_changes, editable_grid_frame
 
 
 def content():
@@ -55,6 +55,44 @@ class GridEditTests(unittest.TestCase):
         output = BytesIO()
         workbook.save(output)
         return output.getvalue()
+
+    def test_mixed_columns_are_editable_without_modifying_source_values(self):
+        original = self.workbook([
+            ["Name", "Charge", "Tenure", "Note"],
+            ["Amy", 19.99, 12, "Active"], ["Bob", "Unknown", "N/A", None],
+            ["Cara", None, 36, "Active"],
+        ])
+        frame = read_excel_sheet(original, "Sales")
+        editable = editable_grid_frame(frame)
+        pd.testing.assert_frame_equal(frame, read_excel_sheet(original, "Sales"))
+        self.assertEqual(editable["Charge"].iloc[0], "19.99")
+        self.assertTrue(pd.isna(editable["Charge"].iloc[2]))
+        self.assertEqual(editable.attrs["excel_row_numbers"], [2, 3, 4])
+        pd.testing.assert_series_equal(editable["Name"], frame["Name"])
+        pd.testing.assert_series_equal(editable["Note"], frame["Note"])
+        def render_editor(data):
+            import streamlit as st
+            st.data_editor(data, num_rows="dynamic")
+
+        app = AppTest.from_function(render_editor, args=(editable,)).run()
+        self.assertEqual(len(app.exception), 0)
+        config = json.loads(app.dataframe[0].proto.columns)
+        self.assertFalse(config.get("Charge", {}).get("disabled", False))
+        self.assertFalse(config.get("Tenure", {}).get("disabled", False))
+        updated = apply_grid_changes(original, "Sales", frame, {
+            "edited_rows": {1: {"Charge": "Pending"}},
+        })
+        result = read_excel_sheet(updated, "Sales")
+        self.assertEqual(result["Charge"].iloc[:2].tolist(), [19.99, "Pending"])
+        self.assertEqual(result["Tenure"].iloc[0], 12)
+        self.assertTrue(pd.isna(result["Charge"].iloc[2]))
+
+    def test_grid_keeps_numeric_boolean_and_date_columns_typed(self):
+        frame = pd.DataFrame({
+            "Amount": [10, 20], "Rate": [1.5, 2.5], "Active": [True, False],
+            "Date": pd.to_datetime(["2026-01-01", "2026-01-02"]),
+        })
+        pd.testing.assert_frame_equal(editable_grid_frame(frame), frame)
 
     def test_grid_edits_use_physical_rows_across_blank_rows(self):
         original = self.workbook([["Name", "Amount"], ["Amy", 10], [None, None], ["Bob", 20], ["Cara", 30]])

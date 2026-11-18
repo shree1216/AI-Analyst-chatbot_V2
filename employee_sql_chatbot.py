@@ -78,7 +78,7 @@ from dashboard_builder import dashboard_kpis
 from slides_export import PPTX_MIME, Deck, SlideChart, build_pptx
 from deck_pdf import build_deck_pdf
 from pdf_tables import pdf_to_workbook
-from data_grid import MAX_GRID_ROWS, apply_grid_changes, grid_change_count
+from data_grid import MAX_GRID_ROWS, apply_grid_changes, editable_grid_frame, grid_change_count
 from code_export import capture as capture_code, emit as emit_code, load_code, sql_code
 from demo_tables import demo_data_version, load_demo_tables
 from source_queries import (
@@ -6195,7 +6195,11 @@ def render_data_grid(workbook: dict[str, Any]) -> None:
     key = f"data_grid_{workbook['digest']}_{sheet}"
     with st.container(border=True):
         st.markdown(f"**{escape(workbook['file_name'])} / {escape(sheet)}**")
-        st.data_editor(frame, key=key, num_rows="dynamic", hide_index=True, width="stretch")
+        st.caption(
+            "Double-click a cell to edit it, press Enter to finish, then choose Apply changes below. "
+            "Columns containing mixed value types are edited as text; untouched cells keep their original types."
+        )
+        st.data_editor(editable_grid_frame(frame), key=key, num_rows="dynamic", hide_index=True, width="stretch")
         changes = st.session_state.get(key) or {}
         count = grid_change_count(changes)
         apply_column, download_column, _ = st.columns([1, 1, 1.4])

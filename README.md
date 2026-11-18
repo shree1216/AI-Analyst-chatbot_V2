@@ -115,7 +115,10 @@ are not a replacement for database permissions or access controls.
   Dashboards download as PowerPoint or PDF.
 - Turn on **Data grid** above the chat to view and edit the active worksheet like a
   spreadsheet (edit cells, add or delete rows), then **Apply** the changes to the working
-  copy. Formula cells are protected, and row deletion is refused on sheets whose
+  copy. Double-click a cell and press Enter to finish editing before applying changes.
+  Columns with mixed value types (such as numbers and "Unknown") are editable as text;
+  untouched cells retain their original values and types.
+  Formula cells are protected, and row deletion is refused on sheets whose
   formulas, merged cells or Excel tables could break. The original upload is unchanged.
 - Download query results and report summaries, breakdowns, and source data as Excel workbooks.
 - Look up employee details such as department, city, email, and phone number.

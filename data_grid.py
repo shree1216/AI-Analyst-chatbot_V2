@@ -16,6 +16,15 @@ from workbook_edits import _formula_dependencies
 MAX_GRID_ROWS = 5000
 
 
+def editable_grid_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    """Represent mixed-type columns as editable text without changing source values."""
+    editable = frame.copy(deep=True)
+    for column in editable:
+        if pd.api.types.infer_dtype(editable[column], skipna=True) in {"mixed", "mixed-integer"}:
+            editable[column] = editable[column].astype("string")
+    return editable
+
+
 def _value(raw: Any, template: pd.Series) -> Any:
     if raw is None or (isinstance(raw, float) and pd.isna(raw)):
         return None
